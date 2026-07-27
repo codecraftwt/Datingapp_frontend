@@ -1,0 +1,1293 @@
+import React, { useState, useEffect } from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Image,
+  Modal,
+  useWindowDimensions,
+  PermissionsAndroid,
+} from 'react-native';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { apiClient } from '../api/apiClient';
+import { syncUserLocationService } from '../services/locationService';
+import { CustomInput } from '../components/CustomInput';
+import { CustomButton } from '../components/CustomButton';
+import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
+import { PreviewModal } from '../components/PreviewModal';
+
+const INTEREST_OPTIONS = [
+  '🎵 Music',
+  '✈️ Travel',
+  '🏋️ Fitness',
+  '🎬 Movies',
+  '🎮 Gaming',
+  '🍳 Cooking',
+  '🎨 Art',
+  '📸 Photography',
+  '📚 Reading',
+  '💃 Dancing',
+  '☕ Coffee',
+  '🐕 Pets',
+  '🍷 Wine',
+  '🧘 Yoga',
+  '🍕 Foodie',
+  '🏕️ Camping',
+];
+
+const ORIENTATIONS = ['Straight', 'Gay', 'Lesbian', 'Bisexual', 'Pansexual', 'Queer'];
+const LOOKING_FOR = ['Long-term Relationship', 'Short-term Fun', 'New Friends', 'Still Figuring It Out'];
+const DRINK_HABITS = ['Never', 'Socially', 'Frequently'];
+const SMOKE_HABITS = ['Never', 'Socially', 'Regularly'];
+const EXERCISE_HABITS = ['Active', 'Sometimes', 'Never'];
+const PETS_OPTIONS = ['Dog', 'Cat', 'Both', 'None'];
+const EDUCATION_LEVELS = [
+  '🎓 High School',
+  '🎓 Bachelors Degree',
+  '🎓 Masters Degree',
+  '🎓 Doctorate / PhD',
+  '🛠️ Trade / Vocational',
+  '💼 Other Education',
+];
+const ZODIAC_SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'];
+
+export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditMode, onCloseModal }) => {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const cardWidth = Math.min(windowWidth - 32, 600);
+  // Calculate photo grid slot size dynamically based on card width
+  const slotWidth = Math.max(70, Math.floor((cardWidth - 60) / 3));
+  const slotHeight = Math.floor(slotWidth * 1.25);
+
+  const [step, setStep] = useState(isEditMode ? 4 : 1);
+
+  // Form Fields
+  const [firstName, setFirstName] = useState('');
+  const [bdayDay, setBdayDay] = useState('');
+  const [bdayMonth, setBdayMonth] = useState('');
+  const [bdayYear, setBdayYear] = useState('');
+  const [gender, setGender] = useState('Women');
+  const [interestedIn, setInterestedIn] = useState('Men');
+  const [orientation, setOrientation] = useState('Straight');
+
+  const [lookingFor, setLookingFor] = useState('Long-term Relationship');
+  const [drinkHabit, setDrinkHabit] = useState('Socially');
+  const [smokeHabit, setSmokeHabit] = useState('Never');
+  const [exercise, setExercise] = useState('Active');
+  const [pets, setPets] = useState('Dog');
+  const [educationLevel, setEducationLevel] = useState('Bachelors');
+  const [zodiac, setZodiac] = useState('Leo');
+  const [ageRangeMin, setAgeRangeMin] = useState('22');
+  const [ageRangeMax, setAgeRangeMax] = useState('35');
+  const [distanceRange, setDistanceRange] = useState('10');
+
+  const [bio, setBio] = useState('');
+  const [selectedInterests, setSelectedInterests] = useState(['🎵 Music', '✈️ Travel', '☕ Coffee']);
+
+  // 9 Photos Slots Array
+  const [photos, setPhotos] = useState(Array(9).fill(null));
+  const [activeStoryIndex, setActiveStoryIndex] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Pre-fill questionnaire data if provided
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.firstName || initialData.name) setFirstName(initialData.firstName || initialData.name);
+      if (initialData.bdayDay) setBdayDay(initialData.bdayDay);
+      if (initialData.bdayMonth) setBdayMonth(initialData.bdayMonth);
+      if (initialData.bdayYear) setBdayYear(initialData.bdayYear);
+      if (initialData.gender) setGender(initialData.gender);
+      if (initialData.interestedIn) setInterestedIn(initialData.interestedIn);
+      if (initialData.orientation) setOrientation(initialData.orientation);
+      if (initialData.lookingFor) setLookingFor(initialData.lookingFor);
+      if (initialData.drinkHabit) setDrinkHabit(initialData.drinkHabit);
+      if (initialData.smokeHabit) setSmokeHabit(initialData.smokeHabit);
+      if (initialData.exercise) setExercise(initialData.exercise);
+      if (initialData.pets) setPets(initialData.pets);
+      if (initialData.educationLevel) setEducationLevel(initialData.educationLevel);
+      if (initialData.zodiac) setZodiac(initialData.zodiac);
+      if (initialData.ageRangeMin) setAgeRangeMin(initialData.ageRangeMin.toString());
+      if (initialData.ageRangeMax) setAgeRangeMax(initialData.ageRangeMax.toString());
+      if (initialData.distanceRange) setDistanceRange(initialData.distanceRange.toString());
+      if (initialData.bio) setBio(initialData.bio);
+      if (initialData.interests && Array.isArray(initialData.interests)) setSelectedInterests(initialData.interests);
+
+      // Populate 9 photos grid
+      const existingPhotos = initialData.profileImages || initialData.photos || [];
+      const initialGrid = Array(9).fill(null);
+      if (initialData.profileImage) {
+        initialGrid[0] = initialData.profileImage;
+      }
+      existingPhotos.forEach((img, idx) => {
+        if (idx < 9 && img) initialGrid[idx] = img;
+      });
+      setPhotos(initialGrid);
+    } else {
+      setPhotos(Array(9).fill(null));
+    }
+  }, [initialData]);
+
+  const calculateAge = () => {
+    if (bdayYear && bdayYear.trim().length === 4) {
+      const year = parseInt(bdayYear, 10);
+      const month = parseInt(bdayMonth, 10) || 1;
+      const day = parseInt(bdayDay, 10) || 1;
+
+      const today = new Date();
+      let calculatedAge = today.getFullYear() - year;
+      const monthDiff = (today.getMonth() + 1) - month;
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < day)) {
+        calculatedAge--;
+      }
+      if (calculatedAge >= 18 && calculatedAge <= 120) {
+        return calculatedAge;
+      }
+    }
+    return initialData?.age || 24;
+  };
+
+  const toggleInterest = (item) => {
+    if (selectedInterests.includes(item)) {
+      setSelectedInterests(selectedInterests.filter((i) => i !== item));
+    } else {
+      if (selectedInterests.length < 6) {
+        setSelectedInterests([...selectedInterests, item]);
+      } else {
+        Alert.alert('Limit Reached', 'You can select up to 6 interests.');
+      }
+    }
+  };
+
+  const handlePickImageForSlot = (slotIndex) => {
+    launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, async (response) => {
+      if (response.didCancel) return;
+      if (response.errorCode) {
+        Alert.alert('Image Error', response.errorMessage || 'Failed to pick image');
+        return;
+      }
+      if (response.assets && response.assets.length > 0) {
+        const asset = response.assets[0];
+        const localUri = asset.uri;
+
+        // Optimistically set local URI for immediate UI preview
+        const updatedPhotos = [...photos];
+        updatedPhotos[slotIndex] = localUri;
+        setPhotos(updatedPhotos);
+
+        // Upload file to Backend & Cloudinary
+        try {
+          setLoading(true);
+          const formData = new FormData();
+          formData.append('photo', {
+            uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
+            type: asset.type || 'image/jpeg',
+            name: asset.fileName || `photo_${Date.now()}.jpg`,
+          });
+
+          const uploadRes = await apiClient.uploadImage(formData);
+          const cloudinaryUrl = uploadRes.url || uploadRes.data?.url || uploadRes.secure_url;
+
+          if (cloudinaryUrl) {
+            const finalPhotos = [...photos];
+            finalPhotos[slotIndex] = cloudinaryUrl;
+            setPhotos(finalPhotos);
+          }
+        } catch (uploadErr) {
+          console.log('Backend Cloudinary upload error (using local uri as fallback):', uploadErr);
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleRemovePhotoSlot = (slotIndex) => {
+    const photoToRemove = photos[slotIndex];
+    const updatedPhotos = [...photos];
+    updatedPhotos[slotIndex] = null;
+    setPhotos(updatedPhotos);
+
+    if (photoToRemove && typeof photoToRemove === 'string' && photoToRemove.trim().length > 0) {
+      apiClient.removeProfilePhoto({ imageUrl: photoToRemove, index: slotIndex }).catch((err) => {
+        console.log('Error removing photo slot from backend:', err);
+      });
+    }
+  };
+
+  const handleNext = () => {
+    if (step === 1) {
+      if (!firstName.trim()) {
+        Alert.alert('Required Field', 'Please enter your first name.');
+        return;
+      }
+      setStep(2);
+    } else if (step === 2) {
+      setStep(3);
+    } else if (step === 3) {
+      if (selectedInterests.length === 0) {
+        Alert.alert('Selection Required', 'Please select at least 1 interest.');
+        return;
+      }
+      setStep(4);
+    }
+  };
+
+  const handleSubmit = async () => {
+    const validPhotos = photos.filter((p) => p !== null && p !== undefined);
+    const primaryPhoto = validPhotos[0] || null;
+    const age = calculateAge();
+
+    let coords = null;
+    try {
+      coords = await syncUserLocationService();
+      console.log('Final coords payload acquired for questionnaire:', coords);
+    } catch (locErr) {
+      console.log('Location fetch during questionnaire save skipped:', locErr);
+    }
+
+    const profileData = {
+      firstName: firstName.trim(),
+      name: firstName.trim(),
+      bdayDay: bdayDay.trim() || '15',
+      bdayMonth: bdayMonth.trim() || '08',
+      bdayYear: bdayYear.trim() || '1998',
+      age: age,
+      gender: gender,
+      interestedIn: interestedIn,
+      orientation: orientation,
+      lookingFor: lookingFor,
+      drinkHabit: drinkHabit,
+      smokeHabit: smokeHabit,
+      exercise: exercise,
+      pets: pets,
+      educationLevel: educationLevel,
+      zodiac: zodiac,
+      ageRangeMin: parseInt(ageRangeMin, 10) || 22,
+      ageRangeMax: parseInt(ageRangeMax, 10) || 35,
+      distanceRange: parseInt(distanceRange, 10) || 10,
+      bio: bio.trim(),
+      interests: selectedInterests,
+      profileImage: primaryPhoto,
+      profileImages: validPhotos,
+      ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+      completionPercentage: (() => {
+        let computedPct = 0;
+        if (firstName.trim()) computedPct += 15;
+        const count = validPhotos.length;
+        if (count >= 4) computedPct += 25;
+        else if (count === 3) computedPct += 20;
+        else if (count === 2) computedPct += 15;
+        else if (count === 1) computedPct += 10;
+
+        if (bdayYear.trim()) computedPct += 10;
+        if (gender) computedPct += 10;
+        if (bio.trim()) computedPct += 15;
+        if (selectedInterests.length > 0) computedPct += 15;
+        if (educationLevel || drinkHabit || smokeHabit) computedPct += 10;
+        return Math.min(100, Math.max(0, computedPct));
+      })(),
+    };
+
+    setLoading(true);
+
+    try {
+      await apiClient.saveQuestionnaire(profileData);
+    } catch (err) {
+      console.log('Error saving questionnaire to backend:', err);
+    } finally {
+      setLoading(false);
+      if (isEditMode && onCloseModal) {
+        onCloseModal();
+      }
+      if (onFinish) {
+        onFinish(profileData);
+      } else if (onNavigate && !isEditMode) {
+        onNavigate('HOME');
+      }
+    }
+  };
+
+  const validStoryPhotos = photos.filter((p) => p !== null);
+
+  return (
+    <SimulatedGradientBackground>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardView}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.containerWrapper, { maxWidth: cardWidth }]}>
+            {/* Top Bar with Back Arrow */}
+            {(isEditMode || onCloseModal || onNavigate) && (
+              <View style={styles.editModeHeader}>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (onCloseModal) {
+                      onCloseModal();
+                    } else if (onNavigate) {
+                      onNavigate('HOME');
+                    }
+                  }}
+                  style={styles.closeBtn}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.closeBtnText}>← Back to Profile</Text>
+                </TouchableOpacity>
+                <Text style={styles.editModeTitle}>
+                  {isEditMode ? 'Edit Questionnaire' : 'Retake Questionnaire'}
+                </Text>
+              </View>
+            )}
+
+            {/* Progress & Step Navigation Bar */}
+            <View style={styles.progressContainer}>
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFill, { width: `${(step / 4) * 100}%` }]} />
+              </View>
+              <View style={styles.stepTabsRow}>
+                {[
+                  { id: 1, label: '1. Info' },
+                  { id: 2, label: '2. Habits' },
+                  { id: 3, label: '3. Bio' },
+                  { id: 4, label: '4. Photos & Status' },
+                ].map((tab) => (
+                  <TouchableOpacity
+                    key={tab.id}
+                    style={[styles.stepTabChip, step === tab.id && styles.stepTabChipActive]}
+                    onPress={() => setStep(tab.id)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.stepTabText, step === tab.id && styles.stepTabTextActive]}>
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Title Header */}
+            <View style={styles.headerContainer}>
+              <Text style={styles.title}>
+                {step === 1 && 'Basic Information'}
+                {step === 2 && 'Lifestyle & Preferences'}
+                {step === 3 && 'Passions & Bio'}
+                {step === 4 && 'Photos & Preview'}
+              </Text>
+              <Text style={styles.subtitle}>
+                {step === 1 && 'Tell potential matches who you are'}
+                {step === 2 && 'Share your habits & dating expectations'}
+                {step === 3 && 'Show off what makes you unique'}
+                {step === 4 && 'Upload up to 9 photos from your gallery'}
+              </Text>
+            </View>
+
+            {/* Card Content */}
+            <View style={styles.card}>
+              {step === 1 && (
+                <>
+                  <CustomInput
+                    label="First Name"
+                    iconType="user"
+                    placeholder="e.g. Alex"
+                    value={firstName}
+                    onChangeText={setFirstName}
+                  />
+
+                  <Text style={styles.inputLabel}>Date of Birth</Text>
+                  <View style={styles.bdayRow}>
+                    <View style={styles.bdayColSmall}>
+                      <CustomInput
+                        placeholder="DD"
+                        keyboardType="number-pad"
+                        maxLength={2}
+                        value={bdayDay}
+                        onChangeText={setBdayDay}
+                      />
+                    </View>
+                    <View style={styles.bdayColSmall}>
+                      <CustomInput
+                        placeholder="MM"
+                        keyboardType="number-pad"
+                        maxLength={2}
+                        value={bdayMonth}
+                        onChangeText={setBdayMonth}
+                      />
+                    </View>
+                    <View style={styles.bdayColLarge}>
+                      <CustomInput
+                        placeholder="YYYY"
+                        keyboardType="number-pad"
+                        maxLength={4}
+                        value={bdayYear}
+                        onChangeText={setBdayYear}
+                      />
+                    </View>
+                  </View>
+
+                  <Text style={styles.inputLabel}>Gender</Text>
+                  <View style={styles.optionsRow}>
+                    {['Women', 'Male', 'Non-binary'].map((g) => (
+                      <TouchableOpacity
+                        key={g}
+                        style={[styles.chip, gender === g && styles.chipSelected]}
+                        onPress={() => setGender(g)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[styles.chipText, gender === g && styles.chipTextSelected]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                        >
+                          {g}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.inputLabel}>Interested In</Text>
+                  <View style={styles.optionsRow}>
+                    {['Men', 'Women', 'Everyone'].map((opt) => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[styles.chip, interestedIn === opt && styles.chipSelected]}
+                        onPress={() => setInterestedIn(opt)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[styles.chipText, interestedIn === opt && styles.chipTextSelected]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                        >
+                          {opt}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.inputLabel}>Sexual Orientation</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                    {ORIENTATIONS.map((o) => (
+                      <TouchableOpacity
+                        key={o}
+                        style={[styles.scrollChip, orientation === o && styles.chipSelected]}
+                        onPress={() => setOrientation(o)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, orientation === o && styles.chipTextSelected]}>
+                          {o}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  <CustomButton title="CONTINUE" variant="primary" onPress={handleNext} style={styles.nextBtn} />
+                </>
+              )}
+
+              {step === 2 && (
+                <>
+                  <Text style={styles.inputLabel}>Looking For</Text>
+                  <View style={styles.wrapRow}>
+                    {LOOKING_FOR.map((lf) => (
+                      <TouchableOpacity
+                        key={lf}
+                        style={[styles.wrapChip, lookingFor === lf && styles.chipSelected]}
+                        onPress={() => setLookingFor(lf)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, lookingFor === lf && styles.chipTextSelected]}>
+                          {lf}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.inputLabel}>Drink Habit</Text>
+                  <View style={styles.optionsRow}>
+                    {DRINK_HABITS.map((dh) => (
+                      <TouchableOpacity
+                        key={dh}
+                        style={[styles.chip, drinkHabit === dh && styles.chipSelected]}
+                        onPress={() => setDrinkHabit(dh)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[styles.chipText, drinkHabit === dh && styles.chipTextSelected]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                        >
+                          {dh}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.inputLabel}>Smoke Habit</Text>
+                  <View style={styles.optionsRow}>
+                    {SMOKE_HABITS.map((sh) => (
+                      <TouchableOpacity
+                        key={sh}
+                        style={[styles.chip, smokeHabit === sh && styles.chipSelected]}
+                        onPress={() => setSmokeHabit(sh)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[styles.chipText, smokeHabit === sh && styles.chipTextSelected]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                        >
+                          {sh}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.inputLabel}>Workout / Exercise</Text>
+                  <View style={styles.optionsRow}>
+                    {EXERCISE_HABITS.map((ex) => (
+                      <TouchableOpacity
+                        key={ex}
+                        style={[styles.chip, exercise === ex && styles.chipSelected]}
+                        onPress={() => setExercise(ex)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[styles.chipText, exercise === ex && styles.chipTextSelected]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                        >
+                          {ex}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <Text style={styles.inputLabel}>Pets</Text>
+                  <View style={styles.optionsRow}>
+                    {PETS_OPTIONS.map((p) => (
+                      <TouchableOpacity
+                        key={p}
+                        style={[styles.chip, pets === p && styles.chipSelected]}
+                        onPress={() => setPets(p)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[styles.chipText, pets === p && styles.chipTextSelected]}
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                        >
+                          {p}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Education Level Question */}
+                  <Text style={styles.inputLabel}>🎓 Education Level</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                    {EDUCATION_LEVELS.map((edu) => (
+                      <TouchableOpacity
+                        key={edu}
+                        style={[styles.scrollChip, educationLevel === edu && styles.chipSelected]}
+                        onPress={() => setEducationLevel(edu)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, educationLevel === edu && styles.chipTextSelected]}>
+                          {edu}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {/* Maximum Distance Preference */}
+                  <Text style={styles.inputLabel}>📍 Maximum Distance Preference: {distanceRange} km</Text>
+                  <View style={styles.sliderRow}>
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setDistanceRange(Math.max(1, (parseInt(distanceRange, 10) || 10) - 5).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>-</Text>
+                    </TouchableOpacity>
+
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.distanceChipsContainer}>
+                      {['5', '10', '25', '50', '100'].map((dist) => (
+                        <TouchableOpacity
+                          key={dist}
+                          style={[styles.distChip, distanceRange === dist && styles.chipSelected]}
+                          onPress={() => setDistanceRange(dist)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.chipText, distanceRange === dist && styles.chipTextSelected]}>
+                            {dist} km
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setDistanceRange(Math.min(200, (parseInt(distanceRange, 10) || 10) + 5).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Age Range Preference (Like Distance) */}
+                  <Text style={styles.inputLabel}>
+                    🎂 Preferred Age Range: {ageRangeMin} - {ageRangeMax} years old
+                  </Text>
+
+                  {/* Minimum Preferred Age */}
+                  <Text style={styles.subInputLabel}>Min Age Preference: ({ageRangeMin} yrs)</Text>
+                  <View style={styles.sliderRow}>
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMin(Math.max(18, (parseInt(ageRangeMin, 10) || 18) - 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>-</Text>
+                    </TouchableOpacity>
+
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.distanceChipsContainer}>
+                      {['18', '20', '22', '25', '28', '30'].map((val) => (
+                        <TouchableOpacity
+                          key={val}
+                          style={[styles.distChip, ageRangeMin === val && styles.chipSelected]}
+                          onPress={() => setAgeRangeMin(val)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.chipText, ageRangeMin === val && styles.chipTextSelected]}>
+                            {val} yrs
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMin(Math.min(parseInt(ageRangeMax, 10) - 1, (parseInt(ageRangeMin, 10) || 18) + 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Maximum Preferred Age */}
+                  <Text style={styles.subInputLabel}>Max Age Preference: ({ageRangeMax} yrs)</Text>
+                  <View style={styles.sliderRow}>
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMax(Math.max(parseInt(ageRangeMin, 10) + 1, (parseInt(ageRangeMax, 10) || 35) - 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>-</Text>
+                    </TouchableOpacity>
+
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.distanceChipsContainer}>
+                      {['25', '30', '35', '40', '45', '50', '60'].map((val) => (
+                        <TouchableOpacity
+                          key={val}
+                          style={[styles.distChip, ageRangeMax === val && styles.chipSelected]}
+                          onPress={() => setAgeRangeMax(val)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.chipText, ageRangeMax === val && styles.chipTextSelected]}>
+                            {val} yrs
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMax(Math.min(75, (parseInt(ageRangeMax, 10) || 35) + 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Zodiac Sign Question */}
+                  <Text style={styles.inputLabel}>⭐ Zodiac Sign</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                    {ZODIAC_SIGNS.map((z) => (
+                      <TouchableOpacity
+                        key={z}
+                        style={[styles.scrollChip, zodiac === z && styles.chipSelected]}
+                        onPress={() => setZodiac(z)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, zodiac === z && styles.chipTextSelected]}>
+                          {z}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  <View style={styles.btnRow}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(1)} activeOpacity={0.8}>
+                      <Text style={styles.backBtnText}>BACK</Text>
+                    </TouchableOpacity>
+                    <CustomButton title="NEXT" variant="primary" onPress={handleNext} style={styles.flexBtn} />
+                  </View>
+                </>
+              )}
+
+              {step === 3 && (
+                <>
+                  <CustomInput
+                    label="Bio / About Me"
+                    placeholder="Tell potential matches about yourself..."
+                    multiline
+                    numberOfLines={3}
+                    value={bio}
+                    onChangeText={setBio}
+                    style={styles.bioInput}
+                  />
+
+                  <Text style={styles.inputLabel}>Select Your Interests (Max 6)</Text>
+                  <View style={styles.interestsWrap}>
+                    {INTEREST_OPTIONS.map((item) => {
+                      const isSelected = selectedInterests.includes(item);
+                      return (
+                        <TouchableOpacity
+                          key={item}
+                          style={[styles.interestChip, isSelected && styles.interestChipSelected]}
+                          onPress={() => toggleInterest(item)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.interestChipText, isSelected && styles.interestChipTextSelected]}>
+                            {item}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <View style={styles.btnRow}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(2)} activeOpacity={0.8}>
+                      <Text style={styles.backBtnText}>BACK</Text>
+                    </TouchableOpacity>
+                    <CustomButton title="NEXT" variant="primary" onPress={handleNext} style={styles.flexBtn} />
+                  </View>
+                </>
+              )}
+
+              {step === 4 && (
+                <>
+                  {/* Status / Story Horizontal Carousel Preview */}
+                  <Text style={styles.inputLabel}>📸 Status / Story Preview</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.storyRow}>
+                    {validStoryPhotos.map((url, idx) => (
+                      <TouchableOpacity
+                        key={idx}
+                        onPress={() => setActiveStoryIndex(idx)}
+                        activeOpacity={0.8}
+                        style={styles.storyRing}
+                      >
+                        <Image source={{ uri: url }} style={styles.storyThumb} />
+                        <Text style={styles.storyBadge}>Photo #{idx + 1}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {/* 9 Photo Slots Grid */}
+                  <Text style={styles.inputLabel}>Upload Photos (Up to 9 Slots)</Text>
+                  <Text style={styles.gridSubtext}>Slot #1 will be used as your Main Profile Picture</Text>
+
+                  <View style={styles.gridContainer}>
+                    {photos.map((photoUri, index) => (
+                      <View key={index} style={[styles.gridSlot, { width: slotWidth, height: slotHeight }]}>
+                        {photoUri ? (
+                          <View style={styles.slotImageWrapper}>
+                            <Image source={{ uri: photoUri }} style={styles.slotImage} />
+                            {index === 0 && (
+                              <View style={styles.mainBadge}>
+                                <Text style={styles.mainBadgeText}>Main</Text>
+                              </View>
+                            )}
+                            <TouchableOpacity
+                              style={styles.deleteSlotBtn}
+                              onPress={() => handleRemovePhotoSlot(index)}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={styles.deleteSlotText}>✕</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.emptySlotBtn}
+                            onPress={() => handlePickImageForSlot(index)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.plusIcon}>+</Text>
+                            <Text style={styles.slotLabel}>Photo {index + 1}</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+
+                  <View style={styles.btnRow}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(3)} activeOpacity={0.8}>
+                      <Text style={styles.backBtnText}>BACK</Text>
+                    </TouchableOpacity>
+                    <CustomButton
+                      title={isEditMode ? "SAVE CHANGES" : "COMPLETE PROFILE"}
+                      variant="primary"
+                      loading={loading}
+                      onPress={handleSubmit}
+                      style={styles.flexBtn}
+                    />
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Fullscreen Status & Photo Preview Modal */}
+      <PreviewModal
+        visible={activeStoryIndex !== null}
+        photos={validStoryPhotos}
+        initialIndex={activeStoryIndex || 0}
+        userName={firstName || 'My Status'}
+        userAvatar={validStoryPhotos[0]}
+        onClose={() => setActiveStoryIndex(null)}
+      />
+    </SimulatedGradientBackground>
+  );
+};
+
+const styles = StyleSheet.create({
+  keyboardView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 36,
+    alignItems: 'center',
+  },
+  containerWrapper: {
+    width: '100%',
+  },
+  editModeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  closeBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 16,
+  },
+  closeBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  editModeTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  progressContainer: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  progressBarBg: {
+    width: '100%',
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 3,
+  },
+  stepTabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 10,
+  },
+  stepTabChip: {
+    flex: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    marginHorizontal: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  stepTabChipActive: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFFFFF',
+  },
+  stepTabText: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  stepTabTextActive: {
+    color: '#FE3C72',
+    fontWeight: '800',
+  },
+  headerContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 4,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  card: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    width: '100%',
+  },
+  inputLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+    marginLeft: 2,
+    marginTop: 12,
+    opacity: 0.95,
+  },
+  subInputLabel: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    marginBottom: 4,
+    marginLeft: 2,
+  },
+  gridSubtext: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 12,
+    marginBottom: 12,
+    marginLeft: 2,
+  },
+  bdayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  bdayColSmall: {
+    flex: 1,
+    marginRight: 8,
+  },
+  bdayColLarge: {
+    flex: 1.4,
+  },
+  optionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  wrapRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 12,
+  },
+  scrollOptions: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  chip: {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 3,
+    paddingHorizontal: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  distChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    marginHorizontal: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  wrapChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    margin: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  scrollChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  chipSelected: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFFFFF',
+  },
+  chipText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  chipTextSelected: {
+    color: '#FE3C72',
+    fontWeight: '700',
+  },
+  bioInput: {
+    minHeight: 85,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    paddingVertical: 10,
+  },
+  interestsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 16,
+  },
+  interestChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    margin: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  interestChipSelected: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFFFFF',
+  },
+  interestChipText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  interestChipTextSelected: {
+    color: '#FE3C72',
+    fontWeight: '700',
+  },
+  storyRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  storyRing: {
+    alignItems: 'center',
+    marginRight: 12,
+    padding: 3,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: '#FE3C72',
+  },
+  storyThumb: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+  },
+  storyBadge: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  gridSlot: {
+    marginBottom: 10,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderStyle: 'dashed',
+  },
+  slotImageWrapper: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+  },
+  slotImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mainBadge: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    backgroundColor: '#FE3C72',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  mainBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  deleteSlotBtn: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteSlotText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  emptySlotBtn: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  plusIcon: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '600',
+  },
+  slotLabel: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  nextBtn: {
+    marginTop: 18,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 18,
+  },
+  backBtn: {
+    height: 52,
+    paddingHorizontal: 20,
+    borderRadius: 26,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  backBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  flexBtn: {
+    flex: 1,
+    marginVertical: 0,
+  },
+  storyModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  storyModalClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    padding: 10,
+    zIndex: 10,
+  },
+  storyModalCloseText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  storyFullImage: {
+    borderRadius: 16,
+  },
+  storyCounter: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    marginTop: 16,
+    fontWeight: '600',
+  },
+  sliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginVertical: 10,
+  },
+  distanceChipsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  stepBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepBtnText: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+});
+
+export default QuestionnaireScreen;
