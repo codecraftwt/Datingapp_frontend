@@ -71,13 +71,6 @@ export const LoginScreen = ({ onNavigate }) => {
 
         dispatch(setCredentials({ user, token }));
 
-        // Trigger real device location check and sync to database via API upon login
-        try {
-          await syncUserLocationService(true);
-        } catch (locErr) {
-          console.log('Location sync on login error:', locErr);
-        }
-
         if (onNavigate) {
           if (isReturningUser) {
             await onNavigate('HOME', user);
@@ -85,6 +78,14 @@ export const LoginScreen = ({ onNavigate }) => {
             await onNavigate('QUESTIONNAIRE', user);
           }
         }
+
+        // Trigger real device location check upon login
+        // If device location/GPS is OFF, promptTurnOnLocationAlert popup will appear immediately!
+        setTimeout(() => {
+          syncUserLocationService(true).catch((locErr) => {
+            console.log('Location sync on login error:', locErr);
+          });
+        }, 300);
       } else {
         Alert.alert('Login Failed', res.message || 'Invalid email or password.');
       }

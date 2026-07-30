@@ -2794,6 +2794,30 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].educationLevel}</Text>
                       </View>
                     )}
+                    {MOCK_MATCHES[swipeIndex].height && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>📏</Text>
+                        <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].height}</Text>
+                      </View>
+                    )}
+                    {MOCK_MATCHES[swipeIndex].weight && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>⚖️</Text>
+                        <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].weight}</Text>
+                      </View>
+                    )}
+                    {MOCK_MATCHES[swipeIndex].job && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>💼</Text>
+                        <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].job}</Text>
+                      </View>
+                    )}
+                    {MOCK_MATCHES[swipeIndex].college && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🏛️</Text>
+                        <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].college}</Text>
+                      </View>
+                    )}
                     {MOCK_MATCHES[swipeIndex].zodiac && (
                       <View style={styles.cardExpandedItem}>
                         <Text style={styles.cardExpandedEmoji}>🌌</Text>

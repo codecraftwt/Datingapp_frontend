@@ -357,7 +357,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     if (displayData.interests && displayData.interests.length > 0) score += 15;
 
     // 7. Lifestyle / Education Habits (10%)
-    if (displayData.educationLevel || displayData.drinkHabit || displayData.smokeHabit) score += 10;
+    if (displayData.educationLevel || displayData.drinkHabit || displayData.smokeHabit || displayData.height || displayData.weight || displayData.job || displayData.college) score += 10;
 
     return Math.min(100, Math.max(0, score));
   };
@@ -572,6 +572,30 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             <View style={styles.badge}>
               <Text style={styles.badgeLabel}>🎓 Education:</Text>
               <Text style={styles.badgeVal}>{displayData.educationLevel}</Text>
+            </View>
+          )}
+          {displayData.height && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeLabel}>📏 Height:</Text>
+              <Text style={styles.badgeVal}>{displayData.height}</Text>
+            </View>
+          )}
+          {displayData.weight && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeLabel}>⚖️ Weight:</Text>
+              <Text style={styles.badgeVal}>{displayData.weight}</Text>
+            </View>
+          )}
+          {displayData.job && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeLabel}>💼 Job:</Text>
+              <Text style={styles.badgeVal}>{displayData.job}</Text>
+            </View>
+          )}
+          {displayData.college && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeLabel}>🏛️ College:</Text>
+              <Text style={styles.badgeVal}>{displayData.college}</Text>
             </View>
           )}
           {displayData.zodiac && (

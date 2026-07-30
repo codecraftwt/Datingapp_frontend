@@ -56,6 +56,35 @@ const EDUCATION_LEVELS = [
 ];
 const ZODIAC_SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'];
 
+const JOB_EXAMPLES = [
+  '💻 Software Engineer',
+  '👩‍🏫 Teacher',
+  '🩺 Doctor',
+  '🎓 Student',
+  '💼 Business Owner',
+];
+
+const HEIGHT_OPTIONS = [
+  "5'2\" (157 cm)",
+  "5'4\" (163 cm)",
+  "5'6\" (168 cm)",
+  "5'8\" (173 cm)",
+  "5'10\" (178 cm)",
+  "6'0\" (183 cm)",
+  "6'2\" (188 cm)",
+];
+
+const WEIGHT_OPTIONS = [
+  "50 kg (110 lbs)",
+  "55 kg (121 lbs)",
+  "60 kg (132 lbs)",
+  "65 kg (143 lbs)",
+  "70 kg (154 lbs)",
+  "75 kg (165 lbs)",
+  "80 kg (176 lbs)",
+  "85 kg (187 lbs)",
+];
+
 export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditMode, onCloseModal }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const cardWidth = Math.min(windowWidth - 32, 600);
@@ -79,8 +108,12 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
   const [smokeHabit, setSmokeHabit] = useState('Never');
   const [exercise, setExercise] = useState('Active');
   const [pets, setPets] = useState('Dog');
-  const [educationLevel, setEducationLevel] = useState('Bachelors');
+  const [educationLevel, setEducationLevel] = useState('Bachelors Degree');
   const [zodiac, setZodiac] = useState('Leo');
+  const [height, setHeight] = useState('5\'10" (178 cm)');
+  const [weight, setWeight] = useState('60 kg (132 lbs)');
+  const [job, setJob] = useState('');
+  const [college, setCollege] = useState('');
   const [ageRangeMin, setAgeRangeMin] = useState('22');
   const [ageRangeMax, setAgeRangeMax] = useState('35');
   const [distanceRange, setDistanceRange] = useState('10');
@@ -110,6 +143,10 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
       if (initialData.pets) setPets(initialData.pets);
       if (initialData.educationLevel) setEducationLevel(initialData.educationLevel);
       if (initialData.zodiac) setZodiac(initialData.zodiac);
+      if (initialData.height) setHeight(initialData.height);
+      if (initialData.weight) setWeight(initialData.weight);
+      if (initialData.job) setJob(initialData.job);
+      if (initialData.college) setCollege(initialData.college);
       if (initialData.ageRangeMin) setAgeRangeMin(initialData.ageRangeMin.toString());
       if (initialData.ageRangeMax) setAgeRangeMax(initialData.ageRangeMax.toString());
       if (initialData.distanceRange) setDistanceRange(initialData.distanceRange.toString());
@@ -266,6 +303,10 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
       pets: pets,
       educationLevel: educationLevel,
       zodiac: zodiac,
+      height: height.trim(),
+      weight: weight.trim(),
+      job: job.trim(),
+      college: college.trim(),
       ageRangeMin: parseInt(ageRangeMin, 10) || 22,
       ageRangeMax: parseInt(ageRangeMax, 10) || 35,
       distanceRange: parseInt(distanceRange, 10) || 10,
@@ -287,7 +328,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
         if (gender) computedPct += 10;
         if (bio.trim()) computedPct += 15;
         if (selectedInterests.length > 0) computedPct += 15;
-        if (educationLevel || drinkHabit || smokeHabit) computedPct += 10;
+        if (educationLevel || drinkHabit || smokeHabit || height || weight || job || college) computedPct += 10;
         return Math.min(100, Math.max(0, computedPct));
       })(),
     };
@@ -606,6 +647,84 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
+
+                  {/* Height Question */}
+                  <Text style={styles.inputLabel}>📏 Height</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                    {HEIGHT_OPTIONS.map((h) => (
+                      <TouchableOpacity
+                        key={h}
+                        style={[styles.scrollChip, height === h && styles.chipSelected]}
+                        onPress={() => setHeight(h)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, height === h && styles.chipTextSelected]}>
+                          {h}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <CustomInput
+                    placeholder="Or enter custom height (e.g. 5'9&quot; or 175 cm)"
+                    value={height}
+                    onChangeText={setHeight}
+                  />
+
+                  {/* Weight Question */}
+                  <Text style={styles.inputLabel}>⚖️ Weight</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                    {WEIGHT_OPTIONS.map((w) => (
+                      <TouchableOpacity
+                        key={w}
+                        style={[styles.scrollChip, weight === w && styles.chipSelected]}
+                        onPress={() => setWeight(w)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, weight === w && styles.chipTextSelected]}>
+                          {w}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <CustomInput
+                    placeholder="Or enter custom weight (e.g. 62 kg or 136 lbs)"
+                    value={weight}
+                    onChangeText={setWeight}
+                  />
+
+                  {/* Job / Occupation Question */}
+                  <Text style={styles.inputLabel}>💼 Job / Occupation</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                    {JOB_EXAMPLES.map((j) => {
+                      const titleOnly = j.replace(/^[^\s]+\s/, '');
+                      const isSelected = job === titleOnly || job === j;
+                      return (
+                        <TouchableOpacity
+                          key={j}
+                          style={[styles.scrollChip, isSelected && styles.chipSelected]}
+                          onPress={() => setJob(titleOnly)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
+                            {j}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                  <CustomInput
+                    placeholder="e.g. Software Engineer, Teacher, Doctor, Student, Business Owner"
+                    value={job}
+                    onChangeText={setJob}
+                  />
+
+                  {/* College / University Question */}
+                  <CustomInput
+                    label="🏛️ College / University"
+                    placeholder="e.g. Harvard University, Stanford, MIT..."
+                    value={college}
+                    onChangeText={setCollege}
+                  />
 
                   {/* Maximum Distance Preference */}
                   <Text style={styles.inputLabel}>📍 Maximum Distance Preference: {distanceRange} km</Text>
