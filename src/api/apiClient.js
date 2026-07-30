@@ -1,8 +1,35 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { BASE_URL, CANDIDATE_URLS, getBaseUrl, setBaseUrl } from './config';
 
-// Use localhost:5000 (works for physical real devices with adb reverse & iOS) or local network IP http://10.0.3.87:5000
-const BASE_URL = Platform.OS === 'android' ? 'http://localhost:5000' : 'http://localhost:5000';
+let isResolving = false;
+let activeResolvedUrl = null;
+
+const resolveWorkingBaseUrl = async () => {
+  if (activeResolvedUrl) return activeResolvedUrl;
+  if (isResolving) return getBaseUrl();
+  isResolving = true;
+
+  for (const candidate of CANDIDATE_URLS) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(`${candidate}/`, { method: 'GET', signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (res.ok || res.status < 500) {
+        console.log(`[apiClient] Connected to backend server at: ${candidate}`);
+        activeResolvedUrl = candidate;
+        setBaseUrl(candidate);
+        isResolving = false;
+        return candidate;
+      }
+    } catch (err) {
+      // ignore and try next candidate URL
+    }
+  }
+
+  isResolving = false;
+  return getBaseUrl();
+};
 
 const request = async (url, options = {}) => {
   try {
@@ -24,10 +51,23 @@ const request = async (url, options = {}) => {
       delete headers['content-type'];
     }
 
-    const response = await fetch(`${BASE_URL}${url}`, {
-      ...options,
-      headers,
-    });
+    let currentBase = activeResolvedUrl || (await resolveWorkingBaseUrl());
+
+    let response;
+    try {
+      response = await fetch(`${currentBase}${url}`, {
+        ...options,
+        headers,
+      });
+    } catch (networkErr) {
+      console.warn(`[apiClient] Network request failed on ${currentBase}${url}. Retrying with auto-resolution...`);
+      activeResolvedUrl = null;
+      currentBase = await resolveWorkingBaseUrl();
+      response = await fetch(`${currentBase}${url}`, {
+        ...options,
+        headers,
+      });
+    }
 
     const data = await response.json();
     if (!response.ok) {

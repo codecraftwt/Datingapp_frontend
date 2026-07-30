@@ -1,61 +1,95 @@
-import { Platform, PermissionsAndroid } from 'react-native';
+import { Platform, PermissionsAndroid, Alert, Linking, AppState } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import { apiClient } from '../api/apiClient';
 
+// Configure Geolocation provider settings
+try {
+  Geolocation.setRNConfiguration({
+    skipPermissionRequests: false,
+    authorizationLevel: 'whenInUse',
+    locationProvider: 'auto',
+  });
+} catch (configErr) {
+  console.log('Geolocation configuration note:', configErr);
+}
+
 /**
- * Fetch approximate location coordinates using public IP geolocation services
+ * Open Device Location Settings to allow user to turn on GPS
  */
-export const fetchLocationByIP = async () => {
-  try {
-    console.log('🌐 [IP GEOLOCATION] Attempting IP-based Geolocation fallback via ipapi.co...');
-    const response = await fetch('https://ipapi.co/json/', {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
+export const openDeviceLocationSettings = () => {
+  if (Platform.OS === 'android') {
+    Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS').catch(() => {
+      Linking.openSettings();
     });
-    if (response.ok) {
-      const data = await response.json();
-      console.log('🌐 [IP GEOLOCATION RESPONSE ipapi.co]:', JSON.stringify(data, null, 2));
-      if (data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
-        console.log(`✅ [IP GEO SUCCESS] Latitude: ${data.latitude}, Longitude: ${data.longitude} (${data.city || 'Unknown'}, ${data.country_name || ''})`);
-        return { latitude: data.latitude, longitude: data.longitude, city: data.city };
-      }
-    }
-  } catch (err) {
-    console.log('⚠️ [IP GEO STEP 1 FAILED] ipapi.co error:', err.message || err);
+  } else {
+    Linking.openSettings();
   }
-
-  try {
-    console.log('🌐 [IP GEOLOCATION] Trying secondary IP Geolocation fallback via ip-api.com...');
-    const response2 = await fetch('http://ip-api.com/json/', { method: 'GET' });
-    if (response2.ok) {
-      const data2 = await response2.json();
-      console.log('🌐 [IP GEOLOCATION RESPONSE ip-api.com]:', JSON.stringify(data2, null, 2));
-      if (data2 && data2.status === 'success' && typeof data2.lat === 'number' && typeof data2.lon === 'number') {
-        console.log(`✅ [IP GEO SUCCESS] Latitude: ${data2.lat}, Longitude: ${data2.lon} (${data2.city || ''})`);
-        return { latitude: data2.lat, longitude: data2.lon, city: data2.city };
-      }
-    }
-  } catch (err2) {
-    console.log('❌ [IP GEO STEP 2 FAILED] ip-api.com error:', err2.message || err2);
-  }
-
-  return null;
 };
 
 /**
- * Main Location Service method to acquire user coordinates (Hardware GPS with IP Fallback)
- * and sync them to backend database.
+ * Prompt user with an alert to turn on location/GPS
+ * and attach an AppState listener to automatically retry fetching and saving real coordinates
+ * as soon as the user turns on Location in settings and returns to the app.
  */
-export const syncUserLocationService = async () => {
+const promptTurnOnLocationAlert = (reason = 'disabled') => {
+  if (reason === 'permission_denied') {
+    Alert.alert(
+      'Location Permission Required',
+      'Please allow location access so we can show you nearby profiles around you.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => Linking.openSettings() },
+      ]
+    );
+  } else {
+    Alert.alert(
+      'Location Services Disabled',
+      'Your device location (GPS) is turned off. Please turn on Location services to find matches around you.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Turn On Location',
+          onPress: () => {
+            openDeviceLocationSettings();
+
+            // Set up listener: when user turns Location ON and returns to app,
+            // immediately fetch real GPS coordinates and save to MongoDB via API!
+            let subscription;
+            const handleAppStateChange = async (nextAppState) => {
+              if (nextAppState === 'active') {
+                if (subscription && typeof subscription.remove === 'function') {
+                  subscription.remove();
+                } else {
+                  AppState.removeEventListener('change', handleAppStateChange);
+                }
+                console.log('📍 [LOCATION SERVICE] App returned to active. Retrying real GPS acquisition...');
+                setTimeout(async () => {
+                  await syncUserLocationService(false);
+                }, 1500);
+              }
+            };
+
+            subscription = AppState.addEventListener('change', handleAppStateChange);
+          },
+        },
+      ]
+    );
+  }
+};
+
+/**
+ * Main Location Service method: acquires real device GPS coordinates ONLY
+ * and syncs them to backend database. If location is turned off or denied,
+ * prompts an Alert for the user to turn on location settings.
+ */
+export const syncUserLocationService = async (showAlertOnFailure = true) => {
   console.log('----------------------------------------------------');
-  console.log('📍 [LOCATION SERVICE] Starting user location acquisition...');
+  console.log('📍 [LOCATION SERVICE] Acquiring real device GPS coordinates...');
   console.log('----------------------------------------------------');
-  let coords = null;
 
   try {
     let hasPermission = false;
     if (Platform.OS === 'android') {
-      console.log('📍 [GPS STEP 1] Requesting Android FINE_LOCATION permission...');
       const granted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         {
@@ -65,67 +99,73 @@ export const syncUserLocationService = async () => {
           buttonPositive: 'Allow',
         }
       );
-      console.log('📍 [GPS STEP 2] PermissionsAndroid result:', granted);
       hasPermission = granted === PermissionsAndroid.RESULTS.GRANTED;
     } else {
       hasPermission = true;
     }
 
-    if (hasPermission) {
-      try {
-        console.log('📍 [GPS STEP 3] Calling Geolocation.getCurrentPosition()...');
-        coords = await new Promise((resolve) => {
-          Geolocation.getCurrentPosition(
-            (position) => {
-              console.log('✅ [GEOLOCATION API SUCCESS] Received Position Object:');
-              console.log('    Latitude:', position.coords.latitude);
-              console.log('    Longitude:', position.coords.longitude);
-              console.log('    Accuracy:', position.coords.accuracy, 'meters');
-              console.log('    Altitude:', position.coords.altitude);
-              console.log('    Heading:', position.coords.heading);
-              console.log('    Speed:', position.coords.speed);
-              console.log('    Timestamp:', position.timestamp);
-              console.log('    Full Raw Position Object:', JSON.stringify(position, null, 2));
-
-              resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-            },
-            (error) => {
-              console.log('❌ [GEOLOCATION API ERROR] getCurrentPosition failed:');
-              console.log('    Error Code:', error.code, '(1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT)');
-              console.log('    Error Message:', error.message);
-              console.log('    Full Error Object:', JSON.stringify(error, null, 2));
-              resolve(null);
-            },
-            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
-          );
-        });
-      } catch (gpsErr) {
-        console.log('⚠️ [GEOLOCATION API EXCEPTION] Exception calling getCurrentPosition:', gpsErr.message || gpsErr);
+    if (!hasPermission) {
+      console.log('❌ [LOCATION SERVICE] Permission denied by user.');
+      if (showAlertOnFailure) {
+        promptTurnOnLocationAlert('permission_denied');
       }
-    } else {
-      console.log('ℹ️ [GPS STEP 3] Permission denied by user.');
+      return null;
     }
 
-    // Fallback to IP Geolocation if hardware GPS is undefined, timed out, or unpermitted
+    // Try high accuracy GPS first, fallback to standard/network accuracy
+    const getPosition = (highAccuracy) =>
+      new Promise((resolve) => {
+        Geolocation.getCurrentPosition(
+          (position) => {
+            if (position && position.coords && typeof position.coords.latitude === 'number' && typeof position.coords.longitude === 'number') {
+              resolve({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+              });
+            } else {
+              resolve(null);
+            }
+          },
+          (err) => {
+            console.log(`⚠️ Geolocation getCurrentPosition (highAccuracy=${highAccuracy}) failed:`, err?.message || err);
+            resolve(null);
+          },
+          {
+            enableHighAccuracy: highAccuracy,
+            timeout: 20000,
+            maximumAge: 30000,
+          }
+        );
+      });
+
+    let coords = await getPosition(true);
     if (!coords) {
-      console.log('🔄 [FALLBACK] Hardware GPS did not return coordinates. Triggering IP Geolocation...');
-      coords = await fetchLocationByIP();
+      console.log('📍 High accuracy GPS timed out, trying standard/network accuracy...');
+      coords = await getPosition(false);
     }
 
     if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
-      console.log(`📍 [LOCATION SERVICE] Final coordinates to send to backend: [Lat: ${coords.latitude}, Lng: ${coords.longitude}]`);
+      console.log(`✅ [REAL DEVICE GPS SUCCESS] Latitude: ${coords.latitude}, Longitude: ${coords.longitude}`);
+      
+      // Update location via backend API
       const res = await apiClient.updateLocation({
         latitude: coords.latitude,
         longitude: coords.longitude,
       });
-      console.log('✅ [LOCATION SERVICE] Server response:', JSON.stringify(res, null, 2));
+      console.log('✅ [DATABASE SUCCESS] Saved real device coordinates to MongoDB:', JSON.stringify(res, null, 2));
       return coords;
     } else {
-      console.log('⚠️ [LOCATION SERVICE] Could not acquire valid coordinates from GPS or IP.');
+      console.log('❌ [LOCATION SERVICE] Device GPS is turned OFF or unavailable.');
+      if (showAlertOnFailure) {
+        promptTurnOnLocationAlert('disabled');
+      }
       return null;
     }
   } catch (err) {
-    console.log('❌ [LOCATION SERVICE ERROR] Exception in syncUserLocationService:', err.message || err);
+    console.log('❌ [LOCATION SERVICE ERROR]:', err.message || err);
+    if (showAlertOnFailure) {
+      promptTurnOnLocationAlert('disabled');
+    }
     return null;
   }
 };

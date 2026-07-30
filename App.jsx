@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform } from 'react-native';
+import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider, useSelector, useDispatch } from 'react-redux';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,6 +12,7 @@ import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
 import { QuestionnaireScreen } from './src/screens/QuestionnaireScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { apiClient } from './src/api/apiClient';
+import { syncUserLocationService } from './src/services/locationService';
 
 function MainApp() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -27,8 +28,21 @@ function MainApp() {
     const unsubscribe = NetInfo.addEventListener((state) => {
       setIsConnected(!!state.isConnected);
     });
-    return () => unsubscribe();
-  }, []);
+
+    const appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && user) {
+        console.log('📍 App foreground active. Checking location sync...');
+        syncUserLocationService(false).catch((e) => console.log('Location sync on active error:', e));
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      if (appStateSubscription && typeof appStateSubscription.remove === 'function') {
+        appStateSubscription.remove();
+      }
+    };
+  }, [user]);
 
   useEffect(() => {
     const loadSession = async () => {
@@ -63,6 +77,13 @@ function MainApp() {
             setCurrentScreen('HOME');
           } else {
             setCurrentScreen('QUESTIONNAIRE');
+          }
+
+          // Trigger real device location check on session restore
+          try {
+            await syncUserLocationService(true);
+          } catch (locErr) {
+            console.log('Error syncing location on session restore:', locErr);
           }
         }
       } catch (err) {

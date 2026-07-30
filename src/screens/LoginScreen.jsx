@@ -16,6 +16,7 @@ import { apiClient } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
+import { syncUserLocationService } from '../services/locationService';
 
 export const LoginScreen = ({ onNavigate }) => {
   const dispatch = useDispatch();
@@ -69,6 +70,13 @@ export const LoginScreen = ({ onNavigate }) => {
         }
 
         dispatch(setCredentials({ user, token }));
+
+        // Trigger real device location check and sync to database via API upon login
+        try {
+          await syncUserLocationService(true);
+        } catch (locErr) {
+          console.log('Location sync on login error:', locErr);
+        }
 
         if (onNavigate) {
           if (isReturningUser) {

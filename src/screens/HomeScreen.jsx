@@ -30,6 +30,7 @@ import { CustomButton } from '../components/CustomButton';
 import { Profile } from './Profile';
 import { useDispatch, useSelector } from 'react-redux';
 import { apiClient } from '../api/apiClient';
+import { BASE_URL, getImageUrl as formatConfigUrl } from '../api/config';
 import { selectCurrentUser } from '../redux/slices/authSlice';
 import { syncUserLocationService } from '../services/locationService';
 import {
@@ -72,23 +73,7 @@ const getImageUrl = (url) => {
   if (!url || typeof url !== 'string' || url.trim() === '') {
     return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=600';
   }
-  if (
-    url.startsWith('http://') ||
-    url.startsWith('https://') ||
-    url.startsWith('file://') ||
-    url.startsWith('content://') ||
-    url.startsWith('data:')
-  ) {
-    if (Platform.OS === 'android') {
-      return url.replace('localhost:5000', '10.0.2.2:5000').replace('127.0.0.1:5000', '10.0.2.2:5000');
-    }
-    return url;
-  }
-  const host = Platform.OS === 'android' ? 'http://10.0.2.2:5000' : 'http://localhost:5000';
-  if (url.startsWith('/')) {
-    return `${host}${url}`;
-  }
-  return `${host}/${url}`;
+  return formatConfigUrl(url);
 };
 
 const getCandidateAge = (user) => {
@@ -499,7 +484,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const socketRef = useRef(null);
   const typingTimerRef = useRef(null);
   const isCurrentlyTypingRef = useRef(false);
-  const socketUrl = Platform.OS === 'android' ? 'http://localhost:5000' : 'http://localhost:5000';
+  const socketUrl = BASE_URL;
   const handleIncomingMessageRef = useRef(null);
 
   // --- Voice Call WebRTC Setup ---
@@ -1766,8 +1751,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       // Fallback if simulation or upload failed
       if (!uploadSuccess) {
-        const backendHost = 'localhost:5000';
-        audioUrl = `http://${backendHost}/uploads/sample_voice.mp3`;
+        audioUrl = `${BASE_URL}/uploads/sample_voice.mp3`;
         fileName = 'sample_voice.mp3';
         fileSize = 32000;
         console.log('Using simulated fallback audio URL:', audioUrl);
@@ -2296,8 +2280,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         fileSize = res.fileSize;
       } catch (uploadErr) {
         console.log('Using static fallback for mock document:', uploadErr);
-        const backendHost = '10.0.2.2:5000';
-        docUrl = `http://${backendHost}/uploads/sample_document.pdf`;
+        docUrl = formatConfigUrl('/uploads/sample_document.pdf');
       }
 
       handleSendMessage({

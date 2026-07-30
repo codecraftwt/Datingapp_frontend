@@ -11,6 +11,7 @@ import {
   TouchableWithoutFeedback,
   useWindowDimensions,
 } from 'react-native';
+import { getImageUrl } from '../api/config';
 
 export const PreviewModal = ({
   visible,
@@ -81,23 +82,7 @@ export const PreviewModal = ({
 
   const formatImageUri = (url) => {
     if (!url) return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=600';
-    if (typeof url === 'string') {
-      if (
-        url.startsWith('http://') ||
-        url.startsWith('https://') ||
-        url.startsWith('file://') ||
-        url.startsWith('content://') ||
-        url.startsWith('data:')
-      ) {
-        return url;
-      }
-      const host = Platform.OS === 'android' ? 'http://10.0.2.2:5000' : 'http://localhost:5000';
-      if (url.startsWith('/')) {
-        return `${host}${url}`;
-      }
-      return `${host}/${url}`;
-    }
-    return url;
+    return getImageUrl(url);
   };
 
   if (!visible || photos.length === 0) return null;

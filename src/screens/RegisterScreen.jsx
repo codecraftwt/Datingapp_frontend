@@ -54,28 +54,20 @@ export const RegisterScreen = ({ onNavigate }) => {
         gender,
       });
 
-      const rawUser = res.user || res.data?.user || res;
-      const token = res.token || res.data?.token;
-
-      if (rawUser && token) {
-        const userId = rawUser.id || rawUser._id;
-        const user = {
-          ...rawUser,
-          id: userId,
-          _id: userId,
-        };
-
-        await AsyncStorage.setItem('user', JSON.stringify(user));
-        await AsyncStorage.setItem('token', token);
-        dispatch(setCredentials({ user, token }));
-
-        if (onNavigate) {
-          await onNavigate('QUESTIONNAIRE');
-        }
-      } else {
-        Alert.alert('Registration Successful', 'Your account has been created. Please log in.', [
-          { text: 'Log In', onPress: () => onNavigate && onNavigate('LOGIN') },
-        ]);
+      Alert.alert(
+        'Registration Successful',
+        'Your account has been created successfully! Please log in to continue.',
+        [
+          {
+            text: 'Log In',
+            onPress: () => {
+              if (onNavigate) onNavigate('LOGIN');
+            },
+          },
+        ]
+      );
+      if (onNavigate) {
+        onNavigate('LOGIN');
       }
     } catch (err) {
       console.log('Register error:', err);
