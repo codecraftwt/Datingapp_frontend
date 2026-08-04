@@ -10,6 +10,7 @@ import {
   Modal,
   ActivityIndicator,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { apiClient } from '../api/apiClient';
@@ -86,6 +87,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
   useEffect(() => {
     fetchProfileFromBackend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleFinishEditQuestionnaire = async (updatedData) => {

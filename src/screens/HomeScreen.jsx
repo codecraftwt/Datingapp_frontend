@@ -17,8 +17,10 @@ import {
   Keyboard,
   PermissionsAndroid,
   Linking,
+  NativeModules,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
+import { pick as pickDocument, types as documentTypes, isCancel as isDocumentCancel } from '@react-native-documents/picker';
 import {
   RTCPeerConnection,
   RTCIceCandidate,
@@ -28,6 +30,7 @@ import {
 
 import { CustomButton } from '../components/CustomButton';
 import { Profile } from './Profile';
+import { SearchScreen } from './SearchScreen';
 import { useDispatch, useSelector } from 'react-redux';
 import { apiClient } from '../api/apiClient';
 import { BASE_URL, getImageUrl as formatConfigUrl } from '../api/config';
@@ -213,6 +216,20 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
+  const [unreadLikesCount, setUnreadLikesCount] = useState(0);
+
+  const fetchUnreadLikesCount = async () => {
+    try {
+      const res = await apiClient.getUnreadNotifications();
+      if (res && Array.isArray(res.notifications)) {
+        const likeNotifs = res.notifications.filter((n) => n.type === 'like' && !n.isRead);
+        setUnreadLikesCount(likeNotifs.length);
+      }
+    } catch (err) {
+      console.log('Error fetching unread likes count:', err);
+    }
+  };
+
   const fetchLikes = async () => {
     try {
       setIsLikesLoading(true);
@@ -266,6 +283,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     fetchQuestionnaires();
     fetchMessages();
     fetchLikes();
+    fetchUnreadLikesCount();
     fetchMatchesList();
     fetchSwipedIds();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -301,6 +319,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   console.log('Filtered Swipe Cards (MOCK_MATCHES):', JSON.stringify(MOCK_MATCHES.map(u => ({ id: u.id, name: u.name }))));
 
   const [activeTab, setActiveTab] = useState('swipe'); // swipe, likes, chat, profile
+
+  useEffect(() => {
+    if (activeTab === 'likes') {
+      fetchLikes();
+      setUnreadLikesCount(0);
+      if (typeof apiClient.markLikesAsRead === 'function') {
+        apiClient.markLikesAsRead().catch(() => {});
+      }
+    } else if (activeTab === 'chat') {
+      fetchMatchesList();
+      fetchMessages();
+      if (typeof apiClient.markMatchesAsRead === 'function') {
+        apiClient.markMatchesAsRead().catch(() => {});
+      }
+    }
+  }, [activeTab]);
   // Swipe Stack States
   const [swipeIndex, setSwipeIndex] = useState(0);
 
@@ -778,13 +812,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const handleSwipeRight = async () => {
     if (swipeIndex < MOCK_MATCHES.length) {
       const candidate = MOCK_MATCHES[swipeIndex];
+      const targetId = candidate?.id || candidate?._id;
       setSwipeHistory((prev) => [...prev, { candidate, action: 'like' }]);
 
       try {
-        const result = await apiClient.likeUser({ likedId: candidate.id });
+        const result = await apiClient.likeUser({ likedId: targetId });
 
-        if (!likedByMe.includes(candidate.id)) {
-          setLikedByMe([...likedByMe, candidate.id]);
+        if (targetId && !likedByMe.includes(targetId)) {
+          setLikedByMe([...likedByMe, targetId]);
         }
 
         if (result.isMatch) {
@@ -814,10 +849,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
 
     const lastItem = swipeHistory[swipeHistory.length - 1] || (swipeIndex > 0 ? { candidate: MOCK_MATCHES[swipeIndex - 1] } : null);
+    const targetId = lastItem?.candidate?.id || lastItem?.candidate?._id;
 
-    if (lastItem && lastItem.candidate) {
+    if (lastItem && lastItem.candidate && targetId) {
       try {
-        await apiClient.undoSwipe({ targetUserId: lastItem.candidate.id });
+        await apiClient.undoSwipe({ targetUserId: targetId });
       } catch (err) {
         console.log('Error undoing swipe on backend:', err);
       }
@@ -835,11 +871,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   }); // Runs on every render to prevent PanResponder stale closures
 
   const handleLikeMatch = async (user) => {
+    const targetId = user?.id || user?._id;
     try {
-      const result = await apiClient.likeUser({ likedId: user.id });
+      const result = await apiClient.likeUser({ likedId: targetId });
 
-      if (!likedByMe.includes(user.id)) {
-        setLikedByMe([...likedByMe, user.id]);
+      if (targetId && !likedByMe.includes(targetId)) {
+        setLikedByMe([...likedByMe, targetId]);
       }
 
       if (result.isMatch || result.message.includes('match') || result.message.includes('Match')) {
@@ -1035,6 +1072,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
         refetchMessages();
         refetchChatMessages();
+      });
+
+      socketRef.current.on('new_match', (data) => {
+        console.log('Socket.IO received new_match event:', data);
+        refetchMatchesList();
+        refetchLikes();
+        if (data?.matchedUser) {
+          setMatchedUser(data.matchedUser);
+          setShowMatchPopup(true);
+        }
+      });
+
+      socketRef.current.on('new_like', (data) => {
+        console.log('Socket.IO received new_like event:', data);
+        refetchLikes();
+        setUnreadLikesCount((prev) => prev + 1);
+        if (data?.title && data?.body) {
+          if (typeof displayLocalSystemNotification === 'function') {
+            displayLocalSystemNotification({
+              title: data.title,
+              body: data.body,
+              data: { type: 'like' },
+            }).catch(() => {});
+          }
+        }
       });
 
       socketRef.current.on('message_sent', (msg) => {
@@ -2048,9 +2110,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               }
               setShowActiveCardDetails(false);
               setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== targetUserId.toString()));
-              setMatchedUserIds((prevIds) => prevIds.filter((id) => id.toString() !== targetUserId.toString()));
-              setProfiles((prevProfiles) => prevProfiles.filter((p) => p.id.toString() !== targetUserId.toString()));
-              setLikedUsers((prevLikes) => prevLikes.filter((u) => u.id.toString() !== targetUserId.toString()));
 
               refetchQuestionnaires();
               refetchMatchesList();
@@ -2111,9 +2170,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
         setShowActiveCardDetails(false);
         setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== reportTargetUser.id.toString()));
-        setMatchedUserIds((prevIds) => prevIds.filter((id) => id.toString() !== reportTargetUser.id.toString()));
-        setProfiles((prevProfiles) => prevProfiles.filter((p) => p.id.toString() !== reportTargetUser.id.toString()));
-        setLikedUsers((prevLikes) => prevLikes.filter((u) => u.id.toString() !== reportTargetUser.id.toString()));
 
         refetchQuestionnaires();
         refetchMatchesList();
@@ -2262,36 +2318,81 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     });
   };
 
-  const handleSelectMockDocument = async (docName) => {
+  const handlePickRealDocument = async () => {
     setShowAttachmentModal(false);
-    const formData = new FormData();
-    formData.append('file', {
-      uri: 'file:///android_asset/document.pdf',
-      name: docName,
-      type: 'application/pdf',
-    });
-
     try {
+      let asset = null;
+      if (typeof pickDocument === 'function') {
+        try {
+          const pickerRes = await pickDocument({
+            type: [documentTypes.pdf, documentTypes.video, documentTypes.docx, documentTypes.doc, documentTypes.plainText, documentTypes.images, documentTypes.allFiles],
+          });
+          if (pickerRes && pickerRes.length > 0) {
+            asset = {
+              uri: pickerRes[0].uri,
+              fileName: pickerRes[0].name,
+              type: pickerRes[0].type,
+              fileSize: pickerRes[0].size,
+            };
+          }
+        } catch (docErr) {
+          if (isDocumentCancel && isDocumentCancel(docErr)) {
+            return;
+          }
+          console.log('DocumentPicker error, falling back:', docErr);
+        }
+      }
+
+      if (!asset) {
+        const options = { mediaType: 'mixed', selectionLimit: 1, includeBase64: false };
+        const response = await launchImageLibrary(options);
+        if (response.didCancel || !response.assets || response.assets.length === 0) return;
+        asset = response.assets[0];
+      }
+
+      if (!asset) return;
+
+      const pickedFileName = asset.fileName || `document_${Date.now()}.${asset.type ? asset.type.split('/')[1] || 'pdf' : 'pdf'}`;
+      const pickedFileType = asset.type || '';
+      const lowerName = pickedFileName.toLowerCase();
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri: Platform.OS === 'android' ? asset.uri : asset.uri.replace('file://', ''),
+        name: pickedFileName,
+        type: pickedFileType || 'application/pdf',
+      });
+
       let docUrl = '';
-      let fileSize = 15420;
+      let fileSize = asset.fileSize || 0;
+
       try {
         const res = await apiClient.uploadChatMedia(formData);
         docUrl = res.url;
-        fileSize = res.fileSize;
+        fileSize = res.fileSize || fileSize;
       } catch (uploadErr) {
-        console.log('Using static fallback for mock document:', uploadErr);
-        docUrl = formatConfigUrl('/uploads/sample_document.pdf');
+        console.log('Upload error:', uploadErr);
+        Alert.alert('Upload Error', 'Failed to upload file to server.');
+        return;
       }
 
+      const isVideo = pickedFileType.startsWith('video/') || lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.avi') || lowerName.endsWith('.mkv');
+      const isImage = pickedFileType.startsWith('image/') || lowerName.endsWith('.jpg') || lowerName.endsWith('.png') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.webp');
+
+      let messageType = 'document';
+      if (isVideo) messageType = 'video';
+      else if (isImage) messageType = 'image';
+
       handleSendMessage({
-        messageType: 'document',
+        text: pickedFileName,
+        messageType: messageType,
         mediaUrl: docUrl,
-        fileName: docName,
+        fileName: pickedFileName,
         fileSize: fileSize,
       });
     } catch (err) {
-      console.log('Document send failed:', err);
-      Alert.alert('Error', 'Failed to send document.');
+      console.error('Pick document error:', err);
+      Alert.alert('Error', 'Failed to pick file from device.');
     }
   };
 
@@ -2315,6 +2416,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
         {/* Tab Content Area */}
         <View style={styles.contentArea}>
+          {activeTab === 'search' && (
+            <SearchScreen
+              onSelectProfile={(profile) => {
+                console.log('Selected Profile from Search:', profile);
+              }}
+            />
+          )}
+
           {activeTab === 'swipe' && (
             <View style={styles.swipeContainer}>
               {swipeIndex < MOCK_MATCHES.length ? (
@@ -2584,6 +2693,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       const isSticker = msg.messageType === 'sticker';
                       const isImage = msg.messageType === 'image';
                       const isDocument = msg.messageType === 'document';
+                      const isVideo = msg.messageType === 'video' || (msg.mediaUrl && (msg.mediaUrl.endsWith('.mp4') || msg.mediaUrl.endsWith('.mov') || msg.mediaUrl.endsWith('.avi')));
                       const isVoice = msg.messageType === 'voice';
 
                       return (
@@ -2613,7 +2723,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             )}
 
                             {isDocument && (
-                              <View style={styles.documentMessageContainer}>
+                              <TouchableOpacity
+                                style={styles.documentMessageContainer}
+                                activeOpacity={0.8}
+                                onPress={() => {
+                                  if (msg.mediaUrl) {
+                                    Linking.openURL(getImageUrl(msg.mediaUrl)).catch(() =>
+                                      Alert.alert('Error', 'Unable to open document.')
+                                    );
+                                  }
+                                }}
+                              >
                                 <View style={styles.documentIconContainer}>
                                   <Text style={styles.documentIconText}>📄</Text>
                                 </View>
@@ -2622,10 +2742,36 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                     {msg.fileName || 'document.pdf'}
                                   </Text>
                                   <Text style={styles.documentSizeText}>
-                                    {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : '15 KB'}
+                                    {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : 'PDF'} • Tap to View
                                   </Text>
                                 </View>
-                              </View>
+                              </TouchableOpacity>
+                            )}
+
+                            {isVideo && (
+                              <TouchableOpacity
+                                style={styles.videoMessageContainer}
+                                activeOpacity={0.8}
+                                onPress={() => {
+                                  if (msg.mediaUrl) {
+                                    Linking.openURL(getImageUrl(msg.mediaUrl)).catch(() =>
+                                      Alert.alert('Error', 'Unable to play video.')
+                                    );
+                                  }
+                                }}
+                              >
+                                <View style={styles.videoIconContainer}>
+                                  <Text style={styles.videoIconText}>🎬</Text>
+                                </View>
+                                <View style={styles.videoTextContainer}>
+                                  <Text style={styles.videoNameText} numberOfLines={1}>
+                                    {msg.fileName || 'video.mp4'}
+                                  </Text>
+                                  <Text style={styles.videoSizeText}>
+                                    {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : 'Video'} • Tap to Play
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
                             )}
 
                             {isVoice && (
@@ -2848,7 +2994,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       onPress={() => setShowAttachmentModal(false)}
                     >
                       <View style={styles.attachDialogContent}>
-                        <Text style={styles.attachDialogTitle}>Share Media</Text>
+                        <Text style={styles.attachDialogTitle}>Share Media / Document</Text>
                         
                         <View style={styles.attachOptionsRow}>
                           <TouchableOpacity
@@ -2858,51 +3004,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             <View style={styles.attachOptionIconBg}>
                               <Text style={styles.attachOptionIconText}>📷</Text>
                             </View>
-                            <Text style={styles.attachOptionLabel}>Photo</Text>
+                            <Text style={styles.attachOptionLabel}>Photo / Gallery</Text>
                           </TouchableOpacity>
 
                           <TouchableOpacity
                             style={styles.attachOptionBtn}
-                            onPress={() => handleSelectMockDocument('Resume.pdf')}
+                            onPress={handlePickRealDocument}
                           >
                             <View style={styles.attachOptionIconBg}>
-                              <Text style={styles.attachOptionIconText}>📄</Text>
+                              <Text style={styles.attachOptionIconText}>📁</Text>
                             </View>
-                            <Text style={styles.attachOptionLabel}>Document</Text>
-                          </TouchableOpacity>
-                        </View>
-
-                        <View style={styles.docListSection}>
-                          <Text style={styles.docSectionTitle}>Select a Document template:</Text>
-                          
-                          <TouchableOpacity
-                            style={styles.docItemRow}
-                            onPress={() => handleSelectMockDocument('Dating_Guide.pdf')}
-                          >
-                            <View style={styles.docItemIconBg}>
-                              <Text style={styles.docItemIcon}>📄</Text>
-                            </View>
-                            <Text style={styles.docItemName}>Dating_Guide.pdf</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={styles.docItemRow}
-                            onPress={() => handleSelectMockDocument('Profile_Details.pdf')}
-                          >
-                            <View style={styles.docItemIconBg}>
-                              <Text style={styles.docItemIcon}>📄</Text>
-                            </View>
-                            <Text style={styles.docItemName}>Profile_Details.pdf</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={styles.docItemRow}
-                            onPress={() => handleSelectMockDocument('Icebreakers_Cheatsheet.pdf')}
-                          >
-                            <View style={styles.docItemIconBg}>
-                              <Text style={styles.docItemIcon}>📄</Text>
-                            </View>
-                            <Text style={styles.docItemName}>Icebreakers_Cheatsheet.pdf</Text>
+                            <Text style={styles.attachOptionLabel}>Document / File</Text>
                           </TouchableOpacity>
                         </View>
 
@@ -2936,36 +3048,60 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   </View>
                   {chats.length > 0 ? (
                     <ScrollView style={styles.chatsList} showsVerticalScrollIndicator={false}>
-                      {chats.map((chat) => (
-                        <TouchableOpacity
-                          key={chat.id}
-                          style={styles.chatRow}
-                          onPress={() => setActiveChat(chat)}
-                          activeOpacity={0.8}
-                        >
-                          <View style={styles.avatarWrapper}>
-                            <Image source={{ uri: getImageUrl(chat.image) }} style={styles.chatRowAvatar} />
-                            {!!onlineUsersMap[chat.id.toString()] && (
-                              <View style={styles.onlineDotOverlay} />
-                            )}
-                          </View>
-                          <View style={styles.chatRowInfo}>
-                            <Text style={styles.chatRowName}>{chat.name}</Text>
-                            <Text style={styles.chatRowLastMessage} numberOfLines={1}>
-                              {(() => {
-                                const lastMsg = chat.messages[chat.messages.length - 1];
-                                if (!lastMsg) return '';
-                                if (lastMsg.messageType === 'voice') return '🎤 Voice Note';
-                                if (lastMsg.messageType === 'image') return '📷 Image';
-                                if (lastMsg.messageType === 'document') return '📄 Document';
-                                if (lastMsg.messageType === 'sticker') return '😊 Sticker';
-                                return lastMsg.text || '';
-                              })()}
-                            </Text>
-                          </View>
-                          <Text style={styles.chatRowTime}>Now</Text>
-                        </TouchableOpacity>
-                      ))}
+                      {chats.map((chat) => {
+                        const currentId = currentUser?.id || currentUser?._id;
+                        const unreadCount = (chat.messages || []).filter(
+                          (m) => (m.sender !== 'you' && m.senderId !== currentId?.toString()) && m.id !== 'match-init' && m.status !== 'seen'
+                        ).length;
+
+                        const lastMsg = chat.messages ? chat.messages[chat.messages.length - 1] : null;
+
+                        return (
+                          <TouchableOpacity
+                            key={chat.id}
+                            style={[styles.chatRow, unreadCount > 0 && styles.chatRowUnread]}
+                            onPress={() => setActiveChat(chat)}
+                            activeOpacity={0.8}
+                          >
+                            <View style={styles.avatarWrapper}>
+                              <Image source={{ uri: getImageUrl(chat.image) }} style={styles.chatRowAvatar} />
+                              {!!onlineUsersMap[chat.id.toString()] && (
+                                <View style={styles.onlineDotOverlay} />
+                              )}
+                            </View>
+                            <View style={styles.chatRowInfo}>
+                              <Text style={[styles.chatRowName, unreadCount > 0 && styles.chatRowNameUnread]}>
+                                {chat.name}
+                              </Text>
+                              <Text style={[styles.chatRowLastMessage, unreadCount > 0 && styles.chatRowLastMessageUnread]} numberOfLines={1}>
+                                {(() => {
+                                  if (!lastMsg) return '';
+                                  if (lastMsg.messageType === 'voice') return '🎤 Voice Note';
+                                  if (lastMsg.messageType === 'image') return '📷 Image';
+                                  if (lastMsg.messageType === 'video') return '🎬 Video';
+                                  if (lastMsg.messageType === 'document') return '📄 Document';
+                                  if (lastMsg.messageType === 'sticker') return '😊 Sticker';
+                                  return lastMsg.text || '';
+                                })()}
+                              </Text>
+                            </View>
+                            <View style={styles.chatRowRightMeta}>
+                              <Text style={[styles.chatRowTime, unreadCount > 0 && styles.chatRowTimeUnread]}>
+                                {lastMsg && lastMsg.createdAt && lastMsg.createdAt !== 'match-init'
+                                  ? formatMessageTime(lastMsg.createdAt)
+                                  : 'Now'}
+                              </Text>
+                              {unreadCount > 0 && (
+                                <View style={styles.whatsappUnreadBadge}>
+                                  <Text style={styles.whatsappUnreadBadgeText}>
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </ScrollView>
                   ) : (
                     <View style={styles.emptyChatsContainer}>
@@ -3007,29 +3143,72 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </TouchableOpacity>
 
           <TouchableOpacity
+            style={[styles.navigationTab, activeTab === 'search' && styles.navigationTabActive]}
+            onPress={() => {
+              setActiveTab('search');
+              setActiveChat(null);
+            }}
+          >
+            <Text style={styles.navigationIcon}>🔍</Text>
+            <Text style={[styles.navigationLabel, activeTab === 'search' && styles.navigationLabelActive]}>
+              Search
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'likes' && styles.navigationTabActive]}
             onPress={() => {
               setActiveTab('likes');
               setActiveChat(null);
             }}
           >
-            <Text style={styles.navigationIcon}>❤️</Text>
+            <View style={{ position: 'relative' }}>
+              <Text style={styles.navigationIcon}>❤️</Text>
+              {unreadLikesCount > 0 && (
+                <View style={styles.navLikesBadge}>
+                  <Text style={styles.navLikesBadgeText}>
+                    {unreadLikesCount > 99 ? '99+' : unreadLikesCount}
+                  </Text>
+                </View>
+              )}
+            </View>
             <Text style={[styles.navigationLabel, activeTab === 'likes' && styles.navigationLabelActive]}>
               Likes
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.navigationTab, activeTab === 'chat' && styles.navigationTabActive]}
-            onPress={() => {
-              setActiveTab('chat');
-            }}
-          >
-            <Text style={styles.navigationIcon}>💬</Text>
-            <Text style={[styles.navigationLabel, activeTab === 'chat' && styles.navigationLabelActive]}>
-              Chat
-            </Text>
-          </TouchableOpacity>
+          {(() => {
+            const currentId = currentUser?.id || currentUser?._id;
+            const totalUnreadChatCount = chats.reduce((total, c) => {
+              const count = (c.messages || []).filter(
+                (m) => (m.sender !== 'you' && m.senderId !== currentId?.toString()) && m.id !== 'match-init' && m.status !== 'seen'
+              ).length;
+              return total + count;
+            }, 0);
+
+            return (
+              <TouchableOpacity
+                style={[styles.navigationTab, activeTab === 'chat' && styles.navigationTabActive]}
+                onPress={() => {
+                  setActiveTab('chat');
+                }}
+              >
+                <View style={{ position: 'relative' }}>
+                  <Text style={styles.navigationIcon}>💬</Text>
+                  {totalUnreadChatCount > 0 && (
+                    <View style={styles.navChatBadge}>
+                      <Text style={styles.navChatBadgeText}>
+                        {totalUnreadChatCount > 99 ? '99+' : totalUnreadChatCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.navigationLabel, activeTab === 'chat' && styles.navigationLabelActive]}>
+                  Chat
+                </Text>
+              </TouchableOpacity>
+            );
+          })()}
 
           <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'profile' && styles.navigationTabActive]}
@@ -4010,6 +4189,19 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 4,
+    letterSpacing: 0.3,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.75)',
+    marginBottom: 16,
+  },
   likesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -4093,6 +4285,80 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.4)',
     fontSize: 11,
     fontWeight: '600',
+  },
+  chatRowUnread: {
+    backgroundColor: 'rgba(37, 211, 102, 0.06)',
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  chatRowNameUnread: {
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  chatRowLastMessageUnread: {
+    fontWeight: '700',
+    color: '#E2E8F0',
+  },
+  chatRowRightMeta: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  chatRowTimeUnread: {
+    color: '#25D366',
+    fontWeight: '700',
+  },
+  whatsappUnreadBadge: {
+    backgroundColor: '#25D366',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  whatsappUnreadBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  navChatBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -8,
+    backgroundColor: '#25D366',
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#121212',
+  },
+  navChatBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  navLikesBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -8,
+    backgroundColor: '#25D366',
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#121212',
+  },
+  navLikesBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: 'bold',
   },
 
   editingMessageBanner: {
@@ -5888,11 +6154,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginHorizontal: 12,
-    marginVertical: 8,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginHorizontal: 8,
+    marginVertical: 2,
+    minHeight: 40,
     flex: 1,
   },
   recordingIndicatorRow: {
@@ -5900,15 +6167,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   recordingPulsingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#FF3B30',
-    marginRight: 8,
+    marginRight: 6,
   },
   recordingTimeText: {
     color: '#FFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   recordingControls: {
@@ -5916,23 +6183,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelRecordButton: {
-    marginRight: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    marginRight: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
   cancelRecordText: {
     color: 'rgba(255, 255, 255, 0.6)',
-    fontSize: 13,
+    fontSize: 12,
   },
   sendRecordButton: {
     backgroundColor: '#FE3C72',
-    borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    borderRadius: 14,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
   },
   sendRecordIcon: {
     color: '#FFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 'bold',
   },
   voiceMessageContainer: {
@@ -6164,5 +6431,75 @@ const styles = StyleSheet.create({
     bottom: -18,
     width: 80,
     textAlign: 'center',
+  },
+
+  // --- Document & Video Message Styles ---
+  documentMessageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    minWidth: 180,
+  },
+  documentIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#FE3C72',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  documentIconText: {
+    fontSize: 18,
+  },
+  documentTextContainer: {
+    flex: 1,
+  },
+  documentNameText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  documentSizeText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  videoMessageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    minWidth: 180,
+  },
+  videoIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#20C997',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  videoIconText: {
+    fontSize: 18,
+  },
+  videoTextContainer: {
+    flex: 1,
+  },
+  videoNameText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  videoSizeText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 11,
+    marginTop: 2,
   },
 });

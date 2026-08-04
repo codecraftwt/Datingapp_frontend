@@ -12,7 +12,7 @@ const resolveWorkingBaseUrl = async () => {
   for (const candidate of CANDIDATE_URLS) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
       const res = await fetch(`${candidate}/`, { method: 'GET', signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok || res.status < 500) {
@@ -31,9 +31,15 @@ const resolveWorkingBaseUrl = async () => {
   return getBaseUrl();
 };
 
+let authTokenInMemory = null;
+
+export const setAuthToken = (token) => {
+  authTokenInMemory = token;
+};
+
 const request = async (url, options = {}) => {
   try {
-    const token = await AsyncStorage.getItem('token');
+    const token = authTokenInMemory || (await AsyncStorage.getItem('token'));
     const headers = {
       'Content-Type': 'application/json',
       ...(token ? { 'authorization': `Bearer ${token}` } : {}),
@@ -89,15 +95,24 @@ export const apiClient = {
     });
   },
   login: async (credentials) => {
-    return await request('/api/auth/login', {
+    const res = await request('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify(credentials),
     });
+    const token = res.token || res.data?.token;
+    if (token) {
+      setAuthToken(token);
+    }
+    return res;
   },
   logoutBackend: async () => {
-    return await request('/api/auth/logout', {
-      method: 'POST',
-    });
+    try {
+      return await request('/api/auth/logout', {
+        method: 'POST',
+      });
+    } finally {
+      setAuthToken(null);
+    }
   },
   forgotPassword: async (body) => {
     return await request('/api/auth/forgot-password', {
@@ -134,10 +149,21 @@ export const apiClient = {
       body: JSON.stringify(profileData),
     });
   },
+  updateFcmToken: async (fcmToken) => {
+    return await request('/api/profile/fcm-token', {
+      method: 'PUT',
+      body: JSON.stringify({ fcmToken }),
+    });
+  },
   updateLocation: async (locationData) => {
     return await request('/api/profile/location', {
       method: 'PUT',
       body: JSON.stringify(locationData),
+    });
+  },
+  clearCurrentLocation: async () => {
+    return await request('/api/profile/location', {
+      method: 'DELETE',
     });
   },
   getProfile: async () => {
@@ -262,6 +288,58 @@ export const apiClient = {
     return await request('/api/match/undo-swipe', {
       method: 'POST',
       body: JSON.stringify(body),
+    });
+  },
+
+  // Notification endpoints
+  getUnreadNotifications: async () => {
+    return await request('/api/notifications/unread', {
+      method: 'GET',
+    });
+  },
+  markNotificationsAsRead: async (body = { markAll: true }) => {
+    return await request('/api/notifications/mark-read', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+  },
+  markLikesAsRead: async () => {
+    return await request('/api/notifications/mark-likes-read', {
+      method: 'PUT',
+    });
+  },
+  markMatchesAsRead: async () => {
+    return await request('/api/notifications/mark-matches-read', {
+      method: 'PUT',
+    });
+  },
+  getAllNotifications: async () => {
+    return await request('/api/notifications/all', {
+      method: 'GET',
+    });
+  },
+
+  // Advanced Search endpoints
+  advancedSearch: async (filters = {}) => {
+    return await request('/api/search', {
+      method: 'POST',
+      body: JSON.stringify(filters),
+    });
+  },
+  getFilterOptions: async () => {
+    return await request('/api/search/options', {
+      method: 'GET',
+    });
+  },
+  getSearchPreferences: async () => {
+    return await request('/api/search/preferences', {
+      method: 'GET',
+    });
+  },
+  updateSearchPreferences: async (preferences = {}) => {
+    return await request('/api/search/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(preferences),
     });
   },
 };

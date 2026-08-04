@@ -91,7 +91,10 @@ export const LoginScreen = ({ onNavigate }) => {
       }
     } catch (err) {
       console.log('Login error:', err);
-      const msg = err.data?.message || err.message || 'Invalid email or password. Please try again.';
+      const isNetworkFail = err?.message?.includes('Network request failed') || err?.name === 'TypeError';
+      const msg = isNetworkFail
+        ? 'Cannot reach backend server (Network Request Failed). Ensure backend is running and ADB reverse is enabled.'
+        : (err.data?.message || err.message || 'Invalid email or password. Please try again.');
       Alert.alert('Login Failed', msg);
     } finally {
       setLoading(false);

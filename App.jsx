@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState } from 'react-native';
+import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState, Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider, useSelector, useDispatch } from 'react-redux';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,6 +13,7 @@ import { QuestionnaireScreen } from './src/screens/QuestionnaireScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { apiClient } from './src/api/apiClient';
 import { syncUserLocationService } from './src/services/locationService';
+import { registerFcmToken, setupNotificationListeners, displayLocalSystemNotification } from './src/services/notificationService';
 
 function MainApp() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -23,6 +24,58 @@ function MainApp() {
   
   const dispatch = useDispatch();
   const user = useSelector(selectCurrentUser);
+
+  const checkUnreadNotifications = async () => {
+    try {
+      const res = await apiClient.getUnreadNotifications();
+      console.log('🔔 [checkUnreadNotifications] result:', res);
+      if (res && res.unreadCount > 0 && Array.isArray(res.notifications)) {
+        for (const notif of res.notifications) {
+          if (typeof displayLocalSystemNotification === 'function') {
+            await displayLocalSystemNotification({
+              title: notif.title,
+              body: notif.body,
+              data: {
+                ...notif.data,
+                notificationId: notif._id ? notif._id.toString() : Date.now().toString(),
+                senderId: notif.sender?._id || notif.sender?.id || notif.sender,
+                type: notif.type,
+              },
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.log('Error checking unread notifications on login:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      try {
+        if (typeof registerFcmToken === 'function') {
+          registerFcmToken().catch((e) => console.log('FCM Token registration error:', e));
+        }
+
+        checkUnreadNotifications();
+
+        let cleanupFcm;
+        if (typeof setupNotificationListeners === 'function') {
+          cleanupFcm = setupNotificationListeners((data) => {
+            console.log('Notification tapped with payload:', data);
+            if (data?.type === 'chat' || data?.type === 'like' || data?.type === 'match') {
+              setCurrentScreen('HOME');
+            }
+          });
+        }
+        return () => {
+          if (typeof cleanupFcm === 'function') cleanupFcm();
+        };
+      } catch (err) {
+        console.warn('FCM Initialization error:', err);
+      }
+    }
+  }, [user]);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
@@ -172,6 +225,7 @@ function MainApp() {
                   }
                 }
                 setCurrentScreen('HOME');
+                checkUnreadNotifications().catch(() => {});
                 return;
               }
 

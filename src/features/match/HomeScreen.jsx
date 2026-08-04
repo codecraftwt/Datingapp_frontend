@@ -17,8 +17,10 @@ import {
   Keyboard,
   PermissionsAndroid,
   Linking,
+  NativeModules,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
+import { pick as pickDocument, types as documentTypes, isCancel as isDocumentCancel } from '@react-native-documents/picker';
 import {
   RTCPeerConnection,
   RTCIceCandidate,
@@ -733,13 +735,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const handleSwipeRight = async () => {
     if (swipeIndex < MOCK_MATCHES.length) {
       const candidate = MOCK_MATCHES[swipeIndex];
+      const targetId = candidate?.id || candidate?._id;
       setSwipeHistory((prev) => [...prev, { candidate, action: 'like' }]);
 
       try {
-        const result = await apiClient.likeUser({ likedId: candidate.id });
+        const result = await apiClient.likeUser({ likedId: targetId });
 
-        if (!likedByMe.includes(candidate.id)) {
-          setLikedByMe([...likedByMe, candidate.id]);
+        if (targetId && !likedByMe.includes(targetId)) {
+          setLikedByMe([...likedByMe, targetId]);
         }
 
         if (result.isMatch) {
@@ -769,10 +772,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
 
     const lastItem = swipeHistory[swipeHistory.length - 1] || (swipeIndex > 0 ? { candidate: MOCK_MATCHES[swipeIndex - 1] } : null);
+    const targetId = lastItem?.candidate?.id || lastItem?.candidate?._id;
 
-    if (lastItem && lastItem.candidate) {
+    if (lastItem && lastItem.candidate && targetId) {
       try {
-        await apiClient.undoSwipe({ targetUserId: lastItem.candidate.id });
+        await apiClient.undoSwipe({ targetUserId: targetId });
       } catch (err) {
         console.log('Error undoing swipe on backend:', err);
       }
@@ -790,11 +794,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   }); // Runs on every render to prevent PanResponder stale closures
 
   const handleLikeMatch = async (user) => {
+    const targetId = user?.id || user?._id;
     try {
-      const result = await apiClient.likeUser({ likedId: user.id });
+      const result = await apiClient.likeUser({ likedId: targetId });
 
-      if (!likedByMe.includes(user.id)) {
-        setLikedByMe([...likedByMe, user.id]);
+      if (targetId && !likedByMe.includes(targetId)) {
+        setLikedByMe([...likedByMe, targetId]);
       }
 
       if (result.isMatch || result.message.includes('match') || result.message.includes('Match')) {
@@ -2003,9 +2008,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               }
               setShowActiveCardDetails(false);
               setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== targetUserId.toString()));
-              setMatchedUserIds((prevIds) => prevIds.filter((id) => id.toString() !== targetUserId.toString()));
-              setProfiles((prevProfiles) => prevProfiles.filter((p) => p.id.toString() !== targetUserId.toString()));
-              setLikedUsers((prevLikes) => prevLikes.filter((u) => u.id.toString() !== targetUserId.toString()));
 
               refetchQuestionnaires();
               refetchMatchesList();
@@ -2066,9 +2068,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
         setShowActiveCardDetails(false);
         setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== reportTargetUser.id.toString()));
-        setMatchedUserIds((prevIds) => prevIds.filter((id) => id.toString() !== reportTargetUser.id.toString()));
-        setProfiles((prevProfiles) => prevProfiles.filter((p) => p.id.toString() !== reportTargetUser.id.toString()));
-        setLikedUsers((prevLikes) => prevLikes.filter((u) => u.id.toString() !== reportTargetUser.id.toString()));
 
         refetchQuestionnaires();
         refetchMatchesList();
@@ -2217,36 +2216,81 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     });
   };
 
-  const handleSelectMockDocument = async (docName) => {
+  const handlePickRealDocument = async () => {
     setShowAttachmentModal(false);
-    const formData = new FormData();
-    formData.append('file', {
-      uri: 'file:///android_asset/document.pdf',
-      name: docName,
-      type: 'application/pdf',
-    });
-
     try {
+      let asset = null;
+      if (typeof pickDocument === 'function') {
+        try {
+          const pickerRes = await pickDocument({
+            type: [documentTypes.pdf, documentTypes.video, documentTypes.docx, documentTypes.doc, documentTypes.plainText, documentTypes.images, documentTypes.allFiles],
+          });
+          if (pickerRes && pickerRes.length > 0) {
+            asset = {
+              uri: pickerRes[0].uri,
+              fileName: pickerRes[0].name,
+              type: pickerRes[0].type,
+              fileSize: pickerRes[0].size,
+            };
+          }
+        } catch (docErr) {
+          if (isDocumentCancel && isDocumentCancel(docErr)) {
+            return;
+          }
+          console.log('DocumentPicker error, falling back:', docErr);
+        }
+      }
+
+      if (!asset) {
+        const options = { mediaType: 'mixed', selectionLimit: 1, includeBase64: false };
+        const response = await launchImageLibrary(options);
+        if (response.didCancel || !response.assets || response.assets.length === 0) return;
+        asset = response.assets[0];
+      }
+
+      if (!asset) return;
+
+      const pickedFileName = asset.fileName || `document_${Date.now()}.${asset.type ? asset.type.split('/')[1] || 'pdf' : 'pdf'}`;
+      const pickedFileType = asset.type || '';
+      const lowerName = pickedFileName.toLowerCase();
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri: Platform.OS === 'android' ? asset.uri : asset.uri.replace('file://', ''),
+        name: pickedFileName,
+        type: pickedFileType || 'application/pdf',
+      });
+
       let docUrl = '';
-      let fileSize = 15420;
+      let fileSize = asset.fileSize || 0;
+
       try {
         const res = await apiClient.uploadChatMedia(formData);
         docUrl = res.url;
-        fileSize = res.fileSize;
+        fileSize = res.fileSize || fileSize;
       } catch (uploadErr) {
-        console.log('Using static fallback for mock document:', uploadErr);
-        docUrl = formatConfigUrl('/uploads/sample_document.pdf');
+        console.log('Upload error:', uploadErr);
+        Alert.alert('Upload Error', 'Failed to upload file to server.');
+        return;
       }
 
+      const isVideo = pickedFileType.startsWith('video/') || lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.avi') || lowerName.endsWith('.mkv');
+      const isImage = pickedFileType.startsWith('image/') || lowerName.endsWith('.jpg') || lowerName.endsWith('.png') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.webp');
+
+      let messageType = 'document';
+      if (isVideo) messageType = 'video';
+      else if (isImage) messageType = 'image';
+
       handleSendMessage({
-        messageType: 'document',
+        text: pickedFileName,
+        messageType: messageType,
         mediaUrl: docUrl,
-        fileName: docName,
+        fileName: pickedFileName,
         fileSize: fileSize,
       });
     } catch (err) {
-      console.log('Document send failed:', err);
-      Alert.alert('Error', 'Failed to send document.');
+      console.error('Pick document error:', err);
+      Alert.alert('Error', 'Failed to pick file from device.');
     }
   };
 
@@ -2613,6 +2657,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 if (!lastMsg) return '';
                                 if (lastMsg.messageType === 'voice') return '🎤 Voice Note';
                                 if (lastMsg.messageType === 'image') return '📷 Image';
+                                if (lastMsg.messageType === 'video') return '🎬 Video';
                                 if (lastMsg.messageType === 'document') return '📄 Document';
                                 if (lastMsg.messageType === 'sticker') return '😊 Sticker';
                                 return lastMsg.text || '';
@@ -3529,6 +3574,19 @@ const styles = StyleSheet.create({
   likesContainer: {
     flex: 1,
     padding: 20,
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 4,
+    letterSpacing: 0.3,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.75)',
+    marginBottom: 16,
   },
   likesGrid: {
     flexDirection: 'row',
@@ -5408,11 +5466,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginHorizontal: 12,
-    marginVertical: 8,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginHorizontal: 8,
+    marginVertical: 2,
+    minHeight: 40,
     flex: 1,
   },
   recordingIndicatorRow: {
@@ -5420,15 +5479,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   recordingPulsingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#FF3B30',
-    marginRight: 8,
+    marginRight: 6,
   },
   recordingTimeText: {
     color: '#FFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   recordingControls: {
@@ -5436,23 +5495,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelRecordButton: {
-    marginRight: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    marginRight: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
   cancelRecordText: {
     color: 'rgba(255, 255, 255, 0.6)',
-    fontSize: 13,
+    fontSize: 12,
   },
   sendRecordButton: {
     backgroundColor: '#FE3C72',
-    borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    borderRadius: 14,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
   },
   sendRecordIcon: {
     color: '#FFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 'bold',
   },
   voiceMessageContainer: {

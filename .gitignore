@@ -105,3 +105,6 @@ Desktop.ini
 *.tmp
 *.bak
 *~
+# Firebase Config Files
+**/google-services.json
+**/GoogleService-Info.plist
