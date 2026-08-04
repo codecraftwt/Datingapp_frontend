@@ -55,6 +55,7 @@ const EDUCATION_LEVELS = [
   '💼 Other Education',
 ];
 const ZODIAC_SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'];
+const LANGUAGE_OPTIONS = ['English', 'Hindi', 'Spanish', 'French', 'German', 'Marathi', 'Mandarin', 'Japanese', 'Italian', 'Portuguese', 'Russian', 'Arabic'];
 
 const JOB_EXAMPLES = [
   '💻 Software Engineer',
@@ -120,6 +121,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
 
   const [bio, setBio] = useState('');
   const [selectedInterests, setSelectedInterests] = useState(['🎵 Music', '✈️ Travel', '☕ Coffee']);
+  const [selectedLanguages, setSelectedLanguages] = useState(['English', 'Hindi']);
 
   // 9 Photos Slots Array
   const [photos, setPhotos] = useState(Array(9).fill(null));
@@ -152,6 +154,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
       if (initialData.distanceRange) setDistanceRange(initialData.distanceRange.toString());
       if (initialData.bio) setBio(initialData.bio);
       if (initialData.interests && Array.isArray(initialData.interests)) setSelectedInterests(initialData.interests);
+      if (initialData.languages && Array.isArray(initialData.languages)) setSelectedLanguages(initialData.languages);
 
       // Populate 9 photos grid
       const existingPhotos = initialData.profileImages || initialData.photos || [];
@@ -196,6 +199,14 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
       } else {
         Alert.alert('Limit Reached', 'You can select up to 6 interests.');
       }
+    }
+  };
+
+  const toggleLanguage = (item) => {
+    if (selectedLanguages.includes(item)) {
+      setSelectedLanguages(selectedLanguages.filter((l) => l !== item));
+    } else {
+      setSelectedLanguages([...selectedLanguages, item]);
     }
   };
 
@@ -265,11 +276,15 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
     } else if (step === 2) {
       setStep(3);
     } else if (step === 3) {
+      setStep(4);
+    } else if (step === 4) {
       if (selectedInterests.length === 0) {
         Alert.alert('Selection Required', 'Please select at least 1 interest.');
         return;
       }
-      setStep(4);
+      setStep(5);
+    } else if (step === 5) {
+      setStep(6);
     }
   };
 
@@ -312,6 +327,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
       distanceRange: parseInt(distanceRange, 10) || 10,
       bio: bio.trim(),
       interests: selectedInterests,
+      languages: selectedLanguages,
       profileImage: primaryPhoto,
       profileImages: validPhotos,
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
@@ -391,14 +407,16 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
             {/* Progress & Step Navigation Bar */}
             <View style={styles.progressContainer}>
               <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${(step / 4) * 100}%` }]} />
+                <View style={[styles.progressBarFill, { width: `${(step / 6) * 100}%` }]} />
               </View>
-              <View style={styles.stepTabsRow}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
                 {[
                   { id: 1, label: '1. Info' },
                   { id: 2, label: '2. Habits' },
-                  { id: 3, label: '3. Bio' },
-                  { id: 4, label: '4. Photos & Status' },
+                  { id: 3, label: '3. Details' },
+                  { id: 4, label: '4. Bio & Lang' },
+                  { id: 5, label: '5. Filters' },
+                  { id: 6, label: '6. Photos' },
                 ].map((tab) => (
                   <TouchableOpacity
                     key={tab.id}
@@ -411,22 +429,26 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                     </Text>
                   </TouchableOpacity>
                 ))}
-              </View>
+              </ScrollView>
             </View>
 
             {/* Title Header */}
             <View style={styles.headerContainer}>
               <Text style={styles.title}>
                 {step === 1 && 'Basic Information'}
-                {step === 2 && 'Lifestyle & Preferences'}
-                {step === 3 && 'Passions & Bio'}
-                {step === 4 && 'Photos & Preview'}
+                {step === 2 && 'Lifestyle & Habits'}
+                {step === 3 && 'Education & Career'}
+                {step === 4 && 'Passions, Bio & Languages'}
+                {step === 5 && 'Match Preferences'}
+                {step === 6 && 'Photos & Preview'}
               </Text>
               <Text style={styles.subtitle}>
                 {step === 1 && 'Tell potential matches who you are'}
-                {step === 2 && 'Share your habits & dating expectations'}
-                {step === 3 && 'Show off what makes you unique'}
-                {step === 4 && 'Upload up to 9 photos from your gallery'}
+                {step === 2 && 'Share your daily habits & lifestyle expectations'}
+                {step === 3 && 'Share your education & career background'}
+                {step === 4 && 'Show off what makes you unique'}
+                {step === 5 && 'Set your ideal distance, age range & zodiac'}
+                {step === 6 && 'Upload up to 9 photos from your gallery'}
               </Text>
             </View>
 
@@ -514,11 +536,11 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                   </View>
 
                   <Text style={styles.inputLabel}>Sexual Orientation</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                  <View style={styles.wrapRow}>
                     {ORIENTATIONS.map((o) => (
                       <TouchableOpacity
                         key={o}
-                        style={[styles.scrollChip, orientation === o && styles.chipSelected]}
+                        style={[styles.wrapChip, orientation === o && styles.chipSelected]}
                         onPress={() => setOrientation(o)}
                         activeOpacity={0.8}
                       >
@@ -527,12 +549,13 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                         </Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
+                  </View>
 
                   <CustomButton title="CONTINUE" variant="primary" onPress={handleNext} style={styles.nextBtn} />
                 </>
               )}
 
+              {/* STEP 2: Lifestyle & Habits */}
               {step === 2 && (
                 <>
                   <Text style={styles.inputLabel}>Looking For</Text>
@@ -631,13 +654,25 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                     ))}
                   </View>
 
+                  <View style={styles.btnRow}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(1)} activeOpacity={0.8}>
+                      <Text style={styles.backBtnText}>BACK</Text>
+                    </TouchableOpacity>
+                    <CustomButton title="NEXT" variant="primary" onPress={handleNext} style={styles.flexBtn} />
+                  </View>
+                </>
+              )}
+
+              {/* STEP 3: Education & Career */}
+              {step === 3 && (
+                <>
                   {/* Education Level Question */}
                   <Text style={styles.inputLabel}>🎓 Education Level</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                  <View style={styles.wrapRow}>
                     {EDUCATION_LEVELS.map((edu) => (
                       <TouchableOpacity
                         key={edu}
-                        style={[styles.scrollChip, educationLevel === edu && styles.chipSelected]}
+                        style={[styles.wrapChip, educationLevel === edu && styles.chipSelected]}
                         onPress={() => setEducationLevel(edu)}
                         activeOpacity={0.8}
                       >
@@ -646,15 +681,15 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                         </Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
+                  </View>
 
                   {/* Height Question */}
                   <Text style={styles.inputLabel}>📏 Height</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                  <View style={styles.wrapRow}>
                     {HEIGHT_OPTIONS.map((h) => (
                       <TouchableOpacity
                         key={h}
-                        style={[styles.scrollChip, height === h && styles.chipSelected]}
+                        style={[styles.wrapChip, height === h && styles.chipSelected]}
                         onPress={() => setHeight(h)}
                         activeOpacity={0.8}
                       >
@@ -663,7 +698,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                         </Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
+                  </View>
                   <CustomInput
                     placeholder="Or enter custom height (e.g. 5'9&quot; or 175 cm)"
                     value={height}
@@ -672,11 +707,11 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
 
                   {/* Weight Question */}
                   <Text style={styles.inputLabel}>⚖️ Weight</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                  <View style={styles.wrapRow}>
                     {WEIGHT_OPTIONS.map((w) => (
                       <TouchableOpacity
                         key={w}
-                        style={[styles.scrollChip, weight === w && styles.chipSelected]}
+                        style={[styles.wrapChip, weight === w && styles.chipSelected]}
                         onPress={() => setWeight(w)}
                         activeOpacity={0.8}
                       >
@@ -685,7 +720,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                         </Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
+                  </View>
                   <CustomInput
                     placeholder="Or enter custom weight (e.g. 62 kg or 136 lbs)"
                     value={weight}
@@ -694,14 +729,14 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
 
                   {/* Job / Occupation Question */}
                   <Text style={styles.inputLabel}>💼 Job / Occupation</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
+                  <View style={styles.wrapRow}>
                     {JOB_EXAMPLES.map((j) => {
                       const titleOnly = j.replace(/^[^\s]+\s/, '');
                       const isSelected = job === titleOnly || job === j;
                       return (
                         <TouchableOpacity
                           key={j}
-                          style={[styles.scrollChip, isSelected && styles.chipSelected]}
+                          style={[styles.wrapChip, isSelected && styles.chipSelected]}
                           onPress={() => setJob(titleOnly)}
                           activeOpacity={0.8}
                         >
@@ -711,7 +746,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                         </TouchableOpacity>
                       );
                     })}
-                  </ScrollView>
+                  </View>
                   <CustomInput
                     placeholder="e.g. Software Engineer, Teacher, Doctor, Student, Business Owner"
                     value={job}
@@ -726,135 +761,8 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                     onChangeText={setCollege}
                   />
 
-                  {/* Maximum Distance Preference */}
-                  <Text style={styles.inputLabel}>📍 Maximum Distance Preference: {distanceRange} km</Text>
-                  <View style={styles.sliderRow}>
-                    <TouchableOpacity
-                      style={styles.stepBtn}
-                      onPress={() => setDistanceRange(Math.max(1, (parseInt(distanceRange, 10) || 10) - 5).toString())}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.stepBtnText}>-</Text>
-                    </TouchableOpacity>
-
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.distanceChipsContainer}>
-                      {['5', '10', '25', '50', '100'].map((dist) => (
-                        <TouchableOpacity
-                          key={dist}
-                          style={[styles.distChip, distanceRange === dist && styles.chipSelected]}
-                          onPress={() => setDistanceRange(dist)}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={[styles.chipText, distanceRange === dist && styles.chipTextSelected]}>
-                            {dist} km
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-
-                    <TouchableOpacity
-                      style={styles.stepBtn}
-                      onPress={() => setDistanceRange(Math.min(200, (parseInt(distanceRange, 10) || 10) + 5).toString())}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.stepBtnText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Age Range Preference (Like Distance) */}
-                  <Text style={styles.inputLabel}>
-                    🎂 Preferred Age Range: {ageRangeMin} - {ageRangeMax} years old
-                  </Text>
-
-                  {/* Minimum Preferred Age */}
-                  <Text style={styles.subInputLabel}>Min Age Preference: ({ageRangeMin} yrs)</Text>
-                  <View style={styles.sliderRow}>
-                    <TouchableOpacity
-                      style={styles.stepBtn}
-                      onPress={() => setAgeRangeMin(Math.max(18, (parseInt(ageRangeMin, 10) || 18) - 1).toString())}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.stepBtnText}>-</Text>
-                    </TouchableOpacity>
-
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.distanceChipsContainer}>
-                      {['18', '20', '22', '25', '28', '30'].map((val) => (
-                        <TouchableOpacity
-                          key={val}
-                          style={[styles.distChip, ageRangeMin === val && styles.chipSelected]}
-                          onPress={() => setAgeRangeMin(val)}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={[styles.chipText, ageRangeMin === val && styles.chipTextSelected]}>
-                            {val} yrs
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-
-                    <TouchableOpacity
-                      style={styles.stepBtn}
-                      onPress={() => setAgeRangeMin(Math.min(parseInt(ageRangeMax, 10) - 1, (parseInt(ageRangeMin, 10) || 18) + 1).toString())}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.stepBtnText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Maximum Preferred Age */}
-                  <Text style={styles.subInputLabel}>Max Age Preference: ({ageRangeMax} yrs)</Text>
-                  <View style={styles.sliderRow}>
-                    <TouchableOpacity
-                      style={styles.stepBtn}
-                      onPress={() => setAgeRangeMax(Math.max(parseInt(ageRangeMin, 10) + 1, (parseInt(ageRangeMax, 10) || 35) - 1).toString())}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.stepBtnText}>-</Text>
-                    </TouchableOpacity>
-
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.distanceChipsContainer}>
-                      {['25', '30', '35', '40', '45', '50', '60'].map((val) => (
-                        <TouchableOpacity
-                          key={val}
-                          style={[styles.distChip, ageRangeMax === val && styles.chipSelected]}
-                          onPress={() => setAgeRangeMax(val)}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={[styles.chipText, ageRangeMax === val && styles.chipTextSelected]}>
-                            {val} yrs
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-
-                    <TouchableOpacity
-                      style={styles.stepBtn}
-                      onPress={() => setAgeRangeMax(Math.min(75, (parseInt(ageRangeMax, 10) || 35) + 1).toString())}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.stepBtnText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Zodiac Sign Question */}
-                  <Text style={styles.inputLabel}>⭐ Zodiac Sign</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollOptions}>
-                    {ZODIAC_SIGNS.map((z) => (
-                      <TouchableOpacity
-                        key={z}
-                        style={[styles.scrollChip, zodiac === z && styles.chipSelected]}
-                        onPress={() => setZodiac(z)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={[styles.chipText, zodiac === z && styles.chipTextSelected]}>
-                          {z}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-
                   <View style={styles.btnRow}>
-                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(1)} activeOpacity={0.8}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(2)} activeOpacity={0.8}>
                       <Text style={styles.backBtnText}>BACK</Text>
                     </TouchableOpacity>
                     <CustomButton title="NEXT" variant="primary" onPress={handleNext} style={styles.flexBtn} />
@@ -862,7 +770,8 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                 </>
               )}
 
-              {step === 3 && (
+              {/* STEP 4: Passions, Bio & Languages */}
+              {step === 4 && (
                 <>
                   <CustomInput
                     label="Bio / About Me"
@@ -873,6 +782,25 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                     onChangeText={setBio}
                     style={styles.bioInput}
                   />
+
+                  <Text style={styles.inputLabel}>🗣️ Languages Spoken</Text>
+                  <View style={styles.interestsWrap}>
+                    {LANGUAGE_OPTIONS.map((lang) => {
+                      const isSelected = selectedLanguages.includes(lang);
+                      return (
+                        <TouchableOpacity
+                          key={lang}
+                          style={[styles.interestChip, isSelected && styles.interestChipSelected]}
+                          onPress={() => toggleLanguage(lang)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.interestChipText, isSelected && styles.interestChipTextSelected]}>
+                            {lang}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
 
                   <Text style={styles.inputLabel}>Select Your Interests (Max 6)</Text>
                   <View style={styles.interestsWrap}>
@@ -894,7 +822,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                   </View>
 
                   <View style={styles.btnRow}>
-                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(2)} activeOpacity={0.8}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(3)} activeOpacity={0.8}>
                       <Text style={styles.backBtnText}>BACK</Text>
                     </TouchableOpacity>
                     <CustomButton title="NEXT" variant="primary" onPress={handleNext} style={styles.flexBtn} />
@@ -902,7 +830,147 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                 </>
               )}
 
-              {step === 4 && (
+              {/* STEP 5: Match Preferences & Zodiac */}
+              {step === 5 && (
+                <>
+                  {/* Maximum Distance Preference */}
+                  <Text style={styles.inputLabel}>📍 Maximum Distance Preference: {distanceRange} km</Text>
+                  <View style={styles.sliderRow}>
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setDistanceRange(Math.max(1, (parseInt(distanceRange, 10) || 10) - 5).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>-</Text>
+                    </TouchableOpacity>
+
+                    <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginHorizontal: 6 }}>
+                      {['5', '10', '25', '50', '100'].map((dist) => (
+                        <TouchableOpacity
+                          key={dist}
+                          style={[styles.distChip, distanceRange === dist && styles.chipSelected]}
+                          onPress={() => setDistanceRange(dist)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.chipText, distanceRange === dist && styles.chipTextSelected]}>
+                            {dist} km
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setDistanceRange(Math.min(200, (parseInt(distanceRange, 10) || 10) + 5).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Age Range Preference */}
+                  <Text style={styles.inputLabel}>
+                    🎂 Preferred Age Range: {ageRangeMin} - {ageRangeMax} years old
+                  </Text>
+
+                  {/* Minimum Preferred Age */}
+                  <Text style={styles.subInputLabel}>Min Age Preference: ({ageRangeMin} yrs)</Text>
+                  <View style={styles.sliderRow}>
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMin(Math.max(18, (parseInt(ageRangeMin, 10) || 18) - 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>-</Text>
+                    </TouchableOpacity>
+
+                    <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginHorizontal: 6 }}>
+                      {['18', '20', '22', '25', '28', '30'].map((val) => (
+                        <TouchableOpacity
+                          key={val}
+                          style={[styles.distChip, ageRangeMin === val && styles.chipSelected]}
+                          onPress={() => setAgeRangeMin(val)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.chipText, ageRangeMin === val && styles.chipTextSelected]}>
+                            {val} yrs
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMin(Math.min(parseInt(ageRangeMax, 10) - 1, (parseInt(ageRangeMin, 10) || 18) + 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Maximum Preferred Age */}
+                  <Text style={styles.subInputLabel}>Max Age Preference: ({ageRangeMax} yrs)</Text>
+                  <View style={styles.sliderRow}>
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMax(Math.max(parseInt(ageRangeMin, 10) + 1, (parseInt(ageRangeMax, 10) || 35) - 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>-</Text>
+                    </TouchableOpacity>
+
+                    <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginHorizontal: 6 }}>
+                      {['25', '30', '35', '40', '45', '50', '60'].map((val) => (
+                        <TouchableOpacity
+                          key={val}
+                          style={[styles.distChip, ageRangeMax === val && styles.chipSelected]}
+                          onPress={() => setAgeRangeMax(val)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.chipText, ageRangeMax === val && styles.chipTextSelected]}>
+                            {val} yrs
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.stepBtn}
+                      onPress={() => setAgeRangeMax(Math.min(75, (parseInt(ageRangeMax, 10) || 35) + 1).toString())}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Zodiac Sign Question */}
+                  <Text style={styles.inputLabel}>⭐ Zodiac Sign</Text>
+                  <View style={styles.wrapRow}>
+                    {ZODIAC_SIGNS.map((z) => (
+                      <TouchableOpacity
+                        key={z}
+                        style={[styles.wrapChip, zodiac === z && styles.chipSelected]}
+                        onPress={() => setZodiac(z)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, zodiac === z && styles.chipTextSelected]}>
+                          {z}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <View style={styles.btnRow}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(4)} activeOpacity={0.8}>
+                      <Text style={styles.backBtnText}>BACK</Text>
+                    </TouchableOpacity>
+                    <CustomButton title="NEXT" variant="primary" onPress={handleNext} style={styles.flexBtn} />
+                  </View>
+                </>
+              )}
+
+              {/* STEP 6: Photos & Preview */}
+              {step === 6 && (
                 <>
                   {/* Status / Story Horizontal Carousel Preview */}
                   <Text style={styles.inputLabel}>📸 Status / Story Preview</Text>
@@ -958,7 +1026,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                   </View>
 
                   <View style={styles.btnRow}>
-                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(3)} activeOpacity={0.8}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(5)} activeOpacity={0.8}>
                       <Text style={styles.backBtnText}>BACK</Text>
                     </TouchableOpacity>
                     <CustomButton
@@ -1027,7 +1095,7 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 24,
   },
   progressBarBg: {
     width: '100%',
@@ -1035,6 +1103,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
     borderRadius: 3,
     overflow: 'hidden',
+    marginBottom: 12,
   },
   progressBarFill: {
     height: '100%',

@@ -245,8 +245,19 @@ export const apiClient = {
       body: JSON.stringify(body),
     });
   },
+  superLikeUser: async (body) => {
+    return await request('/api/match/superlike', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
   getLikes: async () => {
     return await request('/api/match/likes', {
+      method: 'GET',
+    });
+  },
+  getSuperLikeStatus: async () => {
+    return await request('/api/match/superlike-status', {
       method: 'GET',
     });
   },

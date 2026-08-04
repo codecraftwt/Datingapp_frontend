@@ -2085,6 +2085,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     );
   };
 
+  const handleSuperLikeSwipe = async () => {
+    if (swipeIndex >= MOCK_MATCHES.length) return;
+    const currentCandidate = MOCK_MATCHES[swipeIndex];
+    const targetUserId = currentCandidate._id || currentCandidate.id;
+
+    try {
+      const res = await apiClient.superLikeUser({
+        targetUserId,
+      });
+
+      if (res?.isMatch) {
+        Alert.alert("It's a Match! 🎉", `You and ${currentCandidate.firstName || currentCandidate.name} Super Liked each other!`);
+      } else {
+        Alert.alert('Super Liked! ⭐', `You Super Liked ${currentCandidate.firstName || currentCandidate.name}!`);
+      }
+      setSwipeIndex((prev) => prev + 1);
+    } catch (err) {
+      console.log('Superlike swipe error:', err);
+      const msg = err?.data?.message || err?.message || 'Daily Super Like limit reached (1 per day)!';
+      Alert.alert('Super Like Limit', msg);
+    }
+  };
+
   const handleBlockUser = (targetUserIdParam, targetUserNameParam) => {
     const currentCandidate = swipeIndex < MOCK_MATCHES.length ? MOCK_MATCHES[swipeIndex] : null;
     const targetUserId = targetUserIdParam || (activeChat && activeChat.id) || (currentCandidate && currentCandidate.id);
@@ -2565,7 +2588,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionCircle, styles.actionSuperLike]}
-                    onPress={triggerSwipeRight}
+                    onPress={handleSuperLikeSwipe}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.actionIconText}>★</Text>
@@ -2590,11 +2613,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 <ScrollView style={styles.likesGridScroll} showsVerticalScrollIndicator={false}>
                   <View style={styles.likesGrid}>
                     {likesList.map((item) => (
-                      <View key={item.id} style={styles.likeGridCard}>
+                      <View key={item.id} style={[styles.likeGridCard, item.isSuperLike && { borderColor: '#3897F0', borderWidth: 2 }]}>
                         <View style={{ position: 'relative' }}>
                           <Image source={{ uri: getImageUrl(item.image) }} style={styles.likeGridImage} />
                           {!!onlineUsersMap[item.id.toString()] && (
                             <View style={[styles.onlineDotOverlay, { top: 8, left: 8, width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: '#1E1E1E' }]} />
+                          )}
+                          {item.isSuperLike && (
+                            <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: '#3897F0', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 }}>
+                              <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>⭐ Super Liked You</Text>
+                            </View>
                           )}
                         </View>
                         <View style={styles.likeGridInfo}>
@@ -2620,8 +2648,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             </TouchableOpacity>
                           </View>
                         </View>
-                        <View style={styles.likeGridHeartBadge}>
-                          <Text style={styles.likeGridHeartEmoji}>❤️</Text>
+                        <View style={[styles.likeGridHeartBadge, item.isSuperLike && { backgroundColor: '#3897F0' }]}>
+                          <Text style={styles.likeGridHeartEmoji}>{item.isSuperLike ? '⭐' : '❤️'}</Text>
                         </View>
                       </View>
                     ))}

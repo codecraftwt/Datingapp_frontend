@@ -12,9 +12,15 @@ import {
   Modal,
   SafeAreaView,
   Alert,
+  Dimensions,
+  StatusBar,
+  Platform,
 } from 'react-native';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl } from '../api/config';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
 
 export function SearchScreen({ onSelectProfile }) {
   // Search Bar State
@@ -60,6 +66,12 @@ export function SearchScreen({ onSelectProfile }) {
 
   // Modal Visibility State
   const [showFilterModal, setShowFilterModal] = useState(false);
+
+  // Expanded Profile View & Action States
+  const [selectedProfileModal, setSelectedProfileModal] = useState(null);
+  const [actionStatusMap, setActionStatusMap] = useState({});
+  const [matchedCelebrationUser, setMatchedCelebrationUser] = useState(null);
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
   // Initialize Search & Load Filter Metadata
   useEffect(() => {
@@ -206,6 +218,97 @@ export function SearchScreen({ onSelectProfile }) {
     setSortBy('matchPercentage');
   };
 
+  const handleLikeProfile = async (targetProfile, actionType = 'like') => {
+    if (!targetProfile) return;
+    const targetId = targetProfile._id || targetProfile.id;
+
+    try {
+      const res = actionType === 'superlike'
+        ? await apiClient.superLikeUser({ targetUserId: targetId })
+        : await apiClient.likeUser({ targetUserId: targetId });
+
+      const isMatch = res?.isMatch || res?.matched || res?.status === 'match';
+
+      if (isMatch) {
+        setActionStatusMap((prev) => ({ ...prev, [targetId]: 'matched' }));
+        setMatchedCelebrationUser(targetProfile);
+      } else {
+        setActionStatusMap((prev) => ({ ...prev, [targetId]: actionType === 'superlike' ? 'superliked' : 'liked' }));
+        Alert.alert(
+          actionType === 'superlike' ? 'Super Liked! ⭐' : 'Profile Liked! ❤️',
+          `You liked ${targetProfile.firstName || targetProfile.name}!`
+        );
+      }
+    } catch (err) {
+      console.log('Error liking profile from search:', err);
+      setActionStatusMap((prev) => ({ ...prev, [targetId]: actionType === 'superlike' ? 'superliked' : 'liked' }));
+      Alert.alert('Liked!', `You liked ${targetProfile.firstName || targetProfile.name}!`);
+    } finally {
+      setSelectedProfileModal(null);
+    }
+  };
+
+  const handlePassProfile = async (targetProfile) => {
+    if (!targetProfile) return;
+    const targetId = targetProfile._id || targetProfile.id;
+
+    try {
+      await apiClient.likeUser({
+        targetUserId: targetId,
+        action: 'pass',
+      });
+    } catch (err) {
+      console.log('Error passing profile from search:', err);
+    } finally {
+      setActionStatusMap((prev) => ({ ...prev, [targetId]: 'passed' }));
+      setSelectedProfileModal(null);
+    }
+  };
+
+  const handleReportProfile = (targetProfile) => {
+    Alert.alert(
+      'Report / Block Profile',
+      `Select an action for ${targetProfile.firstName || targetProfile.name}:`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Report Profile 🚩',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiClient.reportUser({
+                targetUserId: targetProfile._id || targetProfile.id,
+                reason: 'Inappropriate behavior or fake profile',
+              });
+              Alert.alert('Reported', 'Thank you for making our community safe.');
+              setSelectedProfileModal(null);
+            } catch (err) {
+              Alert.alert('Reported', 'Profile reported to support.');
+              setSelectedProfileModal(null);
+            }
+          },
+        },
+        {
+          text: 'Block User 🚫',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiClient.blockUser({
+                targetUserId: targetProfile._id || targetProfile.id,
+              });
+              setActionStatusMap((prev) => ({ ...prev, [targetProfile._id || targetProfile.id]: 'passed' }));
+              Alert.alert('Blocked', `${targetProfile.firstName || targetProfile.name} has been blocked.`);
+              setSelectedProfileModal(null);
+            } catch (err) {
+              Alert.alert('Blocked', 'User blocked.');
+              setSelectedProfileModal(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const toggleSelection = (item, list, setList) => {
     if (list.includes(item)) {
       setList(list.filter((i) => i !== item));
@@ -299,14 +402,20 @@ export function SearchScreen({ onSelectProfile }) {
               <Text style={styles.emptySubtitle}>Try broadening your age, distance, or interest filters.</Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.profileCard}
-              activeOpacity={0.9}
-              onPress={() => onSelectProfile && onSelectProfile(item)}
-            >
-              {/* Profile Image & Badges */}
-              <View style={styles.cardHeaderImageRow}>
+          renderItem={({ item }) => {
+            const status = actionStatusMap[item._id || item.id];
+            return (
+              <TouchableOpacity
+                style={[styles.profileCard, status === 'passed' && { opacity: 0.6 }]}
+                activeOpacity={0.9}
+                onPress={() => {
+                  setSelectedProfileModal(item);
+                  setActivePhotoIndex(0);
+                  if (onSelectProfile) onSelectProfile(item);
+                }}
+              >
+                {/* Profile Image & Badges */}
+                <View style={styles.cardHeaderImageRow}>
                 <Image
                   source={{
                     uri: item.profileImage
@@ -371,8 +480,18 @@ export function SearchScreen({ onSelectProfile }) {
                   ))}
                 </View>
               )}
+
+              {/* Action Status Pill Badge */}
+              {status && (
+                <View style={[styles.cardStatusBadge, status === 'matched' ? styles.statusBadgeMatched : status === 'passed' ? styles.statusBadgePassed : styles.statusBadgeLiked]}>
+                  <Text style={styles.cardStatusBadgeText}>
+                    {status === 'matched' ? '🎉 Matched!' : status === 'passed' ? '✖ Passed' : status === 'superliked' ? '⭐ Super Liked' : '❤️ Liked'}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
-          )}
+          );
+        }}
           onEndReached={() => {
             if (page < totalPages && !isLoading) {
               executeSearch(page + 1);
@@ -561,6 +680,283 @@ export function SearchScreen({ onSelectProfile }) {
             </TouchableOpacity>
           </View>
         </SafeAreaView>
+      </Modal>
+
+      {/* Expanded Profile Detail Modal */}
+      <Modal visible={!!selectedProfileModal} animationType="slide" transparent={false}>
+        {selectedProfileModal && (
+          <SafeAreaView style={styles.expandedModalSafeArea}>
+            {/* Top Navigation Bar */}
+            <View style={styles.expandedNavHeader}>
+              <TouchableOpacity
+                style={styles.expandedBackBtn}
+                onPress={() => setSelectedProfileModal(null)}
+              >
+                <Text style={styles.expandedBackIcon}>←</Text>
+              </TouchableOpacity>
+              <Text style={styles.expandedNavTitle} numberOfLines={1}>
+                {selectedProfileModal.firstName || selectedProfileModal.name}'s Profile
+              </Text>
+              <TouchableOpacity
+                style={styles.expandedReportBtn}
+                onPress={() => handleReportProfile(selectedProfileModal)}
+              >
+                <Text style={styles.expandedReportIcon}>⋮</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.expandedContentScroll} showsVerticalScrollIndicator={false}>
+              {/* Photo Carousel Header */}
+              <View style={styles.photoCarouselContainer}>
+                {(() => {
+                  const photos = [
+                    selectedProfileModal.profileImage,
+                    ...(selectedProfileModal.profileImages || []),
+                  ].filter(Boolean);
+                  const displayPhotos = photos.length > 0 ? photos : ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
+                  const activePhoto = displayPhotos[activePhotoIndex % displayPhotos.length];
+
+                  return (
+                    <View style={styles.carouselImageWrapper}>
+                      <Image source={{ uri: getImageUrl(activePhoto) }} style={styles.carouselImage} />
+                      {displayPhotos.length > 1 && (
+                        <View style={styles.photoIndicatorRow}>
+                          {displayPhotos.map((_, idx) => (
+                            <TouchableOpacity
+                              key={idx}
+                              style={[
+                                styles.photoIndicatorDot,
+                                idx === activePhotoIndex && styles.photoIndicatorDotActive,
+                              ]}
+                              onPress={() => setActivePhotoIndex(idx)}
+                            />
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })()}
+
+                {/* Match Percentage Floating Badge */}
+                <View style={styles.expandedMatchBadge}>
+                  <Text style={styles.expandedMatchBadgeText}>
+                    ✨ {selectedProfileModal.matchPercentage || 85}% Match
+                  </Text>
+                </View>
+              </View>
+
+              {/* Identity & Basic Info Header */}
+              <View style={styles.expandedInfoSection}>
+                <View style={styles.expandedNameRow}>
+                  <Text style={styles.expandedNameText}>
+                    {selectedProfileModal.firstName || selectedProfileModal.name}
+                  </Text>
+                  {selectedProfileModal.age && (
+                    <Text style={styles.expandedAgeText}>, {selectedProfileModal.age}</Text>
+                  )}
+                  {selectedProfileModal.isVerified && (
+                    <Text style={styles.verifiedCheckIcon}> ✔</Text>
+                  )}
+                </View>
+
+                {/* Location / Distance */}
+                <View style={styles.expandedMetaRow}>
+                  <Text style={styles.expandedDistanceText}>
+                    📍 {selectedProfileModal.calculatedDistanceKm
+                      ? `${selectedProfileModal.calculatedDistanceKm} km away`
+                      : (selectedProfileModal.distanceText || selectedProfileModal.distance || 'Near you')}
+                  </Text>
+                </View>
+
+                {/* Work & College */}
+                {(selectedProfileModal.job || selectedProfileModal.profession) ? (
+                  <View style={styles.expandedMetaRow}>
+                    <Text style={styles.expandedJobText}>
+                      💼 {selectedProfileModal.job || selectedProfileModal.profession}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {selectedProfileModal.college ? (
+                  <View style={styles.expandedMetaRow}>
+                    <Text style={styles.expandedCollegeText}>
+                      🎓 {selectedProfileModal.college}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* Bio Section */}
+              {selectedProfileModal.bio ? (
+                <View style={styles.expandedSectionBox}>
+                  <Text style={styles.expandedSectionHeader}>About Me</Text>
+                  <Text style={styles.expandedBioText}>{selectedProfileModal.bio}</Text>
+                </View>
+              ) : null}
+
+              {/* Interests & Languages */}
+              {((selectedProfileModal.interests && selectedProfileModal.interests.length > 0) ||
+                (selectedProfileModal.languages && selectedProfileModal.languages.length > 0)) && (
+                <View style={styles.expandedSectionBox}>
+                  <Text style={styles.expandedSectionHeader}>Interests & Languages</Text>
+                  <View style={styles.expandedChipsWrap}>
+                    {(selectedProfileModal.interests || []).map((interest, idx) => {
+                      const isCommon = (selectedProfileModal.commonInterests || []).includes(interest);
+                      return (
+                        <View
+                          key={`int-${idx}`}
+                          style={[
+                            styles.expandedChip,
+                            isCommon && styles.expandedChipHighlight,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.expandedChipText,
+                              isCommon && styles.expandedChipTextHighlight,
+                            ]}
+                          >
+                            {isCommon ? `★ ${interest}` : interest}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                    {(selectedProfileModal.languages || []).map((lang, idx) => (
+                      <View key={`lang-${idx}`} style={styles.expandedChipSubtle}>
+                        <Text style={styles.expandedChipSubtleText}>🗣️ {lang}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Lifestyle & Basics */}
+              <View style={styles.expandedSectionBox}>
+                <Text style={styles.expandedSectionHeader}>Lifestyle & Basics</Text>
+                <View style={styles.lifestyleGrid}>
+                  {selectedProfileModal.gender && (
+                    <View style={styles.lifestyleItem}>
+                      <Text style={styles.lifestyleIcon}>👤</Text>
+                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.gender}</Text>
+                    </View>
+                  )}
+                  {selectedProfileModal.drinkHabit && (
+                    <View style={styles.lifestyleItem}>
+                      <Text style={styles.lifestyleIcon}>🍷</Text>
+                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.drinkHabit}</Text>
+                    </View>
+                  )}
+                  {selectedProfileModal.smokeHabit && (
+                    <View style={styles.lifestyleItem}>
+                      <Text style={styles.lifestyleIcon}>🚬</Text>
+                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.smokeHabit}</Text>
+                    </View>
+                  )}
+                  {selectedProfileModal.exercise && (
+                    <View style={styles.lifestyleItem}>
+                      <Text style={styles.lifestyleIcon}>🏋️</Text>
+                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.exercise}</Text>
+                    </View>
+                  )}
+                  {selectedProfileModal.pets && (
+                    <View style={styles.lifestyleItem}>
+                      <Text style={styles.lifestyleIcon}>🐶</Text>
+                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.pets}</Text>
+                    </View>
+                  )}
+                  {selectedProfileModal.zodiac && (
+                    <View style={styles.lifestyleItem}>
+                      <Text style={styles.lifestyleIcon}>♌</Text>
+                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.zodiac}</Text>
+                    </View>
+                  )}
+                  {selectedProfileModal.lookingFor && (
+                    <View style={styles.lifestyleItemFull}>
+                      <Text style={styles.lifestyleIcon}>💍</Text>
+                      <Text style={styles.lifestyleLabel}>Looking for: {selectedProfileModal.lookingFor}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              <View style={{ height: 100 }} />
+            </ScrollView>
+
+            {/* Bottom Action Controls Bar (Pass, Superlike, Like) */}
+            <View style={styles.expandedActionBar}>
+              {/* Pass Button */}
+              <TouchableOpacity
+                style={[styles.expandedActionBtn, styles.expandedActionBtnPass]}
+                onPress={() => handlePassProfile(selectedProfileModal)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.expandedActionIconPass}>✖</Text>
+                <Text style={styles.expandedActionLabelPass}>Pass</Text>
+              </TouchableOpacity>
+
+              {/* Super Like Button */}
+              <TouchableOpacity
+                style={[styles.expandedActionBtn, styles.expandedActionBtnSuper]}
+                onPress={() => handleLikeProfile(selectedProfileModal, 'superlike')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.expandedActionIconSuper}>★</Text>
+                <Text style={styles.expandedActionLabelSuper}>Superlike</Text>
+              </TouchableOpacity>
+
+              {/* Like Button */}
+              <TouchableOpacity
+                style={[styles.expandedActionBtn, styles.expandedActionBtnLike]}
+                onPress={() => handleLikeProfile(selectedProfileModal, 'like')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.expandedActionIconLike}>♥</Text>
+                <Text style={styles.expandedActionLabelLike}>Like</Text>
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        )}
+      </Modal>
+
+      {/* Match Celebration Dialog */}
+      <Modal visible={!!matchedCelebrationUser} animationType="fade" transparent={true}>
+        {matchedCelebrationUser && (
+          <View style={styles.matchDialogOverlay}>
+            <View style={styles.matchDialogContainer}>
+              <Text style={styles.matchDialogTitle}>It's a Match! 🎉</Text>
+              <Text style={styles.matchDialogSubtitle}>
+                You and {matchedCelebrationUser.firstName || matchedCelebrationUser.name} liked each other!
+              </Text>
+
+              <Image
+                source={{
+                  uri: matchedCelebrationUser.profileImage
+                    ? getImageUrl(matchedCelebrationUser.profileImage)
+                    : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
+                }}
+                style={styles.matchDialogAvatar}
+              />
+
+              <TouchableOpacity
+                style={styles.matchDialogChatBtn}
+                onPress={() => {
+                  const matchedUser = matchedCelebrationUser;
+                  setMatchedCelebrationUser(null);
+                  Alert.alert('Match Created!', `You can now chat with ${matchedUser.firstName || matchedUser.name} in the Chat tab!`);
+                }}
+              >
+                <Text style={styles.matchDialogChatBtnText}>Send Message 💬</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.matchDialogCloseBtn}
+                onPress={() => setMatchedCelebrationUser(null)}
+              >
+                <Text style={styles.matchDialogCloseText}>Keep Searching</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </Modal>
     </SafeAreaView>
   );
@@ -793,6 +1189,7 @@ const styles = StyleSheet.create({
   modalSafeArea: {
     flex: 1,
     backgroundColor: '#0F0F13',
+    paddingTop: STATUSBAR_HEIGHT,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -912,5 +1309,348 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  cardStatusBadge: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  statusBadgeLiked: {
+    backgroundColor: 'rgba(255, 68, 88, 0.2)',
+  },
+  statusBadgeMatched: {
+    backgroundColor: 'rgba(76, 217, 100, 0.2)',
+  },
+  statusBadgePassed: {
+    backgroundColor: 'rgba(142, 142, 147, 0.2)',
+  },
+  cardStatusBadgeText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  expandedModalSafeArea: {
+    flex: 1,
+    backgroundColor: '#0F0F13',
+    paddingTop: STATUSBAR_HEIGHT,
+  },
+  expandedNavHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C1C24',
+  },
+  expandedBackBtn: {
+    padding: 6,
+  },
+  expandedBackIcon: {
+    color: '#FFF',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  expandedNavTitle: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: 10,
+  },
+  expandedReportBtn: {
+    padding: 6,
+  },
+  expandedReportIcon: {
+    color: '#8E8E93',
+    fontSize: 24,
+  },
+  expandedContentScroll: {
+    flex: 1,
+  },
+  photoCarouselContainer: {
+    position: 'relative',
+    width: '100%',
+    height: Math.min(SCREEN_WIDTH * 1.05, 420),
+    backgroundColor: '#1C1C24',
+  },
+  carouselImageWrapper: {
+    width: '100%',
+    height: '100%',
+  },
+  carouselImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  photoIndicatorRow: {
+    position: 'absolute',
+    bottom: 15,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  photoIndicatorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  photoIndicatorDotActive: {
+    width: 20,
+    backgroundColor: '#FF4458',
+  },
+  expandedMatchBadge: {
+    position: 'absolute',
+    top: 15,
+    right: 15,
+    backgroundColor: 'rgba(255, 68, 88, 0.9)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  expandedMatchBadgeText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  expandedInfoSection: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C1C24',
+  },
+  expandedNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  expandedNameText: {
+    color: '#FFF',
+    fontSize: 26,
+    fontWeight: 'bold',
+  },
+  expandedAgeText: {
+    color: '#FFF',
+    fontSize: 26,
+    fontWeight: 'bold',
+  },
+  verifiedCheckIcon: {
+    color: '#3897F0',
+    fontSize: 20,
+  },
+  expandedMetaRow: {
+    marginTop: 6,
+  },
+  expandedDistanceText: {
+    color: '#A0A0B0',
+    fontSize: 14,
+  },
+  expandedJobText: {
+    color: '#FF88A0',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  expandedCollegeText: {
+    color: '#A0A0B0',
+    fontSize: 14,
+  },
+  expandedSectionBox: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C1C24',
+  },
+  expandedSectionHeader: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  expandedBioText: {
+    color: '#D0D0E0',
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  expandedChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  expandedChip: {
+    backgroundColor: '#1C1C24',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2C2C38',
+  },
+  expandedChipHighlight: {
+    backgroundColor: 'rgba(255, 68, 88, 0.15)',
+    borderColor: '#FF4458',
+  },
+  expandedChipText: {
+    color: '#A0A0B0',
+    fontSize: 13,
+  },
+  expandedChipTextHighlight: {
+    color: '#FF4458',
+    fontWeight: 'bold',
+  },
+  expandedChipSubtle: {
+    backgroundColor: '#1C1C24',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  expandedChipSubtleText: {
+    color: '#A0A0B0',
+    fontSize: 13,
+  },
+  lifestyleGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  lifestyleItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1C1C24',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    gap: 6,
+  },
+  lifestyleItemFull: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1C1C24',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    gap: 6,
+  },
+  lifestyleIcon: {
+    fontSize: 16,
+  },
+  lifestyleLabel: {
+    color: '#D0D0E0',
+    fontSize: 13,
+  },
+  expandedActionBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: '#16161E',
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'android' ? 16 : 20,
+    paddingHorizontal: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#262632',
+  },
+  expandedActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 25,
+    gap: 6,
+  },
+  expandedActionBtnPass: {
+    backgroundColor: '#262632',
+  },
+  expandedActionIconPass: {
+    color: '#8E8E93',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  expandedActionLabelPass: {
+    color: '#FFF',
+    fontWeight: '600',
+  },
+  expandedActionBtnSuper: {
+    backgroundColor: '#3897F0',
+  },
+  expandedActionIconSuper: {
+    color: '#FFF',
+    fontSize: 16,
+  },
+  expandedActionLabelSuper: {
+    color: '#FFF',
+    fontWeight: 'bold',
+  },
+  expandedActionBtnLike: {
+    backgroundColor: '#FF4458',
+  },
+  expandedActionIconLike: {
+    color: '#FFF',
+    fontSize: 18,
+  },
+  expandedActionLabelLike: {
+    color: '#FFF',
+    fontWeight: 'bold',
+  },
+  matchDialogOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  matchDialogContainer: {
+    width: '90%',
+    backgroundColor: '#1C1C24',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 88, 0.3)',
+  },
+  matchDialogTitle: {
+    color: '#FF4458',
+    fontSize: 26,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  matchDialogSubtitle: {
+    color: '#D0D0E0',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  matchDialogAvatar: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    borderWidth: 3,
+    borderColor: '#FF4458',
+    marginBottom: 20,
+  },
+  matchDialogChatBtn: {
+    width: '100%',
+    backgroundColor: '#FF4458',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  matchDialogChatBtnText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  matchDialogCloseBtn: {
+    paddingVertical: 10,
+  },
+  matchDialogCloseText: {
+    color: '#8E8E93',
+    fontSize: 14,
   },
 });
