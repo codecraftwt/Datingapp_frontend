@@ -209,7 +209,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           }
 
           await apiClient.saveQuestionnaire(updatedProfile);
-          Alert.alert('Profile Photo Updated', 'Your profile picture has been uploaded to Cloudinary & updated!');
+          Alert.alert('Profile Photo Updated', 'Your profile picture has been uploaded');
         } catch (err) {
           console.log('Error saving new profile photo:', err);
         } finally {

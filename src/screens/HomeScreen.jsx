@@ -35,7 +35,6 @@ import { useDispatch, useSelector } from 'react-redux';
 import { apiClient } from '../api/apiClient';
 import { BASE_URL, getImageUrl as formatConfigUrl } from '../api/config';
 import { selectCurrentUser } from '../redux/slices/authSlice';
-import { syncUserLocationService } from '../services/locationService';
 import {
   setOtherProfiles,
   setLikes,
@@ -266,20 +265,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
-  const syncUserLocation = async () => {
-    console.log('📍 [GPS STEP 1] syncUserLocation started...');
-    try {
-      await syncUserLocationService();
-    } catch (err) {
-      console.log('❌ [GPS ERROR] Exception inside syncUserLocation:', err);
-    } finally {
-      fetchQuestionnaires();
-    }
-  };
-
   // Run fetches on mount
   useEffect(() => {
-    syncUserLocation();
     fetchQuestionnaires();
     fetchMessages();
     fetchLikes();
@@ -525,6 +512,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [callState, setCallState] = useState('idle'); // idle, calling, incoming, connected
   const [callSession, setCallSession] = useState(null); // { id, name, image, isCaller, incomingOffer }
   const [callDuration, setCallDuration] = useState(0);
+  const [callStatusText, setCallStatusText] = useState('Calling...');
   const [isCallMuted, setIsCallMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
 
@@ -532,22 +520,53 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const remoteStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const callTimerRef = useRef(null);
+  const callingTimeoutRef = useRef(null);
 
   const callStateRef = useRef(callState);
   const callSessionRef = useRef(callSession);
-  
+  const callDurationRef = useRef(callDuration);
+  const handleSendMessageRef = useRef(null);
+
   useEffect(() => {
     callStateRef.current = callState;
     callSessionRef.current = callSession;
-  }, [callState, callSession]);
+    callDurationRef.current = callDuration;
+  }, [callState, callSession, callDuration]);
+
+  const recordCallLogMessage = (targetUserId, callText, statusType = 'completed') => {
+    if (!targetUserId || !handleSendMessageRef.current) return;
+    handleSendMessageRef.current({
+      receiverId: targetUserId,
+      text: callText,
+      messageType: 'call',
+      mediaUrl: statusType,
+    });
+  };
 
   const getLocalStream = async () => {
     try {
-      console.log('--- getLocalStream Diagnostic ---');
-      console.log('mediaDevices type:', typeof mediaDevices);
-      console.log('mediaDevices keys:', mediaDevices ? Object.keys(mediaDevices) : 'null');
-      console.log('mediaDevices.getUserMedia type:', mediaDevices ? typeof mediaDevices.getUserMedia : 'undefined');
-      
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: 'Microphone Permission',
+            message: 'Please allow access to your microphone to make voice calls.',
+            buttonPositive: 'Allow',
+            buttonNegative: 'Cancel',
+          }
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Permission Denied', 'Microphone permission is required to make voice calls.');
+          return null;
+        }
+      }
+
+      if (!mediaDevices || typeof mediaDevices.getUserMedia !== 'function') {
+        console.log('mediaDevices or getUserMedia unavailable');
+        Alert.alert('WebRTC Error', 'Audio device is not supported on this platform.');
+        return null;
+      }
+
       const stream = await mediaDevices.getUserMedia({
         audio: true,
         video: false,
@@ -555,11 +574,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       localStreamRef.current = stream;
       return stream;
     } catch (e) {
-      console.log('Error getting local stream:', e);
-      Alert.alert(
-        'Microphone Error',
-        `Error details: ${e.toString()}\n\nStack trace: ${e.stack ? e.stack.substring(0, 250) : 'No stack trace available'}`
-      );
+      console.log('Error getting local audio stream:', e);
+      Alert.alert('Microphone Error', e?.message || 'Unable to access microphone.');
       return null;
     }
   };
@@ -586,6 +602,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
     };
 
+    if ('ontrack' in pc) {
+      pc.ontrack = (event) => {
+        console.log('WebRTC remote audio track added');
+        if (event.streams && event.streams[0]) {
+          remoteStreamRef.current = event.streams[0];
+        }
+      };
+    }
     pc.onaddstream = (event) => {
       console.log('WebRTC remote audio stream added');
       remoteStreamRef.current = event.stream;
@@ -593,7 +617,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     const localStream = localStreamRef.current || await getLocalStream();
     if (localStream) {
-      pc.addStream(localStream);
+      if (typeof pc.addTrack === 'function') {
+        localStream.getTracks().forEach((track) => {
+          pc.addTrack(track, localStream);
+        });
+      } else if (typeof pc.addStream === 'function') {
+        pc.addStream(localStream);
+      }
     }
 
     return pc;
@@ -610,6 +640,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       isCaller: true,
     });
     setCallState('calling');
+    setCallStatusText('Calling...');
+
+    if (callingTimeoutRef.current) clearTimeout(callingTimeoutRef.current);
+    callingTimeoutRef.current = setTimeout(() => {
+      console.log('Voice call 30s timeout reached with no answer');
+      Alert.alert('No Answer', 'No answer from user.');
+      endVoiceCall();
+    }, 30000);
 
     const localStream = await getLocalStream();
     if (!localStream) {
@@ -641,6 +679,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (!callSession || !socketRef.current || !currentUser) return;
     const currentId = currentUser.id || currentUser._id;
 
+    if (callingTimeoutRef.current) {
+      clearTimeout(callingTimeoutRef.current);
+      callingTimeoutRef.current = null;
+    }
+
     const localStream = await getLocalStream();
     if (!localStream) {
       rejectVoiceCall();
@@ -650,7 +693,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const pc = await createPeerConnection(callSession.id);
 
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(callSession.incomingOffer));
+      const offerDesc = typeof RTCSessionDescription === 'function' && callSession.incomingOffer
+        ? new RTCSessionDescription(callSession.incomingOffer)
+        : callSession.incomingOffer;
+
+      await pc.setRemoteDescription(offerDesc);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
@@ -669,6 +716,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const rejectVoiceCall = () => {
+    if (callSessionRef.current) {
+      recordCallLogMessage(callSessionRef.current.id, '📞 Missed voice call', 'declined');
+    }
     if (!callSession || !socketRef.current || !currentUser) return;
     const currentId = currentUser.id || currentUser._id;
 
@@ -682,6 +732,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const cleanUpWebRTCSession = () => {
+    if (callingTimeoutRef.current) {
+      clearTimeout(callingTimeoutRef.current);
+      callingTimeoutRef.current = null;
+    }
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
@@ -704,6 +759,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const endVoiceCall = () => {
+    if (callSessionRef.current) {
+      const targetId = callSessionRef.current.id;
+      const duration = callDurationRef.current || 0;
+      const isCaller = callSessionRef.current.isCaller;
+
+      let callText = '';
+      let statusType = 'completed';
+
+      if (duration > 0) {
+        const durStr = formatDuration(duration);
+        callText = `📞 Voice call, ${durStr}`;
+        statusType = 'completed';
+      } else {
+        callText = isCaller ? '📞 Voice call (No answer)' : '📞 Missed voice call';
+        statusType = 'missed';
+      }
+
+      recordCallLogMessage(targetId, callText, statusType);
+    }
+
     if (socketRef.current && currentUser && callSession) {
       const currentId = currentUser.id || currentUser._id;
       socketRef.current.emit('end_call', {
@@ -1267,7 +1342,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         console.log('Socket.IO call_accepted received from:', receiverId);
         if (peerConnectionRef.current) {
           try {
-            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+            const answerDesc = typeof RTCSessionDescription === 'function' && answer
+              ? new RTCSessionDescription(answer)
+              : answer;
+            await peerConnectionRef.current.setRemoteDescription(answerDesc);
             setCallState('connected');
             startCallTimer();
           } catch (e) {
@@ -1285,6 +1363,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         setCallSession(null);
       });
 
+      socketRef.current.on('call_ringing', ({ status }) => {
+        console.log('Socket.IO call_ringing received:', status);
+        setCallStatusText('Ringing...');
+      });
+
       socketRef.current.on('call_ended', ({ by }) => {
         console.log('Socket.IO call_ended received, ended by:', by);
         cleanUpWebRTCSession();
@@ -1294,13 +1377,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('webrtc_ice_candidate', async ({ senderId, candidate }) => {
         console.log('Socket.IO ice candidate received from:', senderId);
-        if (peerConnectionRef.current) {
+        if (peerConnectionRef.current && candidate) {
           try {
-            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            const candidateObj = typeof RTCIceCandidate === 'function'
+              ? new RTCIceCandidate(candidate)
+              : candidate;
+            await peerConnectionRef.current.addIceCandidate(candidateObj);
           } catch (e) {
             console.log('Error adding ICE candidate:', e);
           }
         }
+      });
+
+      socketRef.current.on('call_offline', ({ message }) => {
+        console.log('Socket.IO call_offline received:', message);
+        Alert.alert('User Offline', message || 'User is offline. A missed call notification has been sent.');
+        cleanUpWebRTCSession();
+        setCallState('idle');
+        setCallSession(null);
       });
 
       socketRef.current.on('call_failed', ({ message }) => {
@@ -2723,6 +2817,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       const isDocument = msg.messageType === 'document';
                       const isVideo = msg.messageType === 'video' || (msg.mediaUrl && (msg.mediaUrl.endsWith('.mp4') || msg.mediaUrl.endsWith('.mov') || msg.mediaUrl.endsWith('.avi')));
                       const isVoice = msg.messageType === 'voice';
+                      const isCall = msg.messageType === 'call';
 
                       return (
                         <View
@@ -2846,7 +2941,43 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               </View>
                             )}
 
-                            {(!isSticker && !isImage && !isDocument && !isVoice) && (
+                            {isCall && (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 6, minWidth: 160 }}>
+                                <View
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 18,
+                                    backgroundColor: (msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer'))))
+                                      ? 'rgba(255, 59, 48, 0.25)'
+                                      : 'rgba(52, 199, 89, 0.25)',
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    marginRight: 10,
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 18 }}>
+                                    {(msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer')))) ? '📵' : '📞'}
+                                  </Text>
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text
+                                    style={[
+                                      styles.messageText,
+                                      isMe ? styles.messageTextMe : styles.messageTextThem,
+                                      { fontWeight: '700', fontSize: 14 }
+                                    ]}
+                                  >
+                                    {msg.text || (isMe ? 'Outgoing voice call' : 'Incoming voice call')}
+                                  </Text>
+                                  <Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.6)', marginTop: 2 }}>
+                                    Voice Call
+                                  </Text>
+                                </View>
+                              </View>
+                            )}
+
+                            {(!isSticker && !isImage && !isDocument && !isVoice && !isCall) && (
                               <Text
                                 style={[
                                   styles.messageText,
@@ -3105,6 +3236,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 {(() => {
                                   if (!lastMsg) return '';
                                   if (lastMsg.messageType === 'voice') return '🎤 Voice Note';
+                                  if (lastMsg.messageType === 'call') return lastMsg.text || '📞 Voice Call';
                                   if (lastMsg.messageType === 'image') return '📷 Image';
                                   if (lastMsg.messageType === 'video') return '🎬 Video';
                                   if (lastMsg.messageType === 'document') return '📄 Document';
@@ -3462,7 +3594,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 <Text style={styles.voiceCallName}>{callSession.name}</Text>
                 
                 {callState === 'calling' && (
-                  <Text style={styles.voiceCallStatus}>Calling...</Text>
+                  <Text style={styles.voiceCallStatus}>{callStatusText || 'Calling...'}</Text>
                 )}
                 {callState === 'incoming' && (
                   <Text style={styles.voiceCallStatus}>Incoming Voice Call...</Text>

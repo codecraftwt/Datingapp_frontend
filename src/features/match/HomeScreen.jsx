@@ -36,7 +36,6 @@ import { useDispatch, useSelector } from 'react-redux';
 import { apiClient } from '../../api/apiClient';
 import { BASE_URL, getImageUrl as formatConfigUrl } from '../../api/config';
 import { selectCurrentUser } from '../redux/slices/authSlice';
-import { syncUserLocationService } from '../../services/locationService';
 import {
   setOtherProfiles,
   setLikes,
@@ -206,20 +205,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const fetchMatchesList = () => dispatch(fetchMatchesThunk());
   const fetchSwipedIds = () => dispatch(fetchSwipedIdsThunk());
 
-  const syncUserLocation = async () => {
-    console.log('📍 [GPS STEP 1] syncUserLocation started...');
-    try {
-      await syncUserLocationService();
-    } catch (err) {
-      console.log('❌ [GPS ERROR] Exception inside syncUserLocation:', err);
-    } finally {
-      fetchQuestionnaires();
-    }
-  };
-
   // Run fetches on mount
   useEffect(() => {
-    syncUserLocation();
+    fetchQuestionnaires();
     fetchMessages();
     fetchLikes();
     fetchMatchesList();

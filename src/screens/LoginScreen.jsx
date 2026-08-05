@@ -16,7 +16,6 @@ import { apiClient } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
-import { syncUserLocationService } from '../services/locationService';
 
 export const LoginScreen = ({ onNavigate }) => {
   const dispatch = useDispatch();
@@ -78,14 +77,6 @@ export const LoginScreen = ({ onNavigate }) => {
             await onNavigate('QUESTIONNAIRE', user);
           }
         }
-
-        // Trigger real device location check upon login
-        // If device location/GPS is OFF, promptTurnOnLocationAlert popup will appear immediately!
-        setTimeout(() => {
-          syncUserLocationService(true).catch((locErr) => {
-            console.log('Location sync on login error:', locErr);
-          });
-        }, 300);
       } else {
         Alert.alert('Login Failed', res.message || 'Invalid email or password.');
       }

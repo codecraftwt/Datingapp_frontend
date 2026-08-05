@@ -293,13 +293,16 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
     const primaryPhoto = validPhotos[0] || null;
     const age = calculateAge();
 
+    // [LOCATION SYNC DISABLED AFTER REGISTRATION]: Live location is captured ONLY at registration time in RegisterScreen.
+    // Location check/sync after registration is disabled.
     let coords = null;
+    /*
     try {
-      coords = await syncUserLocationService();
-      console.log('Final coords payload acquired for questionnaire:', coords);
+      coords = await syncUserLocationService(false);
     } catch (locErr) {
-      console.log('Location fetch during questionnaire save skipped:', locErr);
+      console.log('Location acquisition error during questionnaire submit:', locErr);
     }
+    */
 
     const profileData = {
       firstName: firstName.trim(),
@@ -383,7 +386,7 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
         >
           <View style={[styles.containerWrapper, { maxWidth: cardWidth }]}>
             {/* Top Bar with Back Arrow */}
-            {(isEditMode || onCloseModal || onNavigate) && (
+            {(isEditMode || onCloseModal) && (
               <View style={styles.editModeHeader}>
                 <TouchableOpacity
                   onPress={() => {

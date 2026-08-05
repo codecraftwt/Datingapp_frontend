@@ -84,8 +84,10 @@ function MainApp() {
 
     const appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active' && user) {
-        console.log('📍 App foreground active. Checking location sync...');
-        syncUserLocationService(false).catch((e) => console.log('Location sync on active error:', e));
+        // [LOCATION SYNC DISABLED AFTER LOGIN]: Location is fetched ONLY at registration time.
+        // Location check/sync after login is intentionally commented out.
+        // console.log('📍 App foreground active. Checking location sync...');
+        // syncUserLocationService(false).catch((e) => console.log('Location sync on active error:', e));
       }
     });
 
@@ -132,12 +134,15 @@ function MainApp() {
             setCurrentScreen('QUESTIONNAIRE');
           }
 
-          // Trigger real device location check on session restore
+          // [LOCATION SYNC DISABLED AFTER LOGIN]: Location is fetched ONLY at registration time.
+          // The code below for checking/syncing location on login/session restore is commented out.
+          /*
           try {
             await syncUserLocationService(true);
           } catch (locErr) {
             console.log('Error syncing location on session restore:', locErr);
           }
+          */
         }
       } catch (err) {
         console.log('Error loading stored session:', err);
