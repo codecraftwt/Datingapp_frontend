@@ -85,18 +85,32 @@ export const PreviewModal = ({
     return getImageUrl(url);
   };
 
+  const isVideoUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    const lower = url.toLowerCase();
+    return (
+      lower.endsWith('.mp4') ||
+      lower.endsWith('.mov') ||
+      lower.endsWith('.webm') ||
+      lower.endsWith('.3gp') ||
+      lower.includes('/video/upload/') ||
+      lower.includes('video')
+    );
+  };
+
   if (!visible || photos.length === 0) return null;
 
   const rawPhoto = photos[currentIndex] || photos[0];
   const currentPhoto = formatImageUri(rawPhoto);
   const avatarUri = formatImageUri(userAvatar || rawPhoto);
+  const isCurrentVideo = isVideoUrl(rawPhoto || currentPhoto);
 
   return (
     <Modal visible={visible} animationType="fade" transparent statusBarTranslucent>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
 
-        {/* Status Image & Touch Controller */}
+        {/* Status Image / Video Touch Controller */}
         <TouchableWithoutFeedback
           onPress={handleScreenPress}
           onPressIn={() => setIsPaused(true)}
@@ -108,6 +122,14 @@ export const PreviewModal = ({
               style={[styles.fullImage, { width: windowWidth, height: windowHeight }]}
               resizeMode="contain"
             />
+            {isCurrentVideo && (
+              <View style={styles.videoOverlayContainer}>
+                <View style={styles.playIconCircle}>
+                  <Text style={styles.playIconText}>▶</Text>
+                </View>
+                <Text style={styles.videoBadgeText}>Preview Video</Text>
+              </View>
+            )}
           </View>
         </TouchableWithoutFeedback>
 
@@ -273,6 +295,34 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '600',
+  },
+  videoOverlayContainer: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 20,
+  },
+  playIconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FF4458',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  playIconText: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    marginLeft: 4,
+  },
+  videoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
 });
 

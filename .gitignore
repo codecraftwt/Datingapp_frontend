@@ -108,3 +108,7 @@ Desktop.ini
 # Firebase Config Files
 **/google-services.json
 **/GoogleService-Info.plist
+
+# Zip Archives
+*.zip
+DatingFrontend.zip

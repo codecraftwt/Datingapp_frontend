@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState, Alert } from 'react-native';
+import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState, Alert, BackHandler } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider, useSelector, useDispatch } from 'react-redux';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,9 +18,30 @@ import { registerFcmToken, setupNotificationListeners, displayLocalSystemNotific
 function MainApp() {
   const isDarkMode = useColorScheme() === 'dark';
   const [isInitializing, setIsInitializing] = useState(true);
-  const [currentScreen, setCurrentScreen] = useState('LOGIN');
+  const [screenStack, setScreenStack] = useState(['LOGIN']);
   const [userProfile, setUserProfile] = useState(null);
   const [isConnected, setIsConnected] = useState(true);
+
+  const currentScreen = screenStack[screenStack.length - 1] || 'LOGIN';
+
+  const navigateTo = (nextScreen) => {
+    if (nextScreen === 'HOME' || nextScreen === 'LOGIN') {
+      setScreenStack([nextScreen]);
+    } else {
+      setScreenStack((prev) => {
+        if (prev[prev.length - 1] === nextScreen) return prev;
+        return [...prev, nextScreen];
+      });
+    }
+  };
+
+  const goBack = () => {
+    if (screenStack.length > 1) {
+      setScreenStack((prev) => prev.slice(0, -1));
+      return true;
+    }
+    return false;
+  };
   
   const dispatch = useDispatch();
   const user = useSelector(selectCurrentUser);
@@ -51,6 +72,19 @@ function MainApp() {
   };
 
   useEffect(() => {
+    const onBackPress = () => {
+      if (screenStack.length > 1) {
+        setScreenStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
+        return true;
+      }
+      return false;
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => backHandler.remove();
+  }, [screenStack]);
+
+  useEffect(() => {
     if (user) {
       try {
         if (typeof registerFcmToken === 'function') {
@@ -64,7 +98,7 @@ function MainApp() {
           cleanupFcm = setupNotificationListeners((data) => {
             console.log('Notification tapped with payload:', data);
             if (data?.type === 'chat' || data?.type === 'like' || data?.type === 'match') {
-              setCurrentScreen('HOME');
+              navigateTo('HOME');
             }
           });
         }
@@ -115,7 +149,6 @@ function MainApp() {
             token: storedToken,
           }));
 
-          // Check if they completed the questionnaire before or have profile data on user object
           const userId = parsedUser.id || parsedUser._id;
           const hasCompleted = await AsyncStorage.getItem(`hasCompletedQuestionnaire_${userId}`);
           const hasProfileOnUser = !!(
@@ -129,9 +162,9 @@ function MainApp() {
           if (hasCompleted === 'true' || hasProfileOnUser) {
             const storedProfile = await AsyncStorage.getItem(`profileData_${userId}`);
             setUserProfile(storedProfile ? JSON.parse(storedProfile) : parsedUser);
-            setCurrentScreen('HOME');
+            navigateTo('HOME');
           } else {
-            setCurrentScreen('QUESTIONNAIRE');
+            navigateTo('QUESTIONNAIRE');
           }
 
           // [LOCATION SYNC DISABLED AFTER LOGIN]: Location is fetched ONLY at registration time.
@@ -163,7 +196,7 @@ function MainApp() {
         console.log('Error saving questionnaire status:', err);
       }
     }
-    setCurrentScreen('HOME');
+    navigateTo('HOME');
   };
 
   const handleUpdateProfile = async (updatedProfile) => {
@@ -189,7 +222,7 @@ function MainApp() {
       }
     }
     setUserProfile(null);
-    setCurrentScreen('QUESTIONNAIRE');
+    navigateTo('QUESTIONNAIRE');
   };
 
   const handleLogout = async () => {
@@ -205,7 +238,7 @@ function MainApp() {
     }
     dispatch(logout());
     setUserProfile(null);
-    setCurrentScreen('LOGIN');
+    navigateTo('LOGIN');
   };
 
   const renderScreen = () => {
@@ -229,7 +262,7 @@ function MainApp() {
                     setUserProfile(loggedUser);
                   }
                 }
-                setCurrentScreen('HOME');
+                navigateTo('HOME');
                 checkUnreadNotifications().catch(() => {});
                 return;
               }
@@ -238,21 +271,22 @@ function MainApp() {
                 if (loggedUser) {
                   setUserProfile(loggedUser);
                 }
-                setCurrentScreen('QUESTIONNAIRE');
+                navigateTo('QUESTIONNAIRE');
               } else {
-                setCurrentScreen(nextScreen);
+                navigateTo(nextScreen);
               }
             }}
           />
         );
       case 'REGISTER':
-        return <RegisterScreen onNavigate={setCurrentScreen} />;
+        return <RegisterScreen onNavigate={navigateTo} onGoBack={goBack} />;
       case 'FORGOT_PASSWORD':
-        return <ForgotPasswordScreen onNavigate={setCurrentScreen} />;
+        return <ForgotPasswordScreen onNavigate={navigateTo} onGoBack={goBack} />;
       case 'QUESTIONNAIRE':
         return (
           <QuestionnaireScreen
-            onNavigate={setCurrentScreen}
+            onNavigate={navigateTo}
+            onGoBack={goBack}
             onFinish={handleFinishQuestionnaire}
           />
         );
@@ -263,10 +297,12 @@ function MainApp() {
             onUpdateProfile={handleUpdateProfile}
             onLogout={handleLogout}
             onRemoveProfile={handleRemoveProfile}
+            onNavigate={navigateTo}
+            onGoBack={goBack}
           />
         );
       default:
-        return <LoginScreen onNavigate={setCurrentScreen} />;
+        return <LoginScreen onNavigate={navigateTo} onGoBack={goBack} />;
     }
   };
 

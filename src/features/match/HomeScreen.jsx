@@ -1997,10 +1997,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               setShowActiveCardDetails(false);
               setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== targetUserId.toString()));
 
-              refetchQuestionnaires();
-              refetchMatchesList();
-              refetchMessages();
-              refetchLikes();
+              if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+              if (typeof fetchMatchesList === 'function') fetchMatchesList();
+              if (typeof fetchMessages === 'function') fetchMessages();
+              if (typeof fetchLikes === 'function') fetchLikes();
 
               Alert.alert('User Blocked', `You have blocked ${targetUserName}.`);
             } catch (err) {
@@ -2057,10 +2057,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         setShowActiveCardDetails(false);
         setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== reportTargetUser.id.toString()));
 
-        refetchQuestionnaires();
-        refetchMatchesList();
-        refetchMessages();
-        refetchLikes();
+        if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+        if (typeof fetchMatchesList === 'function') fetchMatchesList();
+        if (typeof fetchMessages === 'function') fetchMessages();
+        if (typeof fetchLikes === 'function') fetchLikes();
       }
     } catch (err) {
       console.error('Failed to submit report:', err);
@@ -3195,8 +3195,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               setShowReportModal(false);
               setReportTargetUser(null);
               setActiveChat(null);
-              refetchMatchesList();
-              refetchQuestionnaires();
+              if (typeof fetchMatchesList === 'function') fetchMatchesList();
+              if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
               Alert.alert('Report Submitted', 'Thank you for helping keep our community safe.');
             } catch (err) {
               console.log('Report user error:', err);
@@ -3220,8 +3220,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               setShowBlockModal(false);
               setReportTargetUser(null);
               setActiveChat(null);
-              refetchMatchesList();
-              refetchQuestionnaires();
+              if (typeof fetchMatchesList === 'function') fetchMatchesList();
+              if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
               Alert.alert('User Blocked', 'This user has been blocked.');
             } catch (err) {
               console.log('Block user error:', err);
@@ -5731,5 +5731,33 @@ const styles = StyleSheet.create({
     bottom: -18,
     width: 80,
     textAlign: 'center',
+  },
+  messageMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
+  messageTimeText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  messageTimeTextMe: {
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  messageTimeTextThem: {
+    color: 'rgba(255, 255, 255, 0.75)',
+  },
+  statusTicks: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
+  ticksSent: {
+    color: 'rgba(255, 255, 255, 0.6)',
+  },
+  ticksSeen: {
+    color: '#00E5FF',
   },
 });

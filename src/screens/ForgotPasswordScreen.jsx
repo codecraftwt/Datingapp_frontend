@@ -14,7 +14,7 @@ import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
 
-export const ForgotPasswordScreen = ({ onNavigate }) => {
+export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -100,6 +100,20 @@ export const ForgotPasswordScreen = ({ onNavigate }) => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <View style={styles.topBar}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => {
+                if (onGoBack && onGoBack()) return;
+                if (onNavigate) onNavigate('LOGIN');
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.backButtonIcon}>←</Text>
+              <Text style={styles.backButtonText}>Back</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.headerContainer}>
             <View style={styles.logoBadge}>
               <Text style={styles.logoHeart}>🔑</Text>
@@ -203,9 +217,36 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 40,
+    paddingTop: 10,
     paddingBottom: 40,
     justifyContent: 'center',
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    marginTop: Platform.OS === 'ios' ? 40 : 15,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  backButtonIcon: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginRight: 6,
+  },
+  backButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   headerContainer: {
     alignItems: 'center',

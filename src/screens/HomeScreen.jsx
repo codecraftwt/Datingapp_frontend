@@ -18,6 +18,8 @@ import {
   PermissionsAndroid,
   Linking,
   NativeModules,
+  SafeAreaView,
+  BackHandler,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { pick as pickDocument, types as documentTypes, isCancel as isDocumentCancel } from '@react-native-documents/picker';
@@ -53,6 +55,7 @@ import {
 } from '../redux/slices/chatSlice';
 import io from 'socket.io-client';
 import { createSound } from 'react-native-nitro-sound';
+import soundService from '../services/soundService';
 
 const MOCK_STICKERS = [
   { id: 'heart', char: '❤️', label: 'Heart' },
@@ -105,6 +108,35 @@ const REPORT_REASONS = [
   'Inappropriate Messaging',
   'Other / Something Else',
 ];
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return 'File';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const getDocExtensionBadge = (filename) => {
+  if (!filename) return '📄 PDF';
+  const ext = filename.split('.').pop().toLowerCase();
+  if (ext === 'pdf') return '📄 PDF';
+  if (ext === 'doc' || ext === 'docx') return '📝 DOC';
+  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return '📊 XLS';
+  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp') return '🖼️ IMG';
+  if (ext === 'zip' || ext === 'rar' || ext === '7z') return '📁 ZIP';
+  if (ext === 'txt') return '📜 TXT';
+  return '📄 FILE';
+};
+
+const getDocTypeStyle = (filename) => {
+  if (!filename) return { backgroundColor: '#E63946' };
+  const ext = filename.split('.').pop().toLowerCase();
+  if (ext === 'pdf') return { backgroundColor: '#E63946' };
+  if (ext === 'doc' || ext === 'docx') return { backgroundColor: '#2A9D8F' };
+  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return { backgroundColor: '#38EF7D' };
+  if (ext === 'zip' || ext === 'rar') return { backgroundColor: '#F4A261' };
+  return { backgroundColor: '#FE3C72' };
+};
 
 const formatMessageTime = (dateString) => {
   if (!dateString || dateString === 'match-init') return '';
@@ -171,7 +203,7 @@ const formatLastSeen = (lastSeenTime) => {
   }
 };
 
-export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile }) => {
+export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile, onNavigate, onGoBack }) => {
   const dispatch = useDispatch();
   const currentUser = useSelector(selectCurrentUser);
 
@@ -216,6 +248,32 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const [unreadLikesCount, setUnreadLikesCount] = useState(0);
+  const [viewMediaModal, setViewMediaModal] = useState({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const chatScrollViewRef = useRef(null);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        const height = e.endCoordinates ? e.endCoordinates.height : 250;
+        setKeyboardHeight(height);
+        setTimeout(() => {
+          chatScrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 50);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const fetchUnreadLikesCount = async () => {
     try {
@@ -306,6 +364,40 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   console.log('Filtered Swipe Cards (MOCK_MATCHES):', JSON.stringify(MOCK_MATCHES.map(u => ({ id: u.id, name: u.name }))));
 
   const [activeTab, setActiveTab] = useState('swipe'); // swipe, likes, chat, profile
+
+  // Android / Emulator Hardware Back Button Handler for HomeScreen Tabs, Modals, and Active Chat
+  useEffect(() => {
+    const onHardwareBackPress = () => {
+      // 1. Close active media preview modal if open
+      if (viewMediaModal && viewMediaModal.visible) {
+        setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
+        return true;
+      }
+
+      // 2. Close active chat conversation view if open
+      if (activeChat) {
+        setActiveChat(null);
+        return true;
+      }
+
+      // 3. Switch active tab back to 'swipe' if currently on 'search', 'likes', 'chat', or 'profile'
+      if (activeTab !== 'swipe') {
+        setActiveTab('swipe');
+        return true;
+      }
+
+      // 4. If on main swipe tab, trigger parent back navigation if available
+      if (onGoBack && typeof onGoBack === 'function') {
+        const handled = onGoBack();
+        if (handled) return true;
+      }
+
+      return false;
+    };
+
+    const backSubscription = BackHandler.addEventListener('hardwareBackPress', onHardwareBackPress);
+    return () => backSubscription.remove();
+  }, [activeTab, activeChat, viewMediaModal, onGoBack]);
 
   useEffect(() => {
     if (activeTab === 'likes') {
@@ -642,12 +734,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setCallState('calling');
     setCallStatusText('Calling...');
 
+    // Start Outgoing Ringback Tone for Caller (User A)
+    soundService.playOutgoingRingback();
+
     if (callingTimeoutRef.current) clearTimeout(callingTimeoutRef.current);
     callingTimeoutRef.current = setTimeout(() => {
-      console.log('Voice call 30s timeout reached with no answer');
+      console.log('Voice call 45s ringing timeout reached with no answer');
       Alert.alert('No Answer', 'No answer from user.');
       endVoiceCall();
-    }, 30000);
+    }, 45000);
 
     const localStream = await getLocalStream();
     if (!localStream) {
@@ -678,6 +773,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const acceptVoiceCall = async () => {
     if (!callSession || !socketRef.current || !currentUser) return;
     const currentId = currentUser.id || currentUser._id;
+
+    // Stop incoming ringtone on answer
+    soundService.stopAllRingtones();
 
     if (callingTimeoutRef.current) {
       clearTimeout(callingTimeoutRef.current);
@@ -716,6 +814,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const rejectVoiceCall = () => {
+    soundService.playCallEndedTone();
     if (callSessionRef.current) {
       recordCallLogMessage(callSessionRef.current.id, '📞 Missed voice call', 'declined');
     }
@@ -732,6 +831,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const cleanUpWebRTCSession = () => {
+    soundService.stopAllRingtones();
+
     if (callingTimeoutRef.current) {
       clearTimeout(callingTimeoutRef.current);
       callingTimeoutRef.current = null;
@@ -759,6 +860,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const endVoiceCall = () => {
+    soundService.stopAllRingtones();
+
     if (callSessionRef.current) {
       const targetId = callSessionRef.current.id;
       const duration = callDurationRef.current || 0;
@@ -1225,6 +1328,60 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         refetchChatMessages();
       });
 
+      socketRef.current.on('message_delivered', ({ messageId, tempId, receiverId, status }) => {
+        console.log('Socket.IO message_delivered event received:', messageId, status);
+        const newStatus = status || 'delivered';
+        setChats((prevChats) =>
+          prevChats.map((c) => {
+            if (!receiverId || c.id === receiverId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === messageId || (tempId && m.id === tempId) ? { ...m, status: newStatus } : m
+                ),
+              };
+            }
+            return c;
+          })
+        );
+        setActiveChat((prevActive) => {
+          if (prevActive && (!receiverId || prevActive.id === receiverId)) {
+            return {
+              ...prevActive,
+              messages: prevActive.messages.map((m) =>
+                m.id === messageId || (tempId && m.id === tempId) ? { ...m, status: newStatus } : m
+              ),
+            };
+          }
+          return prevActive;
+        });
+      });
+
+      socketRef.current.on('messages_seen', ({ senderId, receiverId, status }) => {
+        console.log('Socket.IO messages_seen event received for sender/receiver:', senderId, receiverId);
+        const targetId = receiverId || senderId;
+        setChats((prevChats) =>
+          prevChats.map((c) => {
+            if (!targetId || c.id === targetId) {
+              return {
+                ...c,
+                messages: c.messages.map((m) => (m.sender === 'you' ? { ...m, status: 'seen' } : m)),
+              };
+            }
+            return c;
+          })
+        );
+        setActiveChat((prevActive) => {
+          if (prevActive && (!targetId || prevActive.id === targetId)) {
+            return {
+              ...prevActive,
+              messages: prevActive.messages.map((m) => (m.sender === 'you' ? { ...m, status: 'seen' } : m)),
+            };
+          }
+          return prevActive;
+        });
+      });
+
       socketRef.current.on('message_edited', ({ messageId, text, isEdited, senderId, receiverId }) => {
         console.log('Socket.IO message edited:', messageId, text);
         setChats((prevChats) =>
@@ -1328,6 +1485,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           }
           return;
         }
+
+        // Start playing incoming ringtone & vibration for Recipient (User B)
+        soundService.playIncomingRingtone();
+
         setCallSession({
           id: callerId,
           name: callerName,
@@ -1340,6 +1501,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('call_accepted', async ({ receiverId, answer }) => {
         console.log('Socket.IO call_accepted received from:', receiverId);
+        
+        // Stop caller's outgoing ringback tone immediately when recipient answers
+        soundService.stopAllRingtones();
+
         if (peerConnectionRef.current) {
           try {
             const answerDesc = typeof RTCSessionDescription === 'function' && answer
@@ -1357,6 +1522,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('call_rejected', ({ receiverId }) => {
         console.log('Socket.IO call_rejected received from:', receiverId);
+        soundService.playCallEndedTone();
         Alert.alert('Call Declined', 'The user declined your voice call.');
         cleanUpWebRTCSession();
         setCallState('idle');
@@ -1365,11 +1531,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('call_ringing', ({ status }) => {
         console.log('Socket.IO call_ringing received:', status);
+        soundService.playOutgoingRingback();
         setCallStatusText('Ringing...');
       });
 
       socketRef.current.on('call_ended', ({ by }) => {
         console.log('Socket.IO call_ended received, ended by:', by);
+        soundService.stopAllRingtones();
         cleanUpWebRTCSession();
         setCallState('idle');
         setCallSession(null);
@@ -1391,6 +1559,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('call_offline', ({ message }) => {
         console.log('Socket.IO call_offline received:', message);
+        soundService.stopAllRingtones();
         Alert.alert('User Offline', message || 'User is offline. A missed call notification has been sent.');
         cleanUpWebRTCSession();
         setCallState('idle');
@@ -1399,6 +1568,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('call_failed', ({ message }) => {
         console.log('Socket.IO call_failed received:', message);
+        soundService.stopAllRingtones();
         Alert.alert('Call Failed', message || 'Could not connect the call.');
         cleanUpWebRTCSession();
         setCallState('idle');
@@ -1417,6 +1587,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
+
+  // Emit mark_seen when activeChat changes / opens
+  useEffect(() => {
+    if (activeChat && activeChat.id && currentUser) {
+      const currentId = (currentUser.id || currentUser._id)?.toString();
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('mark_seen', {
+          senderId: activeChat.id,
+          receiverId: currentId,
+        });
+      }
+    }
+  }, [activeChat?.id, currentUser]);
 
   // Sync database messages with state
   useEffect(() => {
@@ -1814,8 +1997,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('send_message', payload);
     } else {
-      console.log('Client is offline: Queueing message locally.');
-      setOfflineQueue((prev) => [...prev, { tempId, payload }]);
+      console.log('Sending message via REST API Fallback (Serverless / Vercel):', payload);
+      apiClient.sendMessage(payload).then((res) => {
+        if (res?.data?._id) {
+          const serverMsg = res.data;
+          setChats((prevChats) =>
+            prevChats.map((c) => {
+              if (c.id === receiverId) {
+                return {
+                  ...c,
+                  messages: c.messages.map((m) => (m.id === tempId ? { ...m, id: serverMsg._id, status: serverMsg.status || 'sent' } : m)),
+                };
+              }
+              return c;
+            })
+          );
+          setActiveChat((prevActive) => {
+            if (prevActive && prevActive.id === receiverId) {
+              return {
+                ...prevActive,
+                messages: prevActive.messages.map((m) => (m.id === tempId ? { ...m, id: serverMsg._id, status: serverMsg.status || 'sent' } : m)),
+              };
+            }
+            return prevActive;
+          });
+        }
+      }).catch((err) => {
+        console.error('REST API sendMessage error:', err);
+        setOfflineQueue((prev) => [...prev, { tempId, payload }]);
+      });
     }
   };
 
@@ -2006,25 +2216,28 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleMessageLongPress = (msg) => {
-    if (msg.sender !== 'you' || msg.id === 'match-init') return;
+    if (!msg || msg.id === 'match-init') return;
 
+    const isMyMessage = msg.sender === 'you';
     const options = [];
-    if (msg.messageType === 'text') {
+
+    if (isMyMessage && (msg.messageType === 'text' || (!msg.messageType && msg.text && !msg.mediaUrl))) {
       options.push({
         text: 'Edit Message',
         onPress: () => {
           setEditingMessage(msg);
-          setTypedMessage(msg.text);
+          setTypedMessage(msg.text || '');
         },
       });
     }
+
     options.push({
       text: 'Delete Message',
       style: 'destructive',
       onPress: () => {
         Alert.alert(
           'Delete Message',
-          'Are you sure you want to delete this message permanently?',
+          `Are you sure you want to delete this ${msg.fileName ? 'document' : (msg.messageType || 'message')}?`,
           [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -2032,7 +2245,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               style: 'destructive',
               onPress: async () => {
                 try {
-                  await apiClient.deleteMessage(msg.id);
+                  if (msg.id && !msg.id.toString().startsWith('temp-')) {
+                    await apiClient.deleteMessage(msg.id);
+                  }
                   console.log('Message deleted successfully:', msg.id);
                   const receiverId = activeChat.id;
                   setChats((prevChats) =>
@@ -2066,12 +2281,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         );
       },
     });
+
     options.push({
       text: 'Cancel',
       style: 'cancel',
     });
 
-    Alert.alert('Message Options', 'Choose an action:', options, { cancelable: true });
+    Alert.alert(
+      msg.fileName ? `Document Options` : 'Message Options',
+      msg.fileName ? `${msg.fileName}` : 'Choose an action:',
+      options,
+      { cancelable: true }
+    );
   };
 
   const handleClearChat = () => {
@@ -2228,10 +2449,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               setShowActiveCardDetails(false);
               setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== targetUserId.toString()));
 
-              refetchQuestionnaires();
-              refetchMatchesList();
-              refetchMessages();
-              refetchLikes();
+              if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+              if (typeof fetchMatchesList === 'function') fetchMatchesList();
+              if (typeof fetchMessages === 'function') fetchMessages();
+              if (typeof fetchLikes === 'function') fetchLikes();
 
               Alert.alert('User Blocked', `You have blocked ${targetUserName}.`);
             } catch (err) {
@@ -2288,10 +2509,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         setShowActiveCardDetails(false);
         setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== reportTargetUser.id.toString()));
 
-        refetchQuestionnaires();
-        refetchMatchesList();
-        refetchMessages();
-        refetchLikes();
+        if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+        if (typeof fetchMatchesList === 'function') fetchMatchesList();
+        if (typeof fetchMessages === 'function') fetchMessages();
+        if (typeof fetchLikes === 'function') fetchLikes();
       }
     } catch (err) {
       console.error('Failed to submit report:', err);
@@ -2538,6 +2759,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               onSelectProfile={(profile) => {
                 console.log('Selected Profile from Search:', profile);
               }}
+              onGoBack={() => {
+                setActiveTab('swipe');
+                return true;
+              }}
+              onBack={() => setActiveTab('swipe')}
             />
           )}
 
@@ -2701,8 +2927,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           {activeTab === 'likes' && (
             <View style={styles.likesContainer}>
-              <Text style={styles.sectionTitle}>People Who Liked You</Text>
-              <Text style={styles.sectionSubtitle}>Tap a profile card to match instantly!</Text>
+              <View style={styles.tabHeaderWithBack}>
+                <TouchableOpacity
+                  style={styles.headerBackBtn}
+                  onPress={() => setActiveTab('swipe')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.headerBackBtnText}>←</Text>
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionTitle}>People Who Liked You</Text>
+                  <Text style={styles.sectionSubtitle}>Tap a profile card to match instantly!</Text>
+                </View>
+              </View>
               {likesList.length > 0 ? (
                 <ScrollView style={styles.likesGridScroll} showsVerticalScrollIndicator={false}>
                   <View style={styles.likesGrid}>
@@ -2768,6 +3005,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 <KeyboardAvoidingView
                   style={styles.activeChatWrapper}
                   behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                  keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                 >
                   <View style={styles.chatHeader}>
                     <TouchableOpacity
@@ -2807,17 +3045,37 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   </View>
 
                   <ScrollView
+                    ref={chatScrollViewRef}
                     style={styles.messageBubbleContainer}
                     contentContainerStyle={{ paddingVertical: 15 }}
+                    onContentSizeChange={() => chatScrollViewRef.current?.scrollToEnd({ animated: true })}
+                    onLayout={() => chatScrollViewRef.current?.scrollToEnd({ animated: true })}
                   >
                     {activeChat.messages.map((msg) => {
                       const isMe = msg.sender === 'you';
                       const isSticker = msg.messageType === 'sticker';
-                      const isImage = msg.messageType === 'image';
+                      const isImage =
+                        msg.messageType === 'image' ||
+                        (msg.mediaUrl &&
+                          typeof msg.mediaUrl === 'string' &&
+                          (msg.mediaUrl.startsWith('data:image') ||
+                           msg.mediaUrl.includes('cloudinary') ||
+                           msg.mediaUrl.endsWith('.jpg') ||
+                           msg.mediaUrl.endsWith('.jpeg') ||
+                           msg.mediaUrl.endsWith('.png') ||
+                           msg.mediaUrl.endsWith('.webp') ||
+                           msg.mediaUrl.endsWith('.gif'))) ||
+                        (msg.text &&
+                          typeof msg.text === 'string' &&
+                          (msg.text.startsWith('http') || msg.text.startsWith('data:image')) &&
+                          (msg.text.includes('cloudinary') || msg.text.endsWith('.jpg') || msg.text.endsWith('.jpeg') || msg.text.endsWith('.png')));
+
                       const isDocument = msg.messageType === 'document';
                       const isVideo = msg.messageType === 'video' || (msg.mediaUrl && (msg.mediaUrl.endsWith('.mp4') || msg.mediaUrl.endsWith('.mov') || msg.mediaUrl.endsWith('.avi')));
                       const isVoice = msg.messageType === 'voice';
                       const isCall = msg.messageType === 'call';
+
+                      const imageUrlToRender = getImageUrl(msg.mediaUrl || (isImage ? msg.text : ''));
 
                       return (
                         <View
@@ -2831,8 +3089,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             activeOpacity={0.85}
                             onLongPress={() => handleMessageLongPress(msg)}
                             style={[
-                              isSticker ? styles.stickerBubble : styles.messageBubble,
-                              isMe ? (isSticker ? null : styles.bubbleMe) : (isSticker ? null : styles.bubbleThem)
+                              isSticker || isImage ? styles.transparentBubble : styles.messageBubble,
+                              isMe ? ((isSticker || isImage) ? null : styles.bubbleMe) : ((isSticker || isImage) ? null : styles.bubbleThem)
                             ]}
                           >
                             {isSticker && (
@@ -2840,33 +3098,55 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             )}
 
                             {isImage && (
-                              <View style={styles.imageMessageContainer}>
-                                <Image source={{ uri: getImageUrl(msg.mediaUrl) }} style={styles.imageMessage} />
-                              </View>
+                              <TouchableOpacity
+                                activeOpacity={0.9}
+                                onPress={() => setViewMediaModal({
+                                  visible: true,
+                                  type: 'image',
+                                  url: imageUrlToRender,
+                                  fileName: msg.fileName || 'Photo',
+                                  fileSize: msg.fileSize || 0
+                                })}
+                                onLongPress={() => handleMessageLongPress(msg)}
+                                style={styles.imageMessageContainer}
+                              >
+                                <Image
+                                  source={{ uri: imageUrlToRender }}
+                                  style={styles.imageMessage}
+                                  resizeMode="cover"
+                                />
+                              </TouchableOpacity>
                             )}
 
                             {isDocument && (
                               <TouchableOpacity
-                                style={styles.documentMessageContainer}
-                                activeOpacity={0.8}
+                                style={styles.documentMessageCard}
+                                activeOpacity={0.85}
                                 onPress={() => {
                                   if (msg.mediaUrl) {
-                                    Linking.openURL(getImageUrl(msg.mediaUrl)).catch(() =>
-                                      Alert.alert('Error', 'Unable to open document.')
-                                    );
+                                    setViewMediaModal({
+                                      visible: true,
+                                      type: 'document',
+                                      url: getImageUrl(msg.mediaUrl),
+                                      fileName: msg.fileName || 'document.pdf',
+                                      fileSize: msg.fileSize || 0,
+                                    });
                                   }
                                 }}
+                                onLongPress={() => handleMessageLongPress(msg)}
                               >
-                                <View style={styles.documentIconContainer}>
-                                  <Text style={styles.documentIconText}>📄</Text>
-                                </View>
-                                <View style={styles.documentTextContainer}>
-                                  <Text style={styles.documentNameText} numberOfLines={1}>
-                                    {msg.fileName || 'document.pdf'}
-                                  </Text>
-                                  <Text style={styles.documentSizeText}>
-                                    {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : 'PDF'} • Tap to View
-                                  </Text>
+                                <View style={styles.documentCardTop}>
+                                  <View style={[styles.documentBadge, getDocTypeStyle(msg.fileName)]}>
+                                    <Text style={styles.documentBadgeText}>{getDocExtensionBadge(msg.fileName)}</Text>
+                                  </View>
+                                  <View style={styles.documentTextContainer}>
+                                    <Text style={styles.documentNameText} numberOfLines={1}>
+                                      {msg.fileName || 'document.pdf'}
+                                    </Text>
+                                    <Text style={styles.documentSizeText}>
+                                      {formatFileSize(msg.fileSize)} • Tap to Preview
+                                    </Text>
+                                  </View>
                                 </View>
                               </TouchableOpacity>
                             )}
@@ -2882,6 +3162,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                     );
                                   }
                                 }}
+                                onLongPress={() => handleMessageLongPress(msg)}
                               >
                                 <View style={styles.videoIconContainer}>
                                   <Text style={styles.videoIconText}>🎬</Text>
@@ -3191,6 +3472,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 /* Chat List view */
                 <View style={styles.chatListWrapper}>
                   <View style={styles.chatListHeaderRow}>
+                    <TouchableOpacity
+                      style={styles.headerBackBtn}
+                      onPress={() => setActiveTab('swipe')}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.headerBackBtnText}>←</Text>
+                    </TouchableOpacity>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.sectionTitle}>Conversations</Text>
                       <Text style={styles.sectionSubtitle}>Start talking with your matches.</Text>
@@ -3283,6 +3571,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               onUpdateProfile={onUpdateProfile}
               onLogout={onLogout}
               onRemoveProfile={onRemoveProfile}
+              onGoBack={() => {
+                setActiveTab('swipe');
+                return true;
+              }}
+              onBack={() => setActiveTab('swipe')}
             />
           )}
         </View>
@@ -3631,21 +3924,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     </>
                   ) : (
                     <>
-                      {/* Mute Button */}
-                      {callState === 'connected' && (
-                        <TouchableOpacity
-                          style={[styles.voiceCallRoundButton, isCallMuted && styles.voiceCallRoundButtonActive]}
-                          onPress={toggleCallMute}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.voiceCallRoundButtonEmoji}>
-                            {isCallMuted ? '🎙️❌' : '🎙️'}
-                          </Text>
-                          <Text style={styles.voiceCallRoundButtonText}>
-                            {isCallMuted ? 'Unmute' : 'Mute'}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
+                      {/* Mute / Unmute Button */}
+                      <TouchableOpacity
+                        style={[styles.voiceCallRoundButton, isCallMuted && styles.voiceCallRoundButtonActive]}
+                        onPress={toggleCallMute}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.voiceCallRoundButtonEmoji}>
+                          {isCallMuted ? '🎙️❌' : '🎙️'}
+                        </Text>
+                        <Text style={styles.voiceCallRoundButtonText}>
+                          {isCallMuted ? 'Unmute' : 'Mute'}
+                        </Text>
+                      </TouchableOpacity>
 
                       {/* End Call Button */}
                       <TouchableOpacity
@@ -3658,16 +3949,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       </TouchableOpacity>
 
                       {/* Speaker Button */}
-                      {callState === 'connected' && (
-                        <TouchableOpacity
-                          style={[styles.voiceCallRoundButton, isSpeakerOn && styles.voiceCallRoundButtonActive]}
-                          onPress={toggleSpeaker}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.voiceCallRoundButtonEmoji}>🔊</Text>
-                          <Text style={styles.voiceCallRoundButtonText}>Speaker</Text>
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity
+                        style={[styles.voiceCallRoundButton, isSpeakerOn && styles.voiceCallRoundButtonActive]}
+                        onPress={toggleSpeaker}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.voiceCallRoundButtonEmoji}>
+                          {isSpeakerOn ? '🔊' : '🔈'}
+                        </Text>
+                        <Text style={styles.voiceCallRoundButtonText}>
+                          Speaker
+                        </Text>
+                      </TouchableOpacity>
                     </>
                   )}
                 </View>
@@ -3675,6 +3968,91 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             </View>
           </Modal>
         )}
+
+        {/* Fullscreen Photo & Document Preview Modal */}
+        <Modal
+          visible={viewMediaModal.visible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 })}
+        >
+          <View style={styles.mediaViewerOverlay}>
+            <SafeAreaView style={styles.mediaViewerSafeArea}>
+              {/* Viewer Header */}
+              <View style={styles.mediaViewerHeader}>
+                <View style={styles.mediaViewerTitleContainer}>
+                  <Text style={styles.mediaViewerTitle} numberOfLines={1}>
+                    {viewMediaModal.fileName || (viewMediaModal.type === 'image' ? 'Photo Preview' : 'Document Preview')}
+                  </Text>
+                  {viewMediaModal.fileSize > 0 && (
+                    <Text style={styles.mediaViewerSubTitle}>
+                      {formatFileSize(viewMediaModal.fileSize)}
+                    </Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={styles.mediaViewerCloseButton}
+                  onPress={() => setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 })}
+                >
+                  <Text style={styles.mediaViewerCloseText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Viewer Content Body */}
+              <View style={styles.mediaViewerBody}>
+                {viewMediaModal.type === 'image' ? (
+                  <Image
+                    source={{ uri: viewMediaModal.url }}
+                    style={styles.mediaViewerFullImage}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <View style={styles.documentViewerCard}>
+                    <View style={[styles.documentViewerIconCircle, getDocTypeStyle(viewMediaModal.fileName)]}>
+                      <Text style={styles.documentViewerIconText}>
+                        {getDocExtensionBadge(viewMediaModal.fileName)}
+                      </Text>
+                    </View>
+                    <Text style={styles.documentViewerFileName}>
+                      {viewMediaModal.fileName || 'document.pdf'}
+                    </Text>
+                    <Text style={styles.documentViewerFileMeta}>
+                      {formatFileSize(viewMediaModal.fileSize)} • Ready for view / download
+                    </Text>
+                    <CustomButton
+                      title="📥 OPEN DOCUMENT LINK"
+                      variant="primary"
+                      style={{ width: '85%', marginTop: 24 }}
+                      onPress={() => {
+                        if (viewMediaModal.url) {
+                          Linking.openURL(viewMediaModal.url).catch(() =>
+                            Alert.alert('Error', 'Unable to open document.')
+                          );
+                        }
+                      }}
+                    />
+                  </View>
+                )}
+              </View>
+
+              {/* Viewer Footer Actions */}
+              <View style={styles.mediaViewerFooter}>
+                <TouchableOpacity
+                  style={styles.mediaViewerFooterButton}
+                  onPress={() => {
+                    if (viewMediaModal.url) {
+                      Linking.openURL(viewMediaModal.url).catch(() =>
+                        Alert.alert('Error', 'Unable to open link.')
+                      );
+                    }
+                  }}
+                >
+                  <Text style={styles.mediaViewerFooterButtonText}>🌐 Open in Device Browser / External App</Text>
+                </TouchableOpacity>
+              </View>
+            </SafeAreaView>
+          </View>
+        </Modal>
 
         {/* Modal: Match Screen Overlay Popup */}
         {matchedUser && (
@@ -4100,6 +4478,28 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '600',
+  },
+  tabHeaderWithBack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+    gap: 12,
+  },
+  headerBackBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  headerBackBtnText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   navigationLabelActive: {
     color: '#FE3C72',
@@ -4777,24 +5177,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   detailCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    borderRadius: 14,
     padding: 12,
     width: (SCREEN_WIDTH - 50) / 2,
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   detailCardEmoji: {
-    fontSize: 16,
+    fontSize: 18,
     marginRight: 10,
   },
   detailCardText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   profileInterestsRow: {
     flexDirection: 'row',
@@ -6661,5 +7062,296 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
     fontSize: 11,
     marginTop: 2,
+  },
+  chatTabContainer: {
+    flex: 1,
+    backgroundColor: '#0F0F1A',
+  },
+  activeChatWrapper: {
+    flex: 1,
+    backgroundColor: '#0F0F1A',
+  },
+  messageBubbleContainer: {
+    flex: 1,
+    paddingHorizontal: 15,
+  },
+  statusTicks: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginLeft: 4,
+  },
+  ticksSent: {
+    color: 'rgba(255, 255, 255, 0.6)',
+  },
+  ticksSeen: {
+    color: '#00E5FF',
+  },
+  messageMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
+  messageTimeText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  messageTimeTextMe: {
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  messageTimeTextThem: {
+    color: 'rgba(255, 255, 255, 0.75)',
+  },
+
+  // --- Direct Chat Image Preview Styles ---
+  transparentBubble: {
+    backgroundColor: 'transparent',
+    padding: 0,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  imageMessageContainer: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    maxWidth: 240,
+    maxHeight: 240,
+    marginVertical: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  imageMessage: {
+    width: 220,
+    height: 180,
+    borderRadius: 12,
+  },
+  waPreviewContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 12,
+    padding: 6,
+    minWidth: 220,
+    maxWidth: 270,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  waCardBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    borderRadius: 8,
+    padding: 6,
+    marginBottom: 6,
+  },
+  waThumbnailBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  waThumbnailIcon: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFF',
+  },
+  waThumbnailImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    marginRight: 10,
+  },
+  waCardContent: {
+    flex: 1,
+  },
+  waCardTitle: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  waCardSubTitle: {
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 10,
+    marginTop: 4,
+  },
+  waCardUrlText: {
+    color: '#38EF7D',
+    fontSize: 11,
+    paddingHorizontal: 4,
+    textDecorationLine: 'underline',
+  },
+
+  // --- Rich Media & Document Preview Styles ---
+  imageOverlayBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+  },
+  imageOverlayBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  documentMessageCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 14,
+    padding: 10,
+    minWidth: 210,
+    maxWidth: 260,
+  },
+  documentCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  documentBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  documentBadgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  documentActionRow: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.15)',
+    paddingTop: 8,
+    marginTop: 2,
+    justifyContent: 'space-between',
+  },
+  documentActionButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  documentActionText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  documentActionOpen: {
+    backgroundColor: '#FE3C72',
+  },
+  documentActionTextOpen: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // --- Fullscreen Media & Document Viewer Modal Styles ---
+  mediaViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(10, 10, 20, 0.95)',
+  },
+  mediaViewerSafeArea: {
+    flex: 1,
+  },
+  mediaViewerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  mediaViewerTitleContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  mediaViewerTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  mediaViewerSubTitle: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  mediaViewerCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mediaViewerCloseText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  mediaViewerBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  mediaViewerFullImage: {
+    width: '100%',
+    height: '100%',
+  },
+  documentViewerCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    width: '90%',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  documentViewerIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  documentViewerIconText: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFF',
+  },
+  documentViewerFileName: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  documentViewerFileMeta: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 13,
+  },
+  mediaViewerFooter: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+  },
+  mediaViewerFooterButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  mediaViewerFooterButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

@@ -52,7 +52,7 @@ const SUBSCRIPTION_PLANS = [
   },
 ];
 
-export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile }) => {
+export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile, onGoBack, onBack }) => {
   const [profile, setProfile] = useState(userProfile || null);
   const [loading, setLoading] = useState(false);
   const [isQuestionnaireModalOpen, setIsQuestionnaireModalOpen] = useState(false);
@@ -162,27 +162,31 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   };
 
   const handleChangeProfilePhoto = () => {
-    launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, async (response) => {
+    launchImageLibrary({ mediaType: 'mixed', videoQuality: 'medium', quality: 0.8, maxWidth: 1024, maxHeight: 1024 }, async (response) => {
       if (response.didCancel) return;
       if (response.errorCode) {
-        Alert.alert('Image Error', response.errorMessage || 'Failed to pick image from gallery');
+        Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo or video from gallery');
         return;
       }
       if (response.assets && response.assets.length > 0) {
         const asset = response.assets[0];
         const localUri = asset.uri;
+        const isVideo = asset.type?.startsWith('video/') || (asset.fileName && (asset.fileName.endsWith('.mp4') || asset.fileName.endsWith('.mov')));
 
         try {
           setLoading(true);
 
-          // Upload image file to Cloudinary via Backend API
+          // Upload image or video file to Cloudinary via Backend API
           let finalPhotoUrl = localUri;
           try {
             const formData = new FormData();
+            const ext = isVideo ? 'mp4' : 'jpg';
+            const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
+
             formData.append('photo', {
-              uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
-              type: asset.type || 'image/jpeg',
-              name: asset.fileName || `photo_${Date.now()}.jpg`,
+              uri: localUri,
+              type: mime,
+              name: asset.fileName || `media_${Date.now()}.${ext}`,
             });
 
             const uploadRes = await apiClient.uploadImage(formData);
@@ -191,7 +195,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               finalPhotoUrl = cloudinaryUrl;
             }
           } catch (uploadErr) {
-            console.log('Cloudinary upload error (using local uri fallback):', uploadErr);
+            console.log('Cloudinary upload error:', uploadErr);
+            const errorMsg =
+              uploadErr?.data?.message ||
+              uploadErr?.message ||
+              'Failed to upload media to server. Please try a smaller video or photo.';
+
+            Alert.alert('Upload Error', errorMsg);
+            setLoading(false);
+            return;
           }
 
           const updatedPhotos = [...photosList];
@@ -209,9 +221,9 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           }
 
           await apiClient.saveQuestionnaire(updatedProfile);
-          Alert.alert('Profile Photo Updated', 'Your profile picture has been uploaded');
+          Alert.alert('Media Uploaded', isVideo ? 'Your preview video has been uploaded' : 'Your profile picture has been uploaded');
         } catch (err) {
-          console.log('Error saving new profile photo:', err);
+          console.log('Error saving new profile media:', err);
         } finally {
           setLoading(false);
         }
@@ -374,6 +386,21 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.topBarHeader}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => {
+            if (onGoBack && onGoBack()) return;
+            if (onBack) onBack();
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.backBtnText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.topBarTitle}>My Profile</Text>
+        <View style={{ width: 60 }} />
+      </View>
+
       {loading ? (
         <View style={styles.loaderContainer}>
           <ActivityIndicator size="small" color="#FE3C72" />
@@ -758,6 +785,33 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
+  topBarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingTop: Platform.OS === 'ios' ? 10 : 5,
+  },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  backBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  topBarTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
   loaderContainer: {
     alignItems: 'center',
     marginBottom: 8,
@@ -1072,14 +1126,15 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
   badgeLabel: {
-    color: '#A0A0B0',
+    color: '#D0D0E0',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   badgeVal: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 14.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   chipWrap: {
     flexDirection: 'row',
@@ -1088,18 +1143,19 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   chip: {
-    backgroundColor: 'rgba(254, 60, 114, 0.15)',
+    backgroundColor: 'rgba(254, 60, 114, 0.25)',
     borderColor: '#FE3C72',
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    borderWidth: 1.5,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
     borderRadius: 16,
     margin: 4,
   },
   chipText: {
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 13.5,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   actionRow: {
     flexDirection: 'row',

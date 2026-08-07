@@ -112,8 +112,7 @@ export const syncUserLocationService = async (showAlertOnFailure = true) => {
       return null;
     }
 
-    // Try high accuracy GPS first, fallback to standard/network accuracy
-    const getPosition = (highAccuracy, timeoutMs = 4000) =>
+    const getPosition = (highAccuracy, timeoutMs = 15000, maxAgeMs = 10000) =>
       new Promise((resolve) => {
         Geolocation.getCurrentPosition(
           (position) => {
@@ -127,21 +126,24 @@ export const syncUserLocationService = async (showAlertOnFailure = true) => {
             }
           },
           (err) => {
-            console.log(`⚠️ Geolocation getCurrentPosition (highAccuracy=${highAccuracy}) failed:`, err?.message || err);
+            console.log(`⚠️ Geolocation getCurrentPosition (highAccuracy=${highAccuracy}) note:`, err?.message || err);
             resolve(null);
           },
           {
             enableHighAccuracy: highAccuracy,
             timeout: timeoutMs,
-            maximumAge: 5000,
+            maximumAge: maxAgeMs,
           }
         );
       });
 
-    let coords = await getPosition(true, 4000);
+    // Try High Accuracy GPS first
+    let coords = await getPosition(true, 15000, 10000);
+
+    // Fallback to Network Provider
     if (!coords) {
-      console.log('📍 High accuracy GPS timed out/failed, trying standard/network accuracy...');
-      coords = await getPosition(false, 3000);
+      console.log('📍 High Accuracy GPS timed out, trying Network location accuracy fallback...');
+      coords = await getPosition(false, 20000, 30000);
     }
 
     if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {

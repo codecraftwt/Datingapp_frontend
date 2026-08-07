@@ -86,7 +86,7 @@ const WEIGHT_OPTIONS = [
   "85 kg (187 lbs)",
 ];
 
-export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditMode, onCloseModal }) => {
+export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialData, isEditMode, onCloseModal }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const cardWidth = Math.min(windowWidth - 32, 600);
   // Calculate photo grid slot size dynamically based on card width
@@ -210,42 +210,76 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
     }
   };
 
+  const isVideoUrl = (url) => {
+    if (!url || typeof url !== 'string') return false;
+    const lower = url.toLowerCase();
+    return (
+      lower.endsWith('.mp4') ||
+      lower.endsWith('.mov') ||
+      lower.endsWith('.webm') ||
+      lower.endsWith('.3gp') ||
+      lower.includes('/video/upload/') ||
+      lower.includes('video')
+    );
+  };
+
   const handlePickImageForSlot = (slotIndex) => {
-    launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, async (response) => {
+    launchImageLibrary({ mediaType: 'mixed', videoQuality: 'medium', quality: 0.8, maxWidth: 1024, maxHeight: 1024 }, async (response) => {
       if (response.didCancel) return;
       if (response.errorCode) {
-        Alert.alert('Image Error', response.errorMessage || 'Failed to pick image');
+        Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo or video');
         return;
       }
       if (response.assets && response.assets.length > 0) {
         const asset = response.assets[0];
         const localUri = asset.uri;
+        const isVideo = asset.type?.startsWith('video/') || isVideoUrl(asset.fileName || localUri);
 
         // Optimistically set local URI for immediate UI preview
-        const updatedPhotos = [...photos];
-        updatedPhotos[slotIndex] = localUri;
-        setPhotos(updatedPhotos);
+        setPhotos((prevPhotos) => {
+          const updated = [...prevPhotos];
+          updated[slotIndex] = localUri;
+          return updated;
+        });
 
-        // Upload file to Backend & Cloudinary
+        // Upload file (Photo or Video) to Backend & Cloudinary
         try {
           setLoading(true);
           const formData = new FormData();
+          const ext = isVideo ? 'mp4' : 'jpg';
+          const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
+
           formData.append('photo', {
-            uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
-            type: asset.type || 'image/jpeg',
-            name: asset.fileName || `photo_${Date.now()}.jpg`,
+            uri: localUri,
+            type: mime,
+            name: asset.fileName || `media_${Date.now()}.${ext}`,
           });
 
           const uploadRes = await apiClient.uploadImage(formData);
           const cloudinaryUrl = uploadRes.url || uploadRes.data?.url || uploadRes.secure_url;
 
           if (cloudinaryUrl) {
-            const finalPhotos = [...photos];
-            finalPhotos[slotIndex] = cloudinaryUrl;
-            setPhotos(finalPhotos);
+            setPhotos((prevPhotos) => {
+              const updated = [...prevPhotos];
+              updated[slotIndex] = cloudinaryUrl;
+              return updated;
+            });
           }
         } catch (uploadErr) {
-          console.log('Backend Cloudinary upload error (using local uri as fallback):', uploadErr);
+          console.log('Backend Cloudinary upload error:', uploadErr);
+          const errorMsg =
+            uploadErr?.data?.message ||
+            uploadErr?.message ||
+            'Failed to upload file to server. Please try a smaller video or photo.';
+
+          Alert.alert('Upload Error', errorMsg);
+
+          // Revert optimistic slot preview on error
+          setPhotos((prevPhotos) => {
+            const updated = [...prevPhotos];
+            updated[slotIndex] = null;
+            return updated;
+          });
         } finally {
           setLoading(false);
         }
@@ -289,7 +323,35 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
   };
 
   const handleSubmit = async () => {
-    const validPhotos = photos.filter((p) => p !== null && p !== undefined);
+    setLoading(true);
+
+    // Guarantee all local file:// URIs are uploaded to Cloudinary before saving questionnaire
+    const uploadedPhotosList = await Promise.all(
+      photos.map(async (photoUri) => {
+        if (!photoUri) return null;
+        if (typeof photoUri === 'string' && (photoUri.startsWith('http://') || photoUri.startsWith('https://'))) {
+          return photoUri;
+        }
+        if (typeof photoUri === 'string' && photoUri.startsWith('file://')) {
+          try {
+            const formData = new FormData();
+            formData.append('photo', {
+              uri: Platform.OS === 'android' ? photoUri : photoUri.replace('file://', ''),
+              type: 'image/jpeg',
+              name: `photo_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`,
+            });
+            const uploadRes = await apiClient.uploadImage(formData);
+            const cloudUrl = uploadRes?.url || uploadRes?.secure_url || uploadRes?.data?.url;
+            if (cloudUrl) return cloudUrl;
+          } catch (e) {
+            console.log('Error uploading local photo to Cloudinary in handleSubmit:', e);
+          }
+        }
+        return photoUri;
+      })
+    );
+
+    const validPhotos = uploadedPhotosList.filter((p) => p && typeof p === 'string' && p.startsWith('http'));
     const primaryPhoto = validPhotos[0] || null;
     const age = calculateAge();
 
@@ -386,26 +448,31 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
         >
           <View style={[styles.containerWrapper, { maxWidth: cardWidth }]}>
             {/* Top Bar with Back Arrow */}
-            {(isEditMode || onCloseModal) && (
-              <View style={styles.editModeHeader}>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (onCloseModal) {
-                      onCloseModal();
-                    } else if (onNavigate) {
-                      onNavigate('HOME');
-                    }
-                  }}
-                  style={styles.closeBtn}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.closeBtnText}>← Back to Profile</Text>
-                </TouchableOpacity>
-                <Text style={styles.editModeTitle}>
-                  {isEditMode ? 'Edit Questionnaire' : 'Retake Questionnaire'}
+            <View style={styles.editModeHeader}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (isEditMode || onCloseModal) {
+                    if (onCloseModal) onCloseModal();
+                    else if (onGoBack && onGoBack()) return;
+                    else if (onNavigate) onNavigate('HOME');
+                  } else if (step > 1) {
+                    setStep((prev) => prev - 1);
+                  } else {
+                    if (onGoBack && onGoBack()) return;
+                    if (onNavigate) onNavigate('LOGIN');
+                  }
+                }}
+                style={styles.closeBtn}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.closeBtnText}>
+                  {isEditMode || onCloseModal ? '← Back to Profile' : step > 1 ? `← Step ${step - 1}` : '← Back'}
                 </Text>
-              </View>
-            )}
+              </TouchableOpacity>
+              <Text style={styles.editModeTitle}>
+                {isEditMode ? 'Edit Questionnaire' : 'Profile Questionnaire'}
+              </Text>
+            </View>
 
             {/* Progress & Step Navigation Bar */}
             <View style={styles.progressContainer}>
@@ -991,41 +1058,48 @@ export const QuestionnaireScreen = ({ onNavigate, onFinish, initialData, isEditM
                     ))}
                   </ScrollView>
 
-                  {/* 9 Photo Slots Grid */}
-                  <Text style={styles.inputLabel}>Upload Photos (Up to 9 Slots)</Text>
-                  <Text style={styles.gridSubtext}>Slot #1 will be used as your Main Profile Picture</Text>
+                  {/* 9 Photo & Video Slots Grid */}
+                  <Text style={styles.inputLabel}>Upload Photos & Preview Videos (Up to 9 Slots)</Text>
+                  <Text style={styles.gridSubtext}>Slot #1 is your Main Profile Picture. Tap + to add photos or short video previews.</Text>
 
                   <View style={styles.gridContainer}>
-                    {photos.map((photoUri, index) => (
-                      <View key={index} style={[styles.gridSlot, { width: slotWidth, height: slotHeight }]}>
-                        {photoUri ? (
-                          <View style={styles.slotImageWrapper}>
-                            <Image source={{ uri: photoUri }} style={styles.slotImage} />
-                            {index === 0 && (
-                              <View style={styles.mainBadge}>
-                                <Text style={styles.mainBadgeText}>Main</Text>
-                              </View>
-                            )}
+                    {photos.map((photoUri, index) => {
+                      const isVid = isVideoUrl(photoUri);
+                      return (
+                        <View key={index} style={[styles.gridSlot, { width: slotWidth, height: slotHeight }]}>
+                          {photoUri ? (
+                            <View style={styles.slotImageWrapper}>
+                              <Image source={{ uri: photoUri }} style={styles.slotImage} />
+                              {isVid ? (
+                                <View style={[styles.mainBadge, { backgroundColor: '#3897F0' }]}>
+                                  <Text style={styles.mainBadgeText}>📹 Video</Text>
+                                </View>
+                              ) : index === 0 ? (
+                                <View style={styles.mainBadge}>
+                                  <Text style={styles.mainBadgeText}>Main</Text>
+                                </View>
+                              ) : null}
+                              <TouchableOpacity
+                                style={styles.deleteSlotBtn}
+                                onPress={() => handleRemovePhotoSlot(index)}
+                                activeOpacity={0.8}
+                              >
+                                <Text style={styles.deleteSlotText}>✕</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
                             <TouchableOpacity
-                              style={styles.deleteSlotBtn}
-                              onPress={() => handleRemovePhotoSlot(index)}
-                              activeOpacity={0.8}
+                              style={styles.emptySlotBtn}
+                              onPress={() => handlePickImageForSlot(index)}
+                              activeOpacity={0.7}
                             >
-                              <Text style={styles.deleteSlotText}>✕</Text>
+                              <Text style={styles.plusIcon}>+</Text>
+                              <Text style={styles.slotLabel}>Slot {index + 1}</Text>
                             </TouchableOpacity>
-                          </View>
-                        ) : (
-                          <TouchableOpacity
-                            style={styles.emptySlotBtn}
-                            onPress={() => handlePickImageForSlot(index)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.plusIcon}>+</Text>
-                            <Text style={styles.slotLabel}>Photo {index + 1}</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    ))}
+                          )}
+                        </View>
+                      );
+                    })}
                   </View>
 
                   <View style={styles.btnRow}>
@@ -1172,23 +1246,23 @@ const styles = StyleSheet.create({
   },
   inputLabel: {
     color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '800',
     marginBottom: 8,
     marginLeft: 2,
-    marginTop: 12,
-    opacity: 0.95,
+    marginTop: 14,
+    letterSpacing: 0.3,
   },
   subInputLabel: {
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontSize: 12,
-    fontWeight: '600',
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
     marginTop: 6,
     marginBottom: 4,
     marginLeft: 2,
   },
   gridSubtext: {
-    color: 'rgba(255, 255, 255, 0.75)',
+    color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 12,
     marginBottom: 12,
     marginLeft: 2,
@@ -1223,56 +1297,62 @@ const styles = StyleSheet.create({
   },
   chip: {
     flex: 1,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
     justifyContent: 'center',
     alignItems: 'center',
     marginHorizontal: 3,
     paddingHorizontal: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
   },
   distChip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
     marginHorizontal: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
   },
   wrapChip: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 15,
     paddingVertical: 10,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
     margin: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
   },
   scrollChip: {
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
     marginRight: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
   },
   chipSelected: {
     backgroundColor: '#FFFFFF',
     borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   chipText: {
     color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     textAlign: 'center',
+    letterSpacing: 0.3,
   },
   chipTextSelected: {
     color: '#FE3C72',
-    fontWeight: '700',
+    fontWeight: '900',
   },
   bioInput: {
     minHeight: 85,

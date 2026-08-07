@@ -37,9 +37,18 @@ export const setAuthToken = (token) => {
   authTokenInMemory = token;
 };
 
-const request = async (url, options = {}) => {
+const request = async (url, options = {}, isRetry = false) => {
   try {
-    const token = authTokenInMemory || (await AsyncStorage.getItem('token'));
+    let token = authTokenInMemory;
+    if (!token || token === 'null' || token === 'undefined') {
+      token = await AsyncStorage.getItem('token');
+      if (token && token !== 'null' && token !== 'undefined') {
+        authTokenInMemory = token;
+      } else {
+        token = null;
+      }
+    }
+
     const headers = {
       'Content-Type': 'application/json',
       ...(token ? { 'authorization': `Bearer ${token}` } : {}),
@@ -75,12 +84,40 @@ const request = async (url, options = {}) => {
       });
     }
 
-    const data = await response.json();
+    // Auto-retry 1 time on 500 Cold Start errors
+    if (!response.ok && response.status >= 500 && !isRetry) {
+      console.warn(`[apiClient] Cold start 500 error on ${url}. Retrying once after 1s...`);
+      await new Promise((res) => setTimeout(res, 1000));
+      return await request(url, options, true);
+    }
+
+    const responseText = await response.text();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (jsonErr) {
+      console.error(`[apiClient] Non-JSON response received from ${url} (status ${response.status}):`, responseText.substring(0, 150));
+      if (response.status === 413) {
+        throw new Error('File Size Limit Exceeded: The uploaded video file is too large (max 100MB allowed).');
+      }
+      throw new Error(`Server Error (${response.status}): Could not complete upload request.`);
+    }
+
     if (!response.ok) {
-      throw { data };
+      if (response.status === 401 || data?.message?.includes('authorization denied') || data?.message?.includes('invalid or expired')) {
+        console.warn('[apiClient] Stale or expired token detected (401). Clearing token cache...');
+        authTokenInMemory = null;
+        AsyncStorage.removeItem('token').catch(() => {});
+      }
+      throw { data, status: response.status };
     }
     return data;
   } catch (error) {
+    if (!isRetry && (error?.data?.message?.includes('Server error') || error?.message?.includes('500'))) {
+      console.warn(`[apiClient] Retrying failed API call on ${url}...`);
+      await new Promise((res) => setTimeout(res, 1000));
+      return await request(url, options, true);
+    }
     console.error(`API Error on ${url}:`, error);
     throw error;
   }
@@ -89,10 +126,16 @@ const request = async (url, options = {}) => {
 export const apiClient = {
   // Auth endpoints
   register: async (userData) => {
-    return await request('/api/auth/register', {
+    const res = await request('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData),
     });
+    const token = res.token || res.data?.token;
+    if (token) {
+      setAuthToken(token);
+      await AsyncStorage.setItem('token', token);
+    }
+    return res;
   },
   login: async (credentials) => {
     const res = await request('/api/auth/login', {
@@ -102,6 +145,7 @@ export const apiClient = {
     const token = res.token || res.data?.token;
     if (token) {
       setAuthToken(token);
+      await AsyncStorage.setItem('token', token);
     }
     return res;
   },
@@ -112,6 +156,7 @@ export const apiClient = {
       });
     } finally {
       setAuthToken(null);
+      await AsyncStorage.removeItem('token');
     }
   },
   forgotPassword: async (body) => {
@@ -203,6 +248,12 @@ export const apiClient = {
   getMessages: async () => {
     return await request('/api/chat/messages', {
       method: 'GET',
+    });
+  },
+  sendMessage: async (body) => {
+    return await request('/api/chat/messages', {
+      method: 'POST',
+      body: JSON.stringify(body),
     });
   },
   getChatMessages: async (selectedUserId) => {

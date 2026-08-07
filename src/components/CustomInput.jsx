@@ -77,11 +77,13 @@ export const CustomInput = ({
         {renderIcon()}
         <TextInput
           style={[styles.input, style]}
-          placeholderTextColor="rgba(0, 0, 0, 0.4)"
+          placeholderTextColor="#666666"
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           secureTextEntry={shouldSecureText}
           autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
           {...props}
         />
         {secureTextEntry && (

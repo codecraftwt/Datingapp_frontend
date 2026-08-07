@@ -8,6 +8,8 @@ const path = require('path');
  * @type {import('@react-native/metro-config').MetroConfig}
  */
 const config = {
+  projectRoot: path.resolve(__dirname),
+  watchFolders: [path.resolve(__dirname)],
   resolver: {
     resolveRequest: (context, moduleName, platform) => {
       // Force react-native-webrtc to resolve its own event-target-shim dependency (v6+)

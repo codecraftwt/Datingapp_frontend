@@ -22,7 +22,7 @@ import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
 
-export const RegisterScreen = ({ onNavigate }) => {
+export const RegisterScreen = ({ onNavigate, onGoBack }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [mobile, setMobile] = useState('');
@@ -45,6 +45,7 @@ export const RegisterScreen = ({ onNavigate }) => {
   // Optional Temporary Address / Current Location State
   const [tempLocation, setTempLocation] = useState(null); // { latitude, longitude } | null
   const [fetchingGPS, setFetchingGPS] = useState(false);
+  const [sameAsPermanent, setSameAsPermanent] = useState(false);
 
   // Modal selector state
   const [modalType, setModalType] = useState(null); // 'country' | 'state' | 'city' | null
@@ -86,7 +87,7 @@ export const RegisterScreen = ({ onNavigate }) => {
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
           {
-            title: 'Location Permission',
+            title: 'Location Permission Required',
             message: 'Please allow location permission to fetch your current live location.',
             buttonPositive: 'Allow',
             buttonNegative: 'Cancel',
@@ -106,9 +107,10 @@ export const RegisterScreen = ({ onNavigate }) => {
         }
       }
 
+      // Try High Accuracy GPS first (15s timeout)
       Geolocation.getCurrentPosition(
         (pos) => {
-          if (pos?.coords) {
+          if (pos && pos.coords && typeof pos.coords.latitude === 'number' && typeof pos.coords.longitude === 'number') {
             setTempLocation({
               latitude: pos.coords.latitude,
               longitude: pos.coords.longitude,
@@ -120,56 +122,92 @@ export const RegisterScreen = ({ onNavigate }) => {
           setFetchingGPS(false);
         },
         (err) => {
-          console.log('GPS Fetch Error:', err);
-          Alert.alert(
-            'Location Services Disabled',
-            'Your device Location (GPS) is turned off. Please turn on Location services in settings.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Turn On Location', onPress: () => openDeviceLocationSettings() },
-            ]
+          console.log('GPS High Accuracy attempt failed, trying Network accuracy fallback:', err);
+          // Fallback to Network Accuracy (20s timeout, 30s maxAge)
+          Geolocation.getCurrentPosition(
+            (fallbackPos) => {
+              if (fallbackPos && fallbackPos.coords && typeof fallbackPos.coords.latitude === 'number' && typeof fallbackPos.coords.longitude === 'number') {
+                setTempLocation({
+                  latitude: fallbackPos.coords.latitude,
+                  longitude: fallbackPos.coords.longitude,
+                });
+                Alert.alert('Success', 'Current live location fetched as Temporary Address!');
+              } else {
+                Alert.alert('Error', 'Unable to fetch GPS coordinates.');
+              }
+              setFetchingGPS(false);
+            },
+            (fallbackErr) => {
+              console.log('GPS Fallback Error:', fallbackErr);
+              Alert.alert(
+                'Location Services Required',
+                'Could not acquire location. Please make sure Location (GPS) is turned ON in your phone settings.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Turn On Location', onPress: () => openDeviceLocationSettings() },
+                ]
+              );
+              setFetchingGPS(false);
+            },
+            { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
           );
-          setFetchingGPS(false);
         },
-        { enableHighAccuracy: false, timeout: 10000, maximumAge: 10000 }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
       );
     } catch (err) {
       console.log('Fetch GPS location exception:', err);
+      Alert.alert('Error', 'Unable to fetch current location.');
       setFetchingGPS(false);
     }
   };
 
   const handleRegister = async () => {
-    if (!name.trim() || !email.trim() || !mobile.trim() || !password || !confirmPassword) {
+    const cleanPassword = password ? password.trim() : '';
+    const cleanConfirmPassword = confirmPassword ? confirmPassword.trim() : '';
+
+    if (!name.trim() || !email.trim() || !mobile.trim() || !cleanPassword || !cleanConfirmPassword) {
       Alert.alert('Required Fields', 'Please fill in all basic fields.');
       return;
     }
 
-    if (!selectedCountry?.name || !selectedState?.name || !district.trim() || (!selectedCity?.name && !district.trim())) {
-      Alert.alert('Address Mandatory', 'Please select Country, State, District, and City for your permanent address.');
+    if (!sameAsPermanent && (!selectedCountry?.name || !selectedState?.name || !district.trim() || (!selectedCity?.name && !district.trim()))) {
+      Alert.alert('Address Mandatory', 'Please select Country, State, District, and City for your permanent address or check "Keep permanent address as current address".');
       return;
     }
 
-    if (password !== confirmPassword) {
-      Alert.alert('Password Mismatch', 'Password and Confirm Password do not match.');
+    if (sameAsPermanent && !tempLocation) {
+      Alert.alert('Live Location Required', 'Please fetch your current live location first, or uncheck "Keep permanent address as current address".');
       return;
     }
 
-    if (password.length < 8) {
+    if (cleanPassword !== cleanConfirmPassword) {
+      Alert.alert('Password Mismatch', 'Password and Confirm Password do not match. Please verify both fields.');
+      return;
+    }
+
+    if (cleanPassword.length < 8) {
       Alert.alert('Weak Password', 'Password must be at least 8 characters long.');
       return;
     }
 
-    // Extract Lat & Lng from selected City or State (country-state-city built-in coordinates)
-    let lat = parseFloat(selectedCity?.latitude || selectedState?.latitude || '18.5204');
-    let lng = parseFloat(selectedCity?.longitude || selectedState?.longitude || '73.8567');
+    // Determine Lat & Lng coordinates
+    let lat, lng;
+    let finalCountry = selectedCountry?.name || 'India';
+    let finalState = selectedState?.name || 'Maharashtra';
+    let finalDistrict = district.trim() || 'Live GPS';
+    let finalCity = selectedCity?.name || finalDistrict;
 
-    if (isNaN(lat) || isNaN(lng)) {
-      lat = 18.5204;
-      lng = 73.8567;
+    if (sameAsPermanent && tempLocation) {
+      lat = tempLocation.latitude;
+      lng = tempLocation.longitude;
+    } else {
+      lat = parseFloat(selectedCity?.latitude || selectedState?.latitude || '18.5204');
+      lng = parseFloat(selectedCity?.longitude || selectedState?.longitude || '73.8567');
+      if (isNaN(lat) || isNaN(lng)) {
+        lat = 18.5204;
+        lng = 73.8567;
+      }
     }
-
-    const cityName = selectedCity?.name || district.trim();
 
     try {
       setLoading(true);
@@ -177,17 +215,17 @@ export const RegisterScreen = ({ onNavigate }) => {
         name: name.trim(),
         email: email.trim().toLowerCase(),
         mobile: mobile.trim(),
-        password,
-        confirmPassword,
+        password: cleanPassword,
+        confirmPassword: cleanConfirmPassword,
         gender,
-        country: selectedCountry.name,
-        state: selectedState.name,
-        district: district.trim(),
-        city: cityName,
+        country: finalCountry,
+        state: finalState,
+        district: finalDistrict,
+        city: finalCity,
         latitude: lat,
         longitude: lng,
-        tempLatitude: tempLocation ? tempLocation.latitude : null,
-        tempLongitude: tempLocation ? tempLocation.longitude : null,
+        tempLatitude: tempLocation ? tempLocation.latitude : (sameAsPermanent ? lat : null),
+        tempLongitude: tempLocation ? tempLocation.longitude : (sameAsPermanent ? lng : null),
       });
 
       Alert.alert(
@@ -225,6 +263,20 @@ export const RegisterScreen = ({ onNavigate }) => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <View style={styles.topBar}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => {
+                if (onGoBack && onGoBack()) return;
+                if (onNavigate) onNavigate('LOGIN');
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.backButtonIcon}>←</Text>
+              <Text style={styles.backButtonText}>Back</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.headerContainer}>
             <View style={styles.logoBadge}>
               <Text style={styles.logoHeart}>✨</Text>
@@ -266,6 +318,9 @@ export const RegisterScreen = ({ onNavigate }) => {
               iconType="password"
               placeholder="Create password"
               secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
               value={password}
               onChangeText={setPassword}
             />
@@ -275,9 +330,27 @@ export const RegisterScreen = ({ onNavigate }) => {
               iconType="password"
               placeholder="Re-enter password"
               secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
             />
+
+            {confirmPassword.length > 0 && (
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  marginTop: -8,
+                  marginBottom: 14,
+                  marginLeft: 6,
+                  color: password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FF5252',
+                }}
+              >
+                {password.trim() === confirmPassword.trim() ? '✅ Passwords match' : '❌ Passwords do not match'}
+              </Text>
+            )}
 
             {/* Gender Selection */}
             <View style={styles.genderContainer}>
@@ -306,76 +379,6 @@ export const RegisterScreen = ({ onNavigate }) => {
               </View>
             </View>
 
-            {/* Permanent Address Inputs (Mandatory) */}
-            <View style={styles.sectionDivider}>
-              <Text style={styles.sectionTitle}>📍 Permanent Address (Mandatory)</Text>
-            </View>
-
-            {/* Country Selector */}
-            <Text style={styles.pickerLabel}>Country *</Text>
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => {
-                setModalType('country');
-                setSearchQuery('');
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.pickerButtonText}>
-                {selectedCountry ? `🌐 ${selectedCountry.name}` : 'Select Country'}
-              </Text>
-              <Text style={styles.pickerChevron}>▼</Text>
-            </TouchableOpacity>
-
-            {/* State Selector */}
-            <Text style={styles.pickerLabel}>State *</Text>
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => {
-                if (!selectedCountry) {
-                  Alert.alert('Select Country', 'Please select a country first.');
-                  return;
-                }
-                setModalType('state');
-                setSearchQuery('');
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.pickerButtonText}>
-                {selectedState ? `🏛️ ${selectedState.name}` : 'Select State'}
-              </Text>
-              <Text style={styles.pickerChevron}>▼</Text>
-            </TouchableOpacity>
-
-            {/* District Input */}
-            <CustomInput
-              label="District *"
-              iconType="user"
-              placeholder="e.g. Kolhapur"
-              value={district}
-              onChangeText={setDistrict}
-            />
-
-            {/* City Selector */}
-            <Text style={styles.pickerLabel}>City / Taluka *</Text>
-            <TouchableOpacity
-              style={styles.pickerButton}
-              onPress={() => {
-                if (!selectedState) {
-                  Alert.alert('Select State', 'Please select a state first.');
-                  return;
-                }
-                setModalType('city');
-                setSearchQuery('');
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.pickerButtonText}>
-                {selectedCity ? `🏙️ ${selectedCity.name}` : 'Select City / Taluka'}
-              </Text>
-              <Text style={styles.pickerChevron}>▼</Text>
-            </TouchableOpacity>
-
             {/* Temporary Address / Current Location (Optional) */}
             <View style={styles.sectionDivider}>
               <Text style={styles.sectionTitle}>🎯 Temporary Address (Optional)</Text>
@@ -394,19 +397,123 @@ export const RegisterScreen = ({ onNavigate }) => {
                 {fetchingGPS
                   ? '⏳ Fetching Current GPS Location...'
                   : tempLocation
-                  ? `✅ Live Location Captured (${tempLocation.latitude.toFixed(4)}, ${tempLocation.longitude.toFixed(4)})`
-                  : '📍 Fetch Current Live Location'}
+                    ? `✅ Live Location Captured (${tempLocation.latitude.toFixed(4)}, ${tempLocation.longitude.toFixed(4)})`
+                    : '📍 Fetch Current Live Location'}
               </Text>
             </TouchableOpacity>
 
             {tempLocation && (
               <TouchableOpacity
                 style={styles.removeGpsBtn}
-                onPress={() => setTempLocation(null)}
+                onPress={() => {
+                  setTempLocation(null);
+                  setSameAsPermanent(false);
+                }}
                 activeOpacity={0.7}
               >
                 <Text style={styles.removeGpsText}>✕ Remove Temporary Address</Text>
               </TouchableOpacity>
+            )}
+
+            {/* Checkbox: Keep permanent address as current address */}
+            <TouchableOpacity
+              style={styles.sameAddressCheckboxRow}
+              onPress={() => setSameAsPermanent(!sameAsPermanent)}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.checkboxSquare, sameAsPermanent && styles.checkboxSquareChecked]}>
+                {sameAsPermanent && <Text style={styles.checkmarkIcon}>✓</Text>}
+              </View>
+              <Text style={styles.sameAddressCheckboxLabel}>
+                Keep permanent address as current address.
+              </Text>
+            </TouchableOpacity>
+
+            {sameAsPermanent ? (
+              <View style={styles.autoAddressBanner}>
+                <Text style={styles.autoAddressBannerText}>
+                  ✅ Permanent address will be saved identical to your Current Live Location!
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* OR Separator */}
+                <View style={styles.orDividerContainer}>
+                  <View style={styles.orDividerLine} />
+                  <Text style={styles.orDividerText}>OR</Text>
+                  <View style={styles.orDividerLine} />
+                </View>
+
+                {/* Permanent Address Inputs (Mandatory) */}
+                <View style={styles.sectionDivider}>
+                  <Text style={styles.sectionTitle}>📍 Permanent Address (Mandatory)</Text>
+                </View>
+
+                {/* Country Selector */}
+                <Text style={styles.pickerLabel}>Country *</Text>
+                <TouchableOpacity
+                  style={styles.pickerButton}
+                  onPress={() => {
+                    setModalType('country');
+                    setSearchQuery('');
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.pickerButtonText}>
+                    {selectedCountry ? `🌐 ${selectedCountry.name}` : 'Select Country'}
+                  </Text>
+                  <Text style={styles.pickerChevron}>▼</Text>
+                </TouchableOpacity>
+
+                {/* State Selector */}
+                <Text style={styles.pickerLabel}>State *</Text>
+                <TouchableOpacity
+                  style={styles.pickerButton}
+                  onPress={() => {
+                    if (!selectedCountry) {
+                      Alert.alert('Select Country', 'Please select a country first.');
+                      return;
+                    }
+                    setModalType('state');
+                    setSearchQuery('');
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.pickerButtonText}>
+                    {selectedState ? `🏛️ ${selectedState.name}` : 'Select State'}
+                  </Text>
+                  <Text style={styles.pickerChevron}>▼</Text>
+                </TouchableOpacity>
+
+                {/* District Input */}
+                <CustomInput
+                  label="District *"
+                  iconType="user"
+                  placeholder="e.g. Kolhapur"
+                  value={district}
+                  onChangeText={setDistrict}
+                />
+
+                {/* City Selector */}
+                <Text style={styles.pickerLabel}>City / Taluka *</Text>
+                <TouchableOpacity
+                  style={styles.pickerButton}
+                  onPress={() => {
+                    if (!selectedState) {
+                      Alert.alert('Select State', 'Please select a state first.');
+                      return;
+                    }
+                    setModalType('city');
+                    setSearchQuery('');
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.pickerButtonText}>
+                    {selectedCity ? `🏙️ ${selectedCity.name}` : 'Select City / Taluka'}
+                  </Text>
+                  <Text style={styles.pickerChevron}>▼</Text>
+                </TouchableOpacity>
+              </>
             )}
 
             <CustomButton
@@ -437,54 +544,83 @@ export const RegisterScreen = ({ onNavigate }) => {
         transparent={true}
         onRequestClose={() => setModalType(null)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                Select {modalType === 'country' ? 'Country' : modalType === 'state' ? 'State' : 'City / Taluka'}
-              </Text>
-              <TouchableOpacity onPress={() => setModalType(null)} style={styles.closeBtn}>
-                <Text style={styles.closeBtnText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={styles.searchInput}
-              placeholder={`Search ${modalType}...`}
-              placeholderTextColor="#999"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-
-            <FlatList
-              data={filteredModalData}
-              keyExtractor={(item, index) => item.isoCode || item.name + index}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.modalListItem}
-                  onPress={() => {
-                    if (modalType === 'country') {
-                      setSelectedCountry(item);
-                      setSelectedState(null);
-                      setSelectedCity(null);
-                    } else if (modalType === 'state') {
-                      setSelectedState(item);
-                      setSelectedCity(null);
-                    } else if (modalType === 'city') {
-                      setSelectedCity(item);
-                    }
-                    setModalType(null);
-                  }}
-                >
-                  <Text style={styles.modalListItemText}>{item.name}</Text>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalKeyboardContainer}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContentFull}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>
+                  Select {modalType === 'country' ? 'Country' : modalType === 'state' ? 'State' : 'City / Taluka'}
+                </Text>
+                <TouchableOpacity onPress={() => setModalType(null)} style={styles.closeBtn}>
+                  <Text style={styles.closeBtnText}>✕</Text>
                 </TouchableOpacity>
-              )}
-              ListEmptyComponent={
-                <Text style={styles.emptyText}>No results found</Text>
-              }
-            />
+              </View>
+
+              <View style={styles.searchBarWrapper}>
+                <Text style={styles.searchBarIcon}>🔍</Text>
+                <TextInput
+                  style={styles.searchInputField}
+                  placeholder={`Type keywords to filter ${modalType === 'country' ? 'country' : modalType === 'state' ? 'state' : 'city'}...`}
+                  placeholderTextColor="rgba(255,255,255,0.5)"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  autoFocus={true}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  clearButtonMode="while-editing"
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 4 }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16 }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <FlatList
+                data={filteredModalData}
+                keyExtractor={(item, index) => item.isoCode || item.name + index}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={true}
+                initialNumToRender={20}
+                maxToRenderPerBatch={20}
+                style={styles.modalFlatList}
+                contentContainerStyle={{ paddingBottom: 30 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.modalListItem}
+                    onPress={() => {
+                      if (modalType === 'country') {
+                        setSelectedCountry(item);
+                        setSelectedState(null);
+                        setSelectedCity(null);
+                      } else if (modalType === 'state') {
+                        setSelectedState(item);
+                        setSelectedCity(null);
+                      } else if (modalType === 'city') {
+                        setSelectedCity(item);
+                      }
+                      setModalType(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.modalListItemText}>{item.name}</Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyEmoji}>🔍</Text>
+                    <Text style={styles.emptyText}>
+                      No {modalType} found matching "{searchQuery}"
+                    </Text>
+                  </View>
+                }
+              />
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SimulatedGradientBackground>
   );
@@ -497,9 +633,36 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 30,
+    paddingTop: 10,
     paddingBottom: 40,
     justifyContent: 'center',
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    marginTop: Platform.OS === 'ios' ? 40 : 15,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  backButtonIcon: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginRight: 6,
+  },
+  backButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   headerContainer: {
     alignItems: 'center',
@@ -650,9 +813,75 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   removeGpsText: {
-    color: '#FF5252',
+    color: '#FFFF',
     fontSize: 13,
     fontWeight: '600',
+  },
+  sameAddressCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  checkboxSquare: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.7)',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  checkboxSquareChecked: {
+    backgroundColor: '#FE3C72',
+    borderColor: '#FE3C72',
+  },
+  checkmarkIcon: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  sameAddressCheckboxLabel: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '600',
+    flex: 1,
+  },
+  autoAddressBanner: {
+    backgroundColor: 'rgba(76, 175, 80, 0.25)',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 6,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#4CAF50',
+  },
+  autoAddressBannerText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  orDividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+  },
+  orDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  orDividerText: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 13,
+    fontWeight: '800',
+    marginHorizontal: 12,
+    letterSpacing: 1,
   },
   registerBtn: {
     marginTop: 16,
@@ -674,17 +903,21 @@ const styles = StyleSheet.create({
   },
 
   // Modal styles
+  modalKeyboardContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
-  modalContent: {
+  modalContentFull: {
     backgroundColor: '#1E1E2E',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '80%',
+    height: '88%',
     padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 30 : 15,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -705,29 +938,56 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
-  searchInput: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    color: '#FFFFFF',
+  searchBarWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
+    height: 48,
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  searchBarIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  searchInputField: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 15,
+    height: '100%',
+    paddingVertical: 0,
+  },
+  modalFlatList: {
+    flex: 1,
   },
   modalListItem: {
     paddingVertical: 14,
+    paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
   modalListItemText: {
     color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyEmoji: {
+    fontSize: 36,
+    marginBottom: 8,
   },
   emptyText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(255, 255, 255, 0.65)',
     textAlign: 'center',
-    marginTop: 20,
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });
 

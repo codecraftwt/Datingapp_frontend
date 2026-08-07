@@ -7,12 +7,13 @@ import { Platform } from 'react-native';
  * - Physical Device via Wi-Fi: 'http://10.0.3.64:5000'
  */
 export const CANDIDATE_URLS = [
-  'http://localhost:5000',
-  'http://10.0.2.2:5000',
-  'http://10.0.3.64:5000',
+  'https://datingapp-backend-api.vercel.app',
+  // 'http://localhost:5000',
+  // 'http://10.0.2.2:5000',
+  // 'http://10.0.3.64:5000',
 ];
 
-let workingBaseUrl = 'http://localhost:5000';
+let workingBaseUrl = 'https://datingapp-backend-api.vercel.app';
 
 export const getBaseUrl = () => workingBaseUrl;
 
@@ -20,7 +21,7 @@ export const setBaseUrl = (url) => {
   workingBaseUrl = url;
 };
 
-export const BASE_URL = 'http://localhost:5000';
+export const BASE_URL = 'https://datingapp-backend-api.vercel.app';
 
 export const getImageUrl = (url) => {
   if (!url) return '';
