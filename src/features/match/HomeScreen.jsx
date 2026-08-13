@@ -19,6 +19,7 @@ import {
   Linking,
   NativeModules,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { pick as pickDocument, types as documentTypes, isCancel as isDocumentCancel } from '@react-native-documents/picker';
 import {
@@ -32,9 +33,11 @@ import { CustomButton } from '../components/CustomButton';
 import { Profile } from './Profile';
 import { ChatScreen } from './ChatScreen';
 import { BlockReportModal } from '../components/BlockReportModal';
+import { PreviewModal } from '../../components/PreviewModal';
+import Video from 'react-native-video';
 import { useDispatch, useSelector } from 'react-redux';
 import { apiClient } from '../../api/apiClient';
-import { BASE_URL, getImageUrl as formatConfigUrl } from '../../api/config';
+import { BASE_URL, getBaseUrl, getImageUrl as formatConfigUrl, isVideoUrl, getVideoThumbnailUrl } from '../../api/config';
 import { selectCurrentUser } from '../redux/slices/authSlice';
 import {
   setOtherProfiles,
@@ -180,6 +183,10 @@ const formatLastSeen = (lastSeenTime) => {
 };
 
 export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile }) => {
+  const insets = useSafeAreaInsets();
+  const safeBottomPadding = Math.max(insets.bottom, Platform.OS === 'ios' ? 12 : 8);
+  const safeTopPadding = Math.max(insets.top, Platform.OS === 'ios' ? 40 : 25);
+
   const dispatch = useDispatch();
   const currentUser = useSelector(selectCurrentUser);
 
@@ -429,7 +436,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const socketRef = useRef(null);
   const typingTimerRef = useRef(null);
   const isCurrentlyTypingRef = useRef(false);
-  const socketUrl = BASE_URL;
+  const socketUrl = getBaseUrl();
   const handleIncomingMessageRef = useRef(null);
 
   // --- Voice Call WebRTC Setup ---
@@ -674,6 +681,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [matchedUserIds, setMatchedUserIds] = useState([]);
   const [likesList, setLikesList] = useState([]);
   const [showActiveCardDetails, setShowActiveCardDetails] = useState(false);
+  const [candidateStoryIndex, setCandidateStoryIndex] = useState(null);
 
   useEffect(() => {
     if (questionnairesData?.users) {
@@ -906,6 +914,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       });
 
+      socketRef.current.on('online_users_list', ({ onlineUserIds }) => {
+        console.log('Socket.IO online_users_list received:', onlineUserIds);
+        if (Array.isArray(onlineUserIds)) {
+          setOnlineUsersMap((prev) => {
+            const updated = { ...prev };
+            onlineUserIds.forEach((id) => {
+              updated[id.toString()] = true;
+            });
+            return updated;
+          });
+        }
+      });
+
       socketRef.current.on('user_status', ({ userId, status, lastSeen }) => {
         console.log(`Socket.IO user_status: ${userId} is ${status}, lastSeen: ${lastSeen}`);
         setOnlineUsersMap((prev) => ({
@@ -983,6 +1004,25 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
         refetchMessages();
         refetchChatMessages();
+
+        const senderDisplayName = msg.senderName || 'Someone';
+        let bodyText = msg.text || '💬 Sent a message';
+        if (msg.messageType === 'image') bodyText = '📷 Sent a photo';
+        else if (msg.messageType === 'video') bodyText = '🎬 Sent a video';
+        else if (msg.messageType === 'voice') bodyText = '🎤 Sent a voice message';
+        else if (msg.messageType === 'sticker') bodyText = '😊 Sent a sticker';
+
+        if (typeof displayLocalSystemNotification === 'function') {
+          displayLocalSystemNotification({
+            title: `💬 ${senderDisplayName}`,
+            body: bodyText,
+            data: {
+              type: 'chat',
+              senderId: msg.senderId,
+              messageId: msg._id,
+            },
+          }).catch((e) => console.log('Notification note:', e));
+        }
       });
 
       socketRef.current.on('message_sent', (msg) => {
@@ -2284,7 +2324,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   return (
     <View style={styles.screenWrapper}>
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: safeTopPadding }]}>
         {/* App Header */}
         <View style={styles.header}>
           <View style={styles.logoContainer}>
@@ -2681,7 +2721,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         </View>
 
         {/* Home Screen Navigation Bar */}
-        <View style={styles.navigationBar}>
+        <View style={[styles.navigationBar, { paddingBottom: safeBottomPadding, height: 56 + safeBottomPadding }]}>
           <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'swipe' && styles.navigationTabActive]}
             onPress={() => {
@@ -2754,11 +2794,45 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               </View>
 
               <ScrollView style={styles.cardExpandedScrollBody} showsVerticalScrollIndicator={false}>
-                {/* Image at the top */}
-                <Image
-                  source={{ uri: getImageUrl(MOCK_MATCHES[swipeIndex].image) }}
-                  style={styles.cardExpandedTopImageFull}
-                />
+                {/* Image or Video Preview at the top of Maximized Profile */}
+                {(() => {
+                  const candidateObj = MOCK_MATCHES[swipeIndex] || {};
+                  const candidateMedia = candidateObj.profileImage || candidateObj.image || (candidateObj.profileImages && candidateObj.profileImages[0]) || '';
+                  const isVidMedia = isVideoUrl(candidateMedia);
+
+                  return (
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPress={() => setCandidateStoryIndex(0)}
+                      style={styles.cardExpandedTopImageFull}
+                    >
+                      {isVidMedia ? (
+                        <View style={styles.cardExpandedTopImageFull} pointerEvents="none">
+                          <Video
+                            source={{ uri: getImageUrl(candidateMedia) }}
+                            style={styles.cardExpandedTopImageFull}
+                            resizeMode="cover"
+                            paused={false}
+                            repeat={true}
+                            controls={false}
+                            muted={true}
+                          />
+                        </View>
+                      ) : (
+                        <Image
+                          source={{ uri: getImageUrl(candidateMedia) }}
+                          style={styles.cardExpandedTopImageFull}
+                        />
+                      )}
+
+                      {isVidMedia && (
+                        <View style={styles.candidateVideoBadgeOverlay}>
+                          <Text style={styles.candidateVideoBadgeText}>🎬 Video Preview (Tap for Fullscreen)</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })()}
 
                 {/* Details below image */}
                 <View style={styles.cardExpandedContentPadding}>
@@ -2918,6 +2992,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               </ScrollView>
             </View>
           </Modal>
+        )}
+
+        {/* Candidate Full Story / Video Status Preview Modal */}
+        {candidateStoryIndex !== null && swipeIndex < MOCK_MATCHES.length && (
+          <PreviewModal
+            visible={candidateStoryIndex !== null}
+            photos={
+              (MOCK_MATCHES[swipeIndex]?.profileImages && MOCK_MATCHES[swipeIndex].profileImages.length > 0)
+                ? MOCK_MATCHES[swipeIndex].profileImages
+                : (MOCK_MATCHES[swipeIndex]?.photos && MOCK_MATCHES[swipeIndex].photos.length > 0)
+                ? MOCK_MATCHES[swipeIndex].photos
+                : [MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image].filter(Boolean)
+            }
+            initialIndex={candidateStoryIndex || 0}
+            userName={MOCK_MATCHES[swipeIndex]?.name || MOCK_MATCHES[swipeIndex]?.firstName || 'Suggested Match'}
+            userAvatar={MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image}
+            onClose={() => setCandidateStoryIndex(null)}
+          />
         )}
 
         {/* Voice Call Overlay Modal */}
@@ -3288,19 +3380,19 @@ const styles = StyleSheet.create({
   },
   navigationBar: {
     flexDirection: 'row',
-    height: 65,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    backgroundColor: '#0F1115',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingBottom: Platform.OS === 'ios' ? 10 : 0,
+    zIndex: 1000,
+    elevation: 20,
   },
   navigationTab: {
     alignItems: 'center',
     justifyContent: 'center',
     flex: 1,
-    height: '100%',
+    paddingTop: 4,
     opacity: 0.6,
   },
   navigationTabActive: {
@@ -3325,12 +3417,14 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 72,
     position: 'relative',
   },
   stackContainer: {
     width: '100%',
-    height: '90%',
+    height: '100%',
     position: 'relative',
   },
   matchCard: {
@@ -3477,11 +3571,12 @@ const styles = StyleSheet.create({
   },
   actionButtonsRow: {
     position: 'absolute',
-    bottom: 20,
+    bottom: 8,
     flexDirection: 'row',
     width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 20,
   },
   actionCircle: {
     width: 60,
@@ -5759,5 +5854,21 @@ const styles = StyleSheet.create({
   },
   ticksSeen: {
     color: '#00E5FF',
+  },
+  candidateVideoBadgeOverlay: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  candidateVideoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

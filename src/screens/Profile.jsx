@@ -14,11 +14,12 @@ import {
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { apiClient } from '../api/apiClient';
-import { getImageUrl } from '../api/config';
+import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
 import { QuestionnaireScreen } from './QuestionnaireScreen';
 import { PreviewModal } from '../components/PreviewModal';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
+import Video from 'react-native-video';
 
 const { width } = Dimensions.get('window');
 
@@ -56,8 +57,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [profile, setProfile] = useState(userProfile || null);
   const [loading, setLoading] = useState(false);
   const [isQuestionnaireModalOpen, setIsQuestionnaireModalOpen] = useState(false);
+  const [questionnaireModalStep, setQuestionnaireModalStep] = useState(6);
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
   const [activePlan, setActivePlan] = useState('free');
+
+  const openGalleryModal = (stepNum = 6) => {
+    setQuestionnaireModalStep(stepNum);
+    setIsQuestionnaireModalOpen(true);
+  };
 
   // Change / Reset Password state
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -97,7 +104,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     }
     setIsQuestionnaireModalOpen(false);
     await fetchProfileFromBackend();
-    Alert.alert('Profile Updated', 'Your questionnaire and profile details have been saved.');
+    Alert.alert(
+      'Diagnostic 5: Profile Refreshed',
+      `Profile save complete!\nSaved profileImages: ${updatedData?.profileImages?.length || 0}\nSaved videos: ${updatedData?.videos?.length || 0}\n\nYour profile media gallery is updated!`
+    );
   };
 
   const handleChangePasswordSubmit = async () => {
@@ -131,6 +141,35 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     }
   };
 
+  const handleLogoutAllDevices = () => {
+    Alert.alert(
+      'Logout From All Devices',
+      'Are you sure you want to log out from all active sessions? You will be signed out on all devices.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout All Devices',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              await apiClient.logoutAllDevices();
+              Alert.alert('Logged Out', 'Successfully logged out from all devices.');
+              if (onLogout) {
+                onLogout();
+              }
+            } catch (err) {
+              console.log('Error logging out all devices:', err);
+              Alert.alert('Logout Error', 'Failed to log out from all devices.');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account Permanently',
@@ -162,16 +201,29 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   };
 
   const handleChangeProfilePhoto = () => {
-    launchImageLibrary({ mediaType: 'mixed', videoQuality: 'medium', quality: 0.8, maxWidth: 1024, maxHeight: 1024 }, async (response) => {
+    launchImageLibrary({ mediaType: 'photo', quality: 0.8, maxWidth: 1024, maxHeight: 1024 }, async (response) => {
       if (response.didCancel) return;
       if (response.errorCode) {
-        Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo or video from gallery');
+        Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo from gallery');
         return;
       }
       if (response.assets && response.assets.length > 0) {
         const asset = response.assets[0];
         const localUri = asset.uri;
         const isVideo = asset.type?.startsWith('video/') || (asset.fileName && (asset.fileName.endsWith('.mp4') || asset.fileName.endsWith('.mov')));
+
+        // Slot #1 (Main Profile Picture) must be a photo ONLY
+        if (isVideo) {
+          Alert.alert('Main Profile Picture', 'Your main profile picture (Slot #1) must be a photo. You can upload video clips in gallery slots 2 through 9.');
+          return;
+        }
+
+        // 100MB video limit
+        const maxSizeBytes = 100 * 1024 * 1024; // 100 MB
+        if (isVideo && asset.fileSize && asset.fileSize > maxSizeBytes) {
+          Alert.alert('Video Size Exceeded', 'The selected video exceeds 100MB. Please choose a smaller video clip (15s or less) for app stability.');
+          return;
+        }
 
         try {
           setLoading(true);
@@ -184,7 +236,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
 
             formData.append('photo', {
-              uri: localUri,
+              uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
               type: mime,
               name: asset.fileName || `media_${Date.now()}.${ext}`,
             });
@@ -206,13 +258,18 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             return;
           }
 
-          const updatedPhotos = [...photosList];
-          updatedPhotos[0] = finalPhotoUrl;
+          const updatedPhotos = [...rawPhotosList];
+          if (updatedPhotos.length > 0) {
+            updatedPhotos[0] = finalPhotoUrl;
+          } else {
+            updatedPhotos.push(finalPhotoUrl);
+          }
 
           const updatedProfile = {
             ...displayData,
             profileImage: finalPhotoUrl,
             profileImages: updatedPhotos,
+            photos: updatedPhotos,
           };
 
           setProfile(updatedProfile);
@@ -288,13 +345,22 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     return getImageUrl(url);
   };
 
-  // Extract all valid, non-null photo URIs from user record
+  // Extract all valid, non-null photo & video URIs from user record
   const validProfileImages = (displayData.profileImages || []).filter(
     (p) => typeof p === 'string' && p.trim().length > 0
   );
   const validPhotos = (displayData.photos || []).filter(
     (p) => typeof p === 'string' && p.trim().length > 0
   );
+  const validVideos = (
+    Array.isArray(displayData.videos)
+      ? displayData.videos
+      : Array.isArray(displayData.profileVideos)
+      ? displayData.profileVideos
+      : Array.isArray(displayData.media)
+      ? displayData.media
+      : []
+  ).filter((p) => typeof p === 'string' && p.trim().length > 0);
 
   let rawPhotosList = [];
   if (
@@ -314,6 +380,12 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   validPhotos.forEach((img) => {
     if (!rawPhotosList.includes(img)) {
       rawPhotosList.push(img);
+    }
+  });
+
+  validVideos.forEach((vid) => {
+    if (!rawPhotosList.includes(vid)) {
+      rawPhotosList.push(vid);
     }
   });
 
@@ -412,17 +484,21 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         <View style={styles.storySection}>
           <Text style={styles.sectionHeaderTitle}>📸 Status & Photo Gallery</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.storyScrollView}>
-            {photosList.map((url, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.storyRing}
-                onPress={() => setActiveStoryIndex(idx)}
-                activeOpacity={0.8}
-              >
-                <Image source={{ uri: url }} style={styles.storyThumb} />
-                <Text style={styles.storyBadge}>Photo #{idx + 1}</Text>
-              </TouchableOpacity>
-            ))}
+            {photosList.map((url, idx) => {
+              const isVid = isVideoUrl(url);
+              const thumb = getVideoThumbnailUrl(url);
+              return (
+                <TouchableOpacity
+                  key={idx}
+                  style={styles.storyRing}
+                  onPress={() => setActiveStoryIndex(idx)}
+                  activeOpacity={0.8}
+                >
+                  <Image source={{ uri: thumb }} style={styles.storyThumb} />
+                  <Text style={styles.storyBadge}>{isVid ? '🎬 Video' : `Photo #${idx + 1}`}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
       )}
@@ -433,7 +509,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           <View style={[styles.avatarRingOuter, { borderColor: completionPct >= 100 ? '#00E676' : '#FE3C72' }]}>
             {hasUserUploadedPhoto ? (
               <TouchableOpacity onPress={() => setActiveStoryIndex(0)} activeOpacity={0.9}>
-                <Image source={{ uri: mainPhotoUrl }} style={styles.avatar} />
+                <Image source={{ uri: getVideoThumbnailUrl(mainPhotoUrl) }} style={styles.avatar} />
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={handleChangeProfilePhoto} activeOpacity={0.8} style={styles.emptyAvatarCircle}>
@@ -490,10 +566,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.editBtn}
-          onPress={() => setIsQuestionnaireModalOpen(true)}
+          onPress={() => openGalleryModal(6)}
           activeOpacity={0.8}
         >
-          <Text style={styles.editBtnText}>✏️ Edit Full Profile</Text>
+          <Text style={styles.editBtnText}>✏️ Edit Full Profile & Gallery</Text>
         </TouchableOpacity>
       </View>
 
@@ -656,7 +732,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
-          onPress={() => setIsQuestionnaireModalOpen(true)}
+          onPress={() => openGalleryModal(1)}
           activeOpacity={0.7}
         >
           <Text style={styles.actionIcon}>🔄</Text>
@@ -682,6 +758,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         </TouchableOpacity>
 
         <TouchableOpacity
+          style={styles.actionRow}
+          onPress={handleLogoutAllDevices}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionIcon}>🌐</Text>
+          <Text style={[styles.actionText, styles.logoutText]}>Logout From All Devices</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.actionRow, styles.deleteAccountRow]}
           onPress={handleDeleteAccount}
           activeOpacity={0.7}
@@ -696,6 +781,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         <QuestionnaireScreen
           initialData={displayData}
           isEditMode={true}
+          initialStep={questionnaireModalStep}
           onCloseModal={() => setIsQuestionnaireModalOpen(false)}
           onFinish={handleFinishEditQuestionnaire}
         />
@@ -766,11 +852,16 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       {/* Fullscreen Status & Photo Preview Modal */}
       <PreviewModal
         visible={activeStoryIndex !== null}
-        photos={photosList}
+        photos={rawPhotosList}
         initialIndex={activeStoryIndex || 0}
         userName={displayData.firstName || displayData.name || 'My Status'}
         userAvatar={mainPhotoUrl}
         onClose={() => setActiveStoryIndex(null)}
+        onHideMedia={(hiddenUrl, index) => {
+          if (typeof index === 'number' && index >= 0) {
+            handleDeletePhoto(index);
+          }
+        }}
       />
     </ScrollView>
   );

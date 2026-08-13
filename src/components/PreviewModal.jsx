@@ -10,8 +10,10 @@ import {
   StatusBar,
   TouchableWithoutFeedback,
   useWindowDimensions,
+  Alert,
 } from 'react-native';
-import { getImageUrl } from '../api/config';
+import Video from 'react-native-video';
+import { getImageUrl, getVideoThumbnailUrl, isVideoUrl as checkIsVideoUrl } from '../api/config';
 
 export const PreviewModal = ({
   visible,
@@ -20,38 +22,73 @@ export const PreviewModal = ({
   userName = 'My Status',
   userAvatar,
   onClose,
+  onHideMedia,
 }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [mediaError, setMediaError] = useState(false);
 
-  const STORY_DURATION = 4000; // 4 seconds per story status photo
+  const [detectedDuration, setDetectedDuration] = useState(null);
+
+  // Three Dots options menu state & hidden media set
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [hiddenIndices, setHiddenIndices] = useState(new Set());
+
+  const IMAGE_DURATION = 4000; // 4 seconds for images
+  const DEFAULT_VIDEO_DURATION = 15000; // fallback max 15 seconds for video status items
 
   useEffect(() => {
     setCurrentIndex(initialIndex);
     setProgress(0);
+    setMediaError(false);
+    setIsPaused(false);
+    setDetectedDuration(null);
+    setMenuVisible(false);
+    setHiddenIndices(new Set());
   }, [initialIndex, visible]);
 
   useEffect(() => {
-    if (!visible || photos.length === 0 || isPaused) return;
+    setMediaError(false);
+    setProgress(0);
+    setIsPaused(false);
+    setDetectedDuration(null);
+  }, [currentIndex]);
 
-    const intervalTime = 40; // update progress every 40ms
-    const stepIncrement = intervalTime / STORY_DURATION;
+  const rawPhoto = photos[currentIndex] || photos[0];
+  const isCurrentVideo = checkIsVideoUrl(rawPhoto);
+  const activeDuration = isCurrentVideo
+    ? Math.min(15000, Math.max(2000, detectedDuration || DEFAULT_VIDEO_DURATION))
+    : IMAGE_DURATION;
+
+  useEffect(() => {
+    // Only run setInterval timer for static images (videos use native onProgress/onEnd)
+    if (!visible || photos.length === 0 || isPaused || isCurrentVideo) return;
+
+    const intervalTime = 40;
+    const stepIncrement = intervalTime / IMAGE_DURATION;
 
     const timer = setInterval(() => {
       setProgress((prev) => {
-        if (prev >= 1) {
+        const nextProgress = prev + stepIncrement;
+        if (nextProgress >= 1) {
           clearInterval(timer);
-          handleNextStory();
-          return 0;
+          return 1;
         }
-        return prev + stepIncrement;
+        return nextProgress;
       });
     }, intervalTime);
 
     return () => clearInterval(timer);
-  }, [visible, currentIndex, isPaused, photos.length]);
+  }, [visible, currentIndex, isPaused, photos.length, isCurrentVideo]);
+
+  // Safely trigger story advance for images when progress reaches 100%
+  useEffect(() => {
+    if (!isCurrentVideo && progress >= 1) {
+      handleNextStory();
+    }
+  }, [progress, isCurrentVideo]);
 
   const handleNextStory = () => {
     if (currentIndex < photos.length - 1) {
@@ -71,11 +108,56 @@ export const PreviewModal = ({
     }
   };
 
-  const handleScreenPress = (evt) => {
-    const xLocation = evt.nativeEvent.locationX;
-    if (xLocation < windowWidth * 0.35) {
-      handlePrevStory();
+  const handleHideCurrentMedia = () => {
+    setMenuVisible(false);
+    setIsPaused(false);
+
+    const targetMedia = rawPhoto;
+    const targetIdx = currentIndex;
+
+    const nextHidden = new Set(hiddenIndices);
+    nextHidden.add(targetIdx);
+    setHiddenIndices(nextHidden);
+
+    if (onHideMedia) {
+      onHideMedia(targetMedia, targetIdx);
+    }
+
+    const remainingIndices = photos
+      .map((_, i) => i)
+      .filter((i) => !nextHidden.has(i));
+
+    if (remainingIndices.length === 0) {
+      onClose();
     } else {
+      const nextTarget = remainingIndices.find((i) => i >= targetIdx) ?? remainingIndices[0];
+      setCurrentIndex(nextTarget);
+      setProgress(0);
+    }
+  };
+
+  const pressStartTimeRef = React.useRef(0);
+
+  const handlePressIn = () => {
+    pressStartTimeRef.current = Date.now();
+    setIsPaused(true);
+  };
+
+  const handlePressOut = () => {
+    setIsPaused(false);
+  };
+
+  const handleScreenPress = (evt) => {
+    const pressDuration = Date.now() - pressStartTimeRef.current;
+    // If user held down on screen (> 250ms), releasing is just ending the hold -- DO NOT skip or advance story!
+    if (pressDuration > 250) {
+      return;
+    }
+
+    const xLocation = evt.nativeEvent.locationX;
+    if (xLocation < windowWidth * 0.3) {
+      handlePrevStory();
+    } else if (xLocation > windowWidth * 0.7) {
       handleNextStory();
     }
   };
@@ -85,25 +167,10 @@ export const PreviewModal = ({
     return getImageUrl(url);
   };
 
-  const isVideoUrl = (url) => {
-    if (!url || typeof url !== 'string') return false;
-    const lower = url.toLowerCase();
-    return (
-      lower.endsWith('.mp4') ||
-      lower.endsWith('.mov') ||
-      lower.endsWith('.webm') ||
-      lower.endsWith('.3gp') ||
-      lower.includes('/video/upload/') ||
-      lower.includes('video')
-    );
-  };
-
   if (!visible || photos.length === 0) return null;
 
-  const rawPhoto = photos[currentIndex] || photos[0];
-  const currentPhoto = formatImageUri(rawPhoto);
-  const avatarUri = formatImageUri(userAvatar || rawPhoto);
-  const isCurrentVideo = isVideoUrl(rawPhoto || currentPhoto);
+  const currentMediaUri = formatImageUri(rawPhoto);
+  const avatarUri = getVideoThumbnailUrl(userAvatar || rawPhoto);
 
   return (
     <Modal visible={visible} animationType="fade" transparent statusBarTranslucent>
@@ -113,28 +180,45 @@ export const PreviewModal = ({
         {/* Status Image / Video Touch Controller */}
         <TouchableWithoutFeedback
           onPress={handleScreenPress}
-          onPressIn={() => setIsPaused(true)}
-          onPressOut={() => setIsPaused(false)}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
         >
           <View style={styles.imageWrapper}>
-            <Image
-              source={{ uri: currentPhoto }}
-              style={[styles.fullImage, { width: windowWidth, height: windowHeight }]}
-              resizeMode="contain"
-            />
-            {isCurrentVideo && (
-              <View style={styles.videoOverlayContainer}>
-                <View style={styles.playIconCircle}>
-                  <Text style={styles.playIconText}>▶</Text>
-                </View>
-                <Text style={styles.videoBadgeText}>Preview Video</Text>
+            {isCurrentVideo ? (
+              <View style={[styles.fullImage, { width: windowWidth, height: windowHeight }]} pointerEvents="none">
+                <Video
+                  source={{ uri: currentMediaUri }}
+                  style={{ width: windowWidth, height: windowHeight }}
+                  resizeMode="contain"
+                  paused={isPaused}
+                  repeat={false}
+                  controls={false}
+                  onProgress={(data) => {
+                    if (!isPaused && data && data.seekableDuration && data.seekableDuration > 0) {
+                      const ratio = data.currentTime / data.seekableDuration;
+                      setProgress(Math.min(1, Math.max(0, ratio)));
+                    }
+                  }}
+                  onEnd={handleNextStory}
+                  onError={(err) => {
+                    console.log('Error playing in-app video:', err);
+                    setMediaError(true);
+                  }}
+                />
               </View>
+            ) : (
+              <Image
+                source={{ uri: currentMediaUri }}
+                style={[styles.fullImage, { width: windowWidth, height: windowHeight }]}
+                resizeMode="contain"
+                onError={() => setMediaError(true)}
+              />
             )}
           </View>
         </TouchableWithoutFeedback>
 
-        {/* Top Header Overlay Bar */}
-        <SafeAreaView style={styles.topHeaderContainer}>
+        {/* Top Header Overlay Bar - Fades out on Long Press like WhatsApp Status */}
+        <SafeAreaView style={[styles.topHeaderContainer, { opacity: isPaused ? 0 : 1 }]} pointerEvents="box-none">
           {/* Segmented Progress Bar */}
           <View style={styles.progressRow}>
             {photos.map((_, idx) => {
@@ -153,7 +237,7 @@ export const PreviewModal = ({
           </View>
 
           {/* User Info Bar */}
-          <View style={styles.userInfoRow}>
+          <View style={styles.userInfoRow} pointerEvents="box-none">
             <View style={styles.userProfileGroup}>
               <View style={styles.statusAvatarRing}>
                 <Image source={{ uri: avatarUri }} style={styles.userAvatar} />
@@ -161,23 +245,89 @@ export const PreviewModal = ({
               <View style={styles.userTextCol}>
                 <Text style={styles.userNameText}>{userName}</Text>
                 <Text style={styles.statusTimeText}>
-                  Photo {currentIndex + 1} of {photos.length} • Just now
+                  {isCurrentVideo ? '📹 Video' : '📸 Photo'} {currentIndex + 1} of {photos.length} • Just now
                 </Text>
               </View>
             </View>
 
-            <TouchableOpacity style={styles.closeButton} onPress={onClose} activeOpacity={0.7}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
+            <View style={styles.headerRightControls}>
+              <TouchableOpacity
+                style={styles.threeDotsBtn}
+                onPress={() => {
+                  setIsPaused(true);
+                  setMenuVisible(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.threeDotsText}>⋮</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.closeButton} onPress={onClose} activeOpacity={0.7}>
+                <Text style={styles.closeButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </SafeAreaView>
 
-        {/* Bottom Caption Banner */}
-        <View style={styles.bottomCaptionContainer}>
+        {/* Bottom Caption Banner - Fades out on Long Press like WhatsApp Status */}
+        <View style={[styles.bottomCaptionContainer, { opacity: isPaused ? 0 : 1 }]} pointerEvents="none">
           <Text style={styles.captionText}>
-            {currentIndex === 0 ? '⭐ Main Profile Picture' : `📸 Profile Photo #${currentIndex + 1}`}
+            {currentIndex === 0 ? '⭐ Main Profile Picture' : `${isCurrentVideo ? '📹 Video' : '📸 Profile Photo'} #${currentIndex + 1}`}
           </Text>
         </View>
+
+        {/* Three Dots Options Menu Modal */}
+        <Modal
+          visible={menuVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => {
+            setMenuVisible(false);
+            setIsPaused(false);
+          }}
+        >
+          <TouchableWithoutFeedback
+            onPress={() => {
+              setMenuVisible(false);
+              setIsPaused(false);
+            }}
+          >
+            <View style={styles.menuOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={styles.menuCard}>
+                  <View style={styles.menuHeaderRow}>
+                    <Text style={styles.menuHeaderTitle}>Media Options</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.menuOptionBtn}
+                    onPress={handleHideCurrentMedia}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.menuOptionIconBox}>
+                      <Text style={styles.menuOptionIcon}>🙈</Text>
+                    </View>
+                    <View style={styles.menuOptionTextCol}>
+                      <Text style={styles.menuOptionText}>Hide {isCurrentVideo ? 'Video' : 'Image'}</Text>
+                      <Text style={styles.menuOptionSubText}>Remove this {isCurrentVideo ? 'video clip' : 'image'} from preview</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.menuCancelBtn}
+                    onPress={() => {
+                      setMenuVisible(false);
+                      setIsPaused(false);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.menuCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
       </View>
     </Modal>
   );
@@ -323,6 +473,196 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  videoFallbackBox: {
+    width: '80%',
+    height: 300,
+    backgroundColor: '#1E1E2C',
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#3897F0',
+  },
+  whatsappCenterPlayOverlay: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+  },
+  whatsappPlayRing: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#FE3C72',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#FE3C72',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.6,
+    shadowRadius: 12,
+    elevation: 8,
+    marginBottom: 12,
+  },
+  whatsappPlayIcon: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    marginLeft: 6,
+  },
+  whatsappBadgePill: {
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#FE3C72',
+  },
+  whatsappBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
+  },
+  whatsappTapHint: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 11,
+    marginTop: 6,
+  },
+  whatsappVideoCard: {
+    width: '85%',
+    paddingVertical: 36,
+    paddingHorizontal: 24,
+    backgroundColor: '#181824',
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FE3C72',
+  },
+  whatsappVideoTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 12,
+  },
+  whatsappVideoSub: {
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 13,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  whatsappPlayBtn: {
+    marginTop: 20,
+    backgroundColor: '#FE3C72',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 25,
+  },
+  whatsappPlayBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  headerRightControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  threeDotsBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  threeDotsText: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: 'bold',
+    lineHeight: 22,
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingBottom: 40,
+    paddingHorizontal: 16,
+  },
+  menuCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#1C1C26',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 15,
+  },
+  menuHeaderRow: {
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+    paddingBottom: 10,
+  },
+  menuHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  menuOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 77, 77, 0.12)',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.3)',
+    marginBottom: 12,
+  },
+  menuOptionIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 77, 77, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  menuOptionIcon: {
+    fontSize: 20,
+  },
+  menuOptionTextCol: {
+    flex: 1,
+  },
+  menuOptionText: {
+    color: '#FF4D4D',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  menuOptionSubText: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  menuCancelBtn: {
+    paddingVertical: 14,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuCancelText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
 

@@ -17,7 +17,7 @@ import {
 import Geolocation from '@react-native-community/geolocation';
 import { Country, State, City } from 'country-state-city';
 import { apiClient } from '../api/apiClient';
-import { openDeviceLocationSettings } from '../services/locationService';
+import { openDeviceLocationSettings, getCurrentDeviceLocation } from '../services/locationService';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
@@ -83,80 +83,18 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
   const handleFetchCurrentLocation = async () => {
     try {
       setFetchingGPS(true);
-      if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Location Permission Required',
-            message: 'Please allow location permission to fetch your current live location.',
-            buttonPositive: 'Allow',
-            buttonNegative: 'Cancel',
-          }
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert(
-            'Permission Denied',
-            'Location permission is required to fetch current location.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Open Settings', onPress: () => Linking.openSettings() },
-            ]
-          );
-          setFetchingGPS(false);
-          return;
-        }
+      const coords = await getCurrentDeviceLocation(true);
+      if (coords) {
+        setTempLocation({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        });
+        Alert.alert('Success', 'Current live location fetched as Temporary Address!');
       }
-
-      // Try High Accuracy GPS first (15s timeout)
-      Geolocation.getCurrentPosition(
-        (pos) => {
-          if (pos && pos.coords && typeof pos.coords.latitude === 'number' && typeof pos.coords.longitude === 'number') {
-            setTempLocation({
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-            });
-            Alert.alert('Success', 'Current live location fetched as Temporary Address!');
-          } else {
-            Alert.alert('Error', 'Unable to fetch GPS coordinates.');
-          }
-          setFetchingGPS(false);
-        },
-        (err) => {
-          console.log('GPS High Accuracy attempt failed, trying Network accuracy fallback:', err);
-          // Fallback to Network Accuracy (20s timeout, 30s maxAge)
-          Geolocation.getCurrentPosition(
-            (fallbackPos) => {
-              if (fallbackPos && fallbackPos.coords && typeof fallbackPos.coords.latitude === 'number' && typeof fallbackPos.coords.longitude === 'number') {
-                setTempLocation({
-                  latitude: fallbackPos.coords.latitude,
-                  longitude: fallbackPos.coords.longitude,
-                });
-                Alert.alert('Success', 'Current live location fetched as Temporary Address!');
-              } else {
-                Alert.alert('Error', 'Unable to fetch GPS coordinates.');
-              }
-              setFetchingGPS(false);
-            },
-            (fallbackErr) => {
-              console.log('GPS Fallback Error:', fallbackErr);
-              Alert.alert(
-                'Location Services Required',
-                'Could not acquire location. Please make sure Location (GPS) is turned ON in your phone settings.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Turn On Location', onPress: () => openDeviceLocationSettings() },
-                ]
-              );
-              setFetchingGPS(false);
-            },
-            { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
-          );
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
-      );
     } catch (err) {
       console.log('Fetch GPS location exception:', err);
       Alert.alert('Error', 'Unable to fetch current location.');
+    } finally {
       setFetchingGPS(false);
     }
   };

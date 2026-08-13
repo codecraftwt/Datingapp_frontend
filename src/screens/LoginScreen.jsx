@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Modal,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -22,6 +23,78 @@ export const LoginScreen = ({ onNavigate }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [alreadyLoggedInError, setAlreadyLoggedInError] = useState(false);
+
+  const processSuccessfulLogin = async (res) => {
+    const rawUser = res.user || res.data?.user || res;
+    const token = res.token || res.data?.token;
+
+    if (rawUser && token) {
+      const userId = rawUser.id || rawUser._id;
+      const user = {
+        ...rawUser,
+        id: userId,
+        _id: userId,
+      };
+
+      const hasProfileOnUser = !!(
+        user.firstName ||
+        user.age ||
+        user.profileImage ||
+        user.bio ||
+        (user.interests && user.interests.length > 0)
+      );
+
+      const hasCompletedBefore = await AsyncStorage.getItem(`hasCompletedQuestionnaire_${userId}`);
+      const isReturningUser = hasCompletedBefore === 'true' || hasProfileOnUser;
+
+      await AsyncStorage.setItem('user', JSON.stringify(user));
+      await AsyncStorage.setItem('token', token);
+
+      if (isReturningUser) {
+        await AsyncStorage.setItem(`hasCompletedQuestionnaire_${userId}`, 'true');
+        await AsyncStorage.setItem(`profileData_${userId}`, JSON.stringify(user));
+      }
+
+      dispatch(setCredentials({ user, token }));
+
+      if (onNavigate) {
+        if (isReturningUser) {
+          await onNavigate('HOME', user);
+        } else {
+          await onNavigate('QUESTIONNAIRE', user);
+        }
+      }
+    }
+  };
+
+  const handleLogoutAllDevicesCall = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Required Fields', 'Please enter your email and password to log out from all devices.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await apiClient.logoutAllDevices({
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
+      setAlreadyLoggedInError(false);
+      Alert.alert(
+        'Sessions Terminated',
+        'Successfully logged out from all devices! Please click LOG IN to sign in to your session.',
+        [{ text: 'OK' }]
+      );
+    } catch (err) {
+      console.log('Error forcing logout from all devices:', err);
+      const msg = err.data?.message || err.message || 'Failed to logout from all devices.';
+      Alert.alert('Logout Failed', msg);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -31,57 +104,43 @@ export const LoginScreen = ({ onNavigate }) => {
 
     try {
       setLoading(true);
+      setAlreadyLoggedInError(false);
       const res = await apiClient.login({
         email: email.trim().toLowerCase(),
         password,
       });
 
+      if (res?.status === 'DEVICE_LIMIT_REACHED') {
+        setAlreadyLoggedInError(true);
+        return;
+      }
+
       const rawUser = res.user || res.data?.user || res;
       const token = res.token || res.data?.token;
 
       if (rawUser && token) {
-        // Normalize user ID field for compatibility across MongoDB and frontend
-        const userId = rawUser.id || rawUser._id;
-        const user = {
-          ...rawUser,
-          id: userId,
-          _id: userId,
-        };
-
-        // Check if user has already completed questionnaire or has profile data
-        const hasProfileOnUser = !!(
-          user.firstName ||
-          user.age ||
-          user.profileImage ||
-          user.bio ||
-          (user.interests && user.interests.length > 0)
-        );
-
-        const hasCompletedBefore = await AsyncStorage.getItem(`hasCompletedQuestionnaire_${userId}`);
-        const isReturningUser = hasCompletedBefore === 'true' || hasProfileOnUser;
-
-        await AsyncStorage.setItem('user', JSON.stringify(user));
-        await AsyncStorage.setItem('token', token);
-
-        if (isReturningUser) {
-          await AsyncStorage.setItem(`hasCompletedQuestionnaire_${userId}`, 'true');
-          await AsyncStorage.setItem(`profileData_${userId}`, JSON.stringify(user));
-        }
-
-        dispatch(setCredentials({ user, token }));
-
-        if (onNavigate) {
-          if (isReturningUser) {
-            await onNavigate('HOME', user);
-          } else {
-            await onNavigate('QUESTIONNAIRE', user);
-          }
-        }
+        await processSuccessfulLogin(res);
       } else {
         Alert.alert('Login Failed', res.message || 'Invalid email or password.');
       }
     } catch (err) {
       console.log('Login error:', err);
+      const isDeviceLimit =
+        err?.status === 409 ||
+        err?.data?.status === 'DEVICE_LIMIT_REACHED' ||
+        err?.message?.includes('active on another device') ||
+        err?.message?.includes('already logged in') ||
+        err?.data?.message?.includes('already logged in');
+
+      if (isDeviceLimit) {
+        setAlreadyLoggedInError(true);
+        Alert.alert(
+          'Device Limit Reached',
+          'User is already logged in, please Logout from all devices.'
+        );
+        return;
+      }
+
       const isNetworkFail = err?.message?.includes('Network request failed') || err?.name === 'TypeError';
       const msg = isNetworkFail
         ? 'Cannot reach backend server (Network Request Failed). Ensure backend is running and ADB reverse is enabled.'
@@ -114,13 +173,32 @@ export const LoginScreen = ({ onNavigate }) => {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Welcome Back</Text>
 
+            {/* Inline warning banner when user is already logged in elsewhere */}
+            {alreadyLoggedInError && (
+              <View style={styles.alreadyLoggedInContainer}>
+                <Text style={styles.alreadyLoggedInText}>
+                  User is already logged in please Logout from all devices.
+                </Text>
+                <TouchableOpacity
+                  style={styles.logoutAllInlineBtn}
+                  onPress={handleLogoutAllDevicesCall}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.logoutAllInlineBtnText}>Logout All devices</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             <CustomInput
               label="Email Address"
               iconType="email"
               placeholder="Enter your email"
               keyboardType="email-address"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(text) => {
+                setEmail(text);
+                if (alreadyLoggedInError) setAlreadyLoggedInError(false);
+              }}
               autoCapitalize="none"
             />
 
@@ -130,7 +208,10 @@ export const LoginScreen = ({ onNavigate }) => {
               placeholder="Enter your password"
               secureTextEntry
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(text) => {
+                setPassword(text);
+                if (alreadyLoggedInError) setAlreadyLoggedInError(false);
+              }}
             />
 
             <TouchableOpacity
@@ -220,6 +301,36 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginBottom: 20,
     textAlign: 'center',
+  },
+  alreadyLoggedInContainer: {
+    backgroundColor: 'rgba(254, 60, 114, 0.2)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#FE3C72',
+    alignItems: 'center',
+  },
+  alreadyLoggedInText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  logoutAllInlineBtn: {
+    backgroundColor: '#C62828',
+    paddingVertical: 9,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    alignItems: 'center',
+  },
+  logoutAllInlineBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   forgotButton: {
     alignSelf: 'flex-end',

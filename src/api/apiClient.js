@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BASE_URL, CANDIDATE_URLS, getBaseUrl, setBaseUrl } from './config';
+import { BASE_URL, CANDIDATE_URLS, LIVE_URL, getBaseUrl, setBaseUrl } from './config';
 
 let isResolving = false;
 let activeResolvedUrl = null;
@@ -9,26 +9,39 @@ const resolveWorkingBaseUrl = async () => {
   if (isResolving) return getBaseUrl();
   isResolving = true;
 
+  let fallbackUrl = null;
+
   for (const candidate of CANDIDATE_URLS) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
       const res = await fetch(`${candidate}/`, { method: 'GET', signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok || res.status < 500) {
-        console.log(`[apiClient] Connected to backend server at: ${candidate}`);
-        activeResolvedUrl = candidate;
-        setBaseUrl(candidate);
-        isResolving = false;
-        return candidate;
+        const bodyText = await res.text().catch(() => '');
+        let healthData = {};
+        try { healthData = JSON.parse(bodyText); } catch (e) {}
+
+        if (healthData.database === 'Connected' || !healthData.database) {
+          console.log(`[apiClient] Connected to healthy backend server at: ${candidate}`);
+          activeResolvedUrl = candidate;
+          setBaseUrl(candidate);
+          isResolving = false;
+          return candidate;
+        } else {
+          if (!fallbackUrl) fallbackUrl = candidate;
+        }
       }
     } catch (err) {
       // ignore and try next candidate URL
     }
   }
 
+  const finalUrl = fallbackUrl || getBaseUrl();
+  activeResolvedUrl = finalUrl;
+  setBaseUrl(finalUrl);
   isResolving = false;
-  return getBaseUrl();
+  return finalUrl;
 };
 
 let authTokenInMemory = null;
@@ -100,7 +113,10 @@ const request = async (url, options = {}, isRetry = false) => {
       if (response.status === 413) {
         throw new Error('File Size Limit Exceeded: The uploaded video file is too large (max 100MB allowed).');
       }
-      throw new Error(`Server Error (${response.status}): Could not complete upload request.`);
+      if (response.status === 404) {
+        throw new Error(`Endpoint Not Found (404): ${url}`);
+      }
+      throw new Error(`Server Error (${response.status}): Request failed for ${url}.`);
     }
 
     if (!response.ok) {
@@ -153,6 +169,17 @@ export const apiClient = {
     try {
       return await request('/api/auth/logout', {
         method: 'POST',
+      });
+    } finally {
+      setAuthToken(null);
+      await AsyncStorage.removeItem('token');
+    }
+  },
+  logoutAllDevices: async (credentials = {}) => {
+    try {
+      return await request('/api/auth/logout-all-devices', {
+        method: 'POST',
+        body: JSON.stringify(credentials),
       });
     } finally {
       setAuthToken(null);
@@ -220,6 +247,22 @@ export const apiClient = {
     return await request('/api/profile/questionnaire', {
       method: 'GET',
     });
+  },
+  getQuestionnaireOptions: async () => {
+    try {
+      return await request('/api/questionnaire/options', {
+        method: 'GET',
+      });
+    } catch (e) {
+      try {
+        return await request('/api/profile/questionnaire-options', {
+          method: 'GET',
+        });
+      } catch (err2) {
+        console.warn('Fallback to local questionnaire options dataset:', err2);
+        return { success: true, options: null };
+      }
+    }
   },
   getOnlineUsers: async () => {
     return await request('/api/profile/online-users', {

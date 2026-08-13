@@ -10,16 +10,19 @@ import {
   Platform,
   Image,
   Modal,
+  ActivityIndicator,
   useWindowDimensions,
   PermissionsAndroid,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { apiClient } from '../api/apiClient';
+import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
 import { syncUserLocationService } from '../services/locationService';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
 import { PreviewModal } from '../components/PreviewModal';
+import Video from 'react-native-video';
 
 const INTEREST_OPTIONS = [
   '🎵 Music',
@@ -86,14 +89,20 @@ const WEIGHT_OPTIONS = [
   "85 kg (187 lbs)",
 ];
 
-export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialData, isEditMode, onCloseModal }) => {
+export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialData, isEditMode, initialStep, onCloseModal }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const cardWidth = Math.min(windowWidth - 32, 600);
   // Calculate photo grid slot size dynamically based on card width
   const slotWidth = Math.max(70, Math.floor((cardWidth - 60) / 3));
   const slotHeight = Math.floor(slotWidth * 1.25);
 
-  const [step, setStep] = useState(isEditMode ? 4 : 1);
+  const [step, setStep] = useState(initialStep || (isEditMode ? 4 : 1));
+
+  useEffect(() => {
+    if (initialStep) {
+      setStep(initialStep);
+    }
+  }, [initialStep]);
 
   // Form Fields
   const [firstName, setFirstName] = useState('');
@@ -123,10 +132,45 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const [selectedInterests, setSelectedInterests] = useState(['🎵 Music', '✈️ Travel', '☕ Coffee']);
   const [selectedLanguages, setSelectedLanguages] = useState(['English', 'Hindi']);
 
-  // 9 Photos Slots Array
   const [photos, setPhotos] = useState(Array(9).fill(null));
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
+  const [uploadingSlotIndex, setUploadingSlotIndex] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // Dynamic Options state fetched from Backend API
+  const [optionsData, setOptionsData] = useState(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchOptions = async () => {
+      try {
+        const res = await apiClient.getQuestionnaireOptions();
+        if (isMounted && res && res.options) {
+          setOptionsData(res.options);
+        }
+      } catch (err) {
+        console.log('Error loading dynamic questionnaire options from backend API:', err);
+      }
+    };
+    fetchOptions();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const interestOptionsList = optionsData?.interests || INTEREST_OPTIONS;
+  const orientationsList = optionsData?.orientations || ORIENTATIONS;
+  const lookingForList = optionsData?.lookingFor || LOOKING_FOR;
+  const drinkHabitsList = optionsData?.drinkHabits || DRINK_HABITS;
+  const smokeHabitsList = optionsData?.smokeHabits || SMOKE_HABITS;
+  const exerciseHabitsList = optionsData?.exerciseHabits || EXERCISE_HABITS;
+  const petsOptionsList = optionsData?.petsOptions || PETS_OPTIONS;
+  const educationLevelsList = optionsData?.educationLevels || EDUCATION_LEVELS;
+  const zodiacSignsList = optionsData?.zodiacSigns || ZODIAC_SIGNS;
+  const languageOptionsList = optionsData?.languageOptions || LANGUAGE_OPTIONS;
+  const jobExamplesList = optionsData?.jobExamples || JOB_EXAMPLES;
+  const heightOptionsList = optionsData?.heightOptions || HEIGHT_OPTIONS;
+  const weightOptionsList = optionsData?.weightOptions || WEIGHT_OPTIONS;
 
   // Pre-fill questionnaire data if provided
   useEffect(() => {
@@ -224,9 +268,16 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   };
 
   const handlePickImageForSlot = (slotIndex) => {
-    launchImageLibrary({ mediaType: 'mixed', videoQuality: 'medium', quality: 0.8, maxWidth: 1024, maxHeight: 1024 }, async (response) => {
+    const isMainProfileSlot = slotIndex === 0;
+    const pickerOptions = isMainProfileSlot
+      ? { mediaType: 'photo', quality: 0.7, maxWidth: 1080, maxHeight: 1080 }
+      : { mediaType: 'mixed', videoQuality: 'low', quality: 0.7, durationLimit: 15, maxWidth: 1080, maxHeight: 1080 };
+
+    launchImageLibrary(pickerOptions, async (response) => {
+      console.log('[QuestionnaireScreen] launchImageLibrary response:', JSON.stringify(response));
       if (response.didCancel) return;
       if (response.errorCode) {
+        console.error('[QuestionnaireScreen] Media Picker error:', response.errorMessage);
         Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo or video');
         return;
       }
@@ -235,7 +286,40 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         const localUri = asset.uri;
         const isVideo = asset.type?.startsWith('video/') || isVideoUrl(asset.fileName || localUri);
 
-        // Optimistically set local URI for immediate UI preview
+        // Slot #1 (Main Profile Picture) MUST be a photo ONLY
+        if (isMainProfileSlot && isVideo) {
+          Alert.alert(
+            'Main Profile Picture (Slot #1)',
+            'Your main profile picture (Slot #1) must be a photo. You can upload video clips in slots #2 through #9.'
+          );
+          return;
+        }
+
+        // Check 15 seconds video duration limit for slots 2-9
+        if (isVideo && asset.duration && asset.duration > 15) {
+          Alert.alert('Video Duration Limit', 'Video clips must be 15 seconds or less. Please select a shorter video.');
+          return;
+        }
+
+        console.log(`[QuestionnaireScreen] Selected asset for Slot #${slotIndex + 1}:`, {
+          uri: localUri,
+          type: asset.type,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          isVideo,
+        });
+
+        // 100MB video limit
+        const maxVideoSizeBytes = 100 * 1024 * 1024; // 100 MB
+        if (isVideo && asset.fileSize && asset.fileSize > maxVideoSizeBytes) {
+          Alert.alert(
+            'Video Size Exceeded',
+            `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video clip under 100MB (or 15 seconds or less) for app stability.`
+          );
+          return;
+        }
+
+        // Optimistically set local URI for immediate UI preview so preview never disappears
         setPhotos((prevPhotos) => {
           const updated = [...prevPhotos];
           updated[slotIndex] = localUri;
@@ -244,19 +328,23 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
         // Upload file (Photo or Video) to Backend & Cloudinary
         try {
-          setLoading(true);
+          setUploadingSlotIndex(slotIndex);
           const formData = new FormData();
           const ext = isVideo ? 'mp4' : 'jpg';
           const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
 
           formData.append('photo', {
-            uri: localUri,
+            uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
             type: mime,
-            name: asset.fileName || `media_${Date.now()}.${ext}`,
+            name: asset.fileName || `media_${Date.now()}_slot${slotIndex + 1}.${ext}`,
           });
 
+          console.log('[QuestionnaireScreen] Uploading slot media to /api/profile/upload...', { mime, ext });
           const uploadRes = await apiClient.uploadImage(formData);
-          const cloudinaryUrl = uploadRes.url || uploadRes.data?.url || uploadRes.secure_url;
+          console.log('[QuestionnaireScreen] Cloudinary uploadRes:', uploadRes);
+
+          const cloudinaryUrl = uploadRes?.url || uploadRes?.data?.url || uploadRes?.secure_url;
+          console.log('[QuestionnaireScreen] Cloudinary URL for slot:', cloudinaryUrl);
 
           if (cloudinaryUrl) {
             setPhotos((prevPhotos) => {
@@ -266,22 +354,14 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
             });
           }
         } catch (uploadErr) {
-          console.log('Backend Cloudinary upload error:', uploadErr);
+          console.error('[QuestionnaireScreen] Backend Cloudinary upload error:', uploadErr);
           const errorMsg =
             uploadErr?.data?.message ||
             uploadErr?.message ||
-            'Failed to upload file to server. Please try a smaller video or photo.';
-
+            'Video upload was delayed or encountered a server issue.';
           Alert.alert('Upload Error', errorMsg);
-
-          // Revert optimistic slot preview on error
-          setPhotos((prevPhotos) => {
-            const updated = [...prevPhotos];
-            updated[slotIndex] = null;
-            return updated;
-          });
         } finally {
-          setLoading(false);
+          setUploadingSlotIndex(null);
         }
       }
     });
@@ -313,7 +393,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       setStep(4);
     } else if (step === 4) {
       if (selectedInterests.length === 0) {
-        Alert.alert('Selection Required', 'Please select at least 1 interest.');
+        Alert.alert('Interests Required', 'Please select at least 1 interest to help us find matches.');
         return;
       }
       setStep(5);
@@ -323,35 +403,52 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   };
 
   const handleSubmit = async () => {
+    console.log('[QuestionnaireScreen] handleSubmit initiated. Current photos array:', photos);
     setLoading(true);
 
-    // Guarantee all local file:// URIs are uploaded to Cloudinary before saving questionnaire
-    const uploadedPhotosList = await Promise.all(
-      photos.map(async (photoUri) => {
-        if (!photoUri) return null;
-        if (typeof photoUri === 'string' && (photoUri.startsWith('http://') || photoUri.startsWith('https://'))) {
-          return photoUri;
-        }
-        if (typeof photoUri === 'string' && photoUri.startsWith('file://')) {
-          try {
-            const formData = new FormData();
-            formData.append('photo', {
-              uri: Platform.OS === 'android' ? photoUri : photoUri.replace('file://', ''),
-              type: 'image/jpeg',
-              name: `photo_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`,
-            });
-            const uploadRes = await apiClient.uploadImage(formData);
-            const cloudUrl = uploadRes?.url || uploadRes?.secure_url || uploadRes?.data?.url;
-            if (cloudUrl) return cloudUrl;
-          } catch (e) {
-            console.log('Error uploading local photo to Cloudinary in handleSubmit:', e);
+    // Guarantee all local file:// and content:// URIs are uploaded to Cloudinary sequentially before saving questionnaire
+    const uploadedPhotosList = [];
+    for (let index = 0; index < photos.length; index++) {
+      const photoUri = photos[index];
+      if (!photoUri) {
+        uploadedPhotosList.push(null);
+        continue;
+      }
+      if (typeof photoUri === 'string' && (photoUri.startsWith('http://') || photoUri.startsWith('https://'))) {
+        uploadedPhotosList.push(photoUri);
+        continue;
+      }
+      if (typeof photoUri === 'string' && (photoUri.startsWith('file://') || photoUri.startsWith('content://'))) {
+        try {
+          const isVid = isVideoUrl(photoUri);
+          const ext = isVid ? 'mp4' : 'jpg';
+          const mime = isVid ? 'video/mp4' : 'image/jpeg';
+          const formData = new FormData();
+          formData.append('photo', {
+            uri: Platform.OS === 'android' ? photoUri : photoUri.replace('file://', ''),
+            type: mime,
+            name: `media_${Date.now()}_slot${index}.${ext}`,
+          });
+          console.log(`[QuestionnaireScreen] Uploading local media URI for slot #${index + 1}:`, photoUri);
+          const uploadRes = await apiClient.uploadImage(formData);
+          console.log(`[QuestionnaireScreen] Cloudinary response for slot #${index + 1}:`, uploadRes);
+          const cloudUrl = uploadRes?.url || uploadRes?.secure_url || uploadRes?.data?.url;
+          if (cloudUrl && cloudUrl.startsWith('http')) {
+            uploadedPhotosList.push(cloudUrl);
+            continue;
           }
+        } catch (e) {
+          console.error(`[QuestionnaireScreen] Error uploading local media for slot #${index + 1}:`, e);
+          Alert.alert('Media Upload Error', `Failed to upload media for slot #${index + 1}. Please try selecting the file again.`);
         }
-        return photoUri;
-      })
-    );
+      } else if (photoUri.startsWith('http')) {
+        uploadedPhotosList.push(photoUri);
+      }
+    }
 
-    const validPhotos = uploadedPhotosList.filter((p) => p && typeof p === 'string' && p.startsWith('http'));
+    console.log('[QuestionnaireScreen] Final uploadedPhotosList:', uploadedPhotosList);
+
+    const validPhotos = uploadedPhotosList.filter((p) => p && typeof p === 'string' && p.trim().length > 0);
     const primaryPhoto = validPhotos[0] || null;
     const age = calculateAge();
 
@@ -395,6 +492,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       languages: selectedLanguages,
       profileImage: primaryPhoto,
       profileImages: validPhotos,
+      photos: validPhotos,
+      videos: validPhotos.filter((p) => isVideoUrl(p)),
+      media: validPhotos,
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       completionPercentage: (() => {
         let computedPct = 0;
@@ -414,14 +514,16 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       })(),
     };
 
+    console.log('[QuestionnaireScreen] Submitting final profileData to saveQuestionnaire API:', profileData);
+
+    const videoUrlsList = validPhotos.filter((p) => isVideoUrl(p));
+
     setLoading(true);
 
     try {
-      await apiClient.saveQuestionnaire(profileData);
-    } catch (err) {
-      console.log('Error saving questionnaire to backend:', err);
-    } finally {
-      setLoading(false);
+      const saveRes = await apiClient.saveQuestionnaire(profileData);
+      console.log('[QuestionnaireScreen] saveQuestionnaire API Response:', saveRes);
+
       if (isEditMode && onCloseModal) {
         onCloseModal();
       }
@@ -430,6 +532,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       } else if (onNavigate && !isEditMode) {
         onNavigate('HOME');
       }
+    } catch (err) {
+      console.error('[QuestionnaireScreen] Error saving questionnaire to backend:', err);
+      const errMsg = err?.data?.message || err?.message || 'Server error while saving profile';
+      Alert.alert('Save Profile Error', errMsg);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -607,7 +715,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   <Text style={styles.inputLabel}>Sexual Orientation</Text>
                   <View style={styles.wrapRow}>
-                    {ORIENTATIONS.map((o) => (
+                    {orientationsList.map((o) => (
                       <TouchableOpacity
                         key={o}
                         style={[styles.wrapChip, orientation === o && styles.chipSelected]}
@@ -630,7 +738,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                 <>
                   <Text style={styles.inputLabel}>Looking For</Text>
                   <View style={styles.wrapRow}>
-                    {LOOKING_FOR.map((lf) => (
+                    {lookingForList.map((lf) => (
                       <TouchableOpacity
                         key={lf}
                         style={[styles.wrapChip, lookingFor === lf && styles.chipSelected]}
@@ -646,7 +754,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   <Text style={styles.inputLabel}>Drink Habit</Text>
                   <View style={styles.optionsRow}>
-                    {DRINK_HABITS.map((dh) => (
+                    {drinkHabitsList.map((dh) => (
                       <TouchableOpacity
                         key={dh}
                         style={[styles.chip, drinkHabit === dh && styles.chipSelected]}
@@ -666,7 +774,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   <Text style={styles.inputLabel}>Smoke Habit</Text>
                   <View style={styles.optionsRow}>
-                    {SMOKE_HABITS.map((sh) => (
+                    {smokeHabitsList.map((sh) => (
                       <TouchableOpacity
                         key={sh}
                         style={[styles.chip, smokeHabit === sh && styles.chipSelected]}
@@ -686,7 +794,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   <Text style={styles.inputLabel}>Workout / Exercise</Text>
                   <View style={styles.optionsRow}>
-                    {EXERCISE_HABITS.map((ex) => (
+                    {exerciseHabitsList.map((ex) => (
                       <TouchableOpacity
                         key={ex}
                         style={[styles.chip, exercise === ex && styles.chipSelected]}
@@ -706,7 +814,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   <Text style={styles.inputLabel}>Pets</Text>
                   <View style={styles.optionsRow}>
-                    {PETS_OPTIONS.map((p) => (
+                    {petsOptionsList.map((p) => (
                       <TouchableOpacity
                         key={p}
                         style={[styles.chip, pets === p && styles.chipSelected]}
@@ -739,7 +847,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   {/* Education Level Question */}
                   <Text style={styles.inputLabel}>🎓 Education Level</Text>
                   <View style={styles.wrapRow}>
-                    {EDUCATION_LEVELS.map((edu) => (
+                    {educationLevelsList.map((edu) => (
                       <TouchableOpacity
                         key={edu}
                         style={[styles.wrapChip, educationLevel === edu && styles.chipSelected]}
@@ -756,7 +864,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   {/* Height Question */}
                   <Text style={styles.inputLabel}>📏 Height</Text>
                   <View style={styles.wrapRow}>
-                    {HEIGHT_OPTIONS.map((h) => (
+                    {heightOptionsList.map((h) => (
                       <TouchableOpacity
                         key={h}
                         style={[styles.wrapChip, height === h && styles.chipSelected]}
@@ -778,7 +886,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   {/* Weight Question */}
                   <Text style={styles.inputLabel}>⚖️ Weight</Text>
                   <View style={styles.wrapRow}>
-                    {WEIGHT_OPTIONS.map((w) => (
+                    {weightOptionsList.map((w) => (
                       <TouchableOpacity
                         key={w}
                         style={[styles.wrapChip, weight === w && styles.chipSelected]}
@@ -800,7 +908,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   {/* Job / Occupation Question */}
                   <Text style={styles.inputLabel}>💼 Job / Occupation</Text>
                   <View style={styles.wrapRow}>
-                    {JOB_EXAMPLES.map((j) => {
+                    {jobExamplesList.map((j) => {
                       const titleOnly = j.replace(/^[^\s]+\s/, '');
                       const isSelected = job === titleOnly || job === j;
                       return (
@@ -855,7 +963,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   <Text style={styles.inputLabel}>🗣️ Languages Spoken</Text>
                   <View style={styles.interestsWrap}>
-                    {LANGUAGE_OPTIONS.map((lang) => {
+                    {languageOptionsList.map((lang) => {
                       const isSelected = selectedLanguages.includes(lang);
                       return (
                         <TouchableOpacity
@@ -874,7 +982,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   <Text style={styles.inputLabel}>Select Your Interests (Max 6)</Text>
                   <View style={styles.interestsWrap}>
-                    {INTEREST_OPTIONS.map((item) => {
+                    {interestOptionsList.map((item) => {
                       const isSelected = selectedInterests.includes(item);
                       return (
                         <TouchableOpacity
@@ -1016,7 +1124,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   {/* Zodiac Sign Question */}
                   <Text style={styles.inputLabel}>⭐ Zodiac Sign</Text>
                   <View style={styles.wrapRow}>
-                    {ZODIAC_SIGNS.map((z) => (
+                    {zodiacSignsList.map((z) => (
                       <TouchableOpacity
                         key={z}
                         style={[styles.wrapChip, zodiac === z && styles.chipSelected]}
@@ -1045,31 +1153,56 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   {/* Status / Story Horizontal Carousel Preview */}
                   <Text style={styles.inputLabel}>📸 Status / Story Preview</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.storyRow}>
-                    {validStoryPhotos.map((url, idx) => (
-                      <TouchableOpacity
-                        key={idx}
-                        onPress={() => setActiveStoryIndex(idx)}
-                        activeOpacity={0.8}
-                        style={styles.storyRing}
-                      >
-                        <Image source={{ uri: url }} style={styles.storyThumb} />
-                        <Text style={styles.storyBadge}>Photo #{idx + 1}</Text>
-                      </TouchableOpacity>
-                    ))}
+                    {validStoryPhotos.map((url, idx) => {
+                      const isVid = isVideoUrl(url);
+                      const thumb = getVideoThumbnailUrl(url);
+                      return (
+                        <TouchableOpacity
+                          key={idx}
+                          onPress={() => setActiveStoryIndex(idx)}
+                          activeOpacity={0.8}
+                          style={styles.storyRing}
+                        >
+                          {isVid ? (
+                            <Video
+                              source={{ uri: url }}
+                              style={styles.storyThumb}
+                              paused={true}
+                              muted={true}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <Image source={{ uri: thumb }} style={styles.storyThumb} />
+                          )}
+                          <Text style={styles.storyBadge}>{isVid ? '🎬 Video' : `Photo #${idx + 1}`}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </ScrollView>
 
                   {/* 9 Photo & Video Slots Grid */}
                   <Text style={styles.inputLabel}>Upload Photos & Preview Videos (Up to 9 Slots)</Text>
-                  <Text style={styles.gridSubtext}>Slot #1 is your Main Profile Picture. Tap + to add photos or short video previews.</Text>
+                  <Text style={styles.gridSubtext}>Slot #1 is your Main Profile Picture (Photo only). Slots #2 through #9 support photos & short video clips (up to 15s).</Text>
 
                   <View style={styles.gridContainer}>
                     {photos.map((photoUri, index) => {
                       const isVid = isVideoUrl(photoUri);
+                      const thumbUri = photoUri ? getVideoThumbnailUrl(photoUri) : null;
                       return (
                         <View key={index} style={[styles.gridSlot, { width: slotWidth, height: slotHeight }]}>
                           {photoUri ? (
                             <View style={styles.slotImageWrapper}>
-                              <Image source={{ uri: photoUri }} style={styles.slotImage} />
+                              {isVid ? (
+                                <Video
+                                  source={{ uri: photoUri }}
+                                  style={styles.slotImage}
+                                  paused={true}
+                                  muted={true}
+                                  resizeMode="cover"
+                                />
+                              ) : (
+                                <Image source={{ uri: thumbUri }} style={styles.slotImage} />
+                              )}
                               {isVid ? (
                                 <View style={[styles.mainBadge, { backgroundColor: '#3897F0' }]}>
                                   <Text style={styles.mainBadgeText}>📹 Video</Text>
@@ -1079,6 +1212,11 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                                   <Text style={styles.mainBadgeText}>Main</Text>
                                 </View>
                               ) : null}
+                              {uploadingSlotIndex === index && (
+                                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', borderRadius: 12 }}>
+                                  <ActivityIndicator size="small" color="#FE3C72" />
+                                </View>
+                              )}
                               <TouchableOpacity
                                 style={styles.deleteSlotBtn}
                                 onPress={() => handleRemovePhotoSlot(index)}
@@ -1093,8 +1231,14 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                               onPress={() => handlePickImageForSlot(index)}
                               activeOpacity={0.7}
                             >
-                              <Text style={styles.plusIcon}>+</Text>
-                              <Text style={styles.slotLabel}>Slot {index + 1}</Text>
+                              {uploadingSlotIndex === index ? (
+                                <ActivityIndicator size="small" color="#FE3C72" />
+                              ) : (
+                                <>
+                                  <Text style={styles.plusIcon}>+</Text>
+                                  <Text style={styles.slotLabel}>Slot {index + 1}</Text>
+                                </>
+                              )}
                             </TouchableOpacity>
                           )}
                         </View>
@@ -1129,6 +1273,11 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         userName={firstName || 'My Status'}
         userAvatar={validStoryPhotos[0]}
         onClose={() => setActiveStoryIndex(null)}
+        onHideMedia={(hiddenUrl, index) => {
+          if (typeof index === 'number' && index >= 0) {
+            handleRemovePhotoSlot(index);
+          }
+        }}
       />
     </SimulatedGradientBackground>
   );
@@ -1558,6 +1707,94 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 22,
     fontWeight: 'bold',
+  },
+  diagOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  diagCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '80%',
+    borderRadius: 20,
+    padding: 22,
+    borderWidth: 1.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
+    elevation: 20,
+  },
+  diagCardSuccess: {
+    backgroundColor: '#121E17',
+    borderColor: '#2ECC71',
+  },
+  diagCardError: {
+    backgroundColor: '#201416',
+    borderColor: '#FF4D4D',
+  },
+  diagHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  diagEmoji: {
+    fontSize: 28,
+    marginRight: 10,
+  },
+  diagTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    flex: 1,
+  },
+  diagScroll: {
+    maxHeight: 240,
+    marginVertical: 8,
+  },
+  diagMessage: {
+    fontSize: 14,
+    color: '#E0E6ED',
+    lineHeight: 22,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  diagFooter: {
+    marginTop: 18,
+    alignItems: 'center',
+  },
+  diagTimerBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginBottom: 14,
+  },
+  diagTimerText: {
+    color: '#FFD700',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  diagDismissBtn: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  diagDismissBtnSuccess: {
+    backgroundColor: '#2ECC71',
+  },
+  diagDismissBtnError: {
+    backgroundColor: '#FF4D4D',
+  },
+  diagDismissText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: 'bold',
+    letterSpacing: 0.8,
   },
 });
 

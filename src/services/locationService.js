@@ -14,6 +14,17 @@ try {
 }
 
 /**
+ * Validate latitude and longitude values
+ */
+export const isValidCoordinates = (lat, lng) => {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return false;
+  if (isNaN(lat) || isNaN(lng)) return false;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  if (lat === 0 && lng === 0) return false; // Common default/uninitialized coordinates
+  return true;
+};
+
+/**
  * Open Device Location Settings to allow user to turn on GPS
  */
 export const openDeviceLocationSettings = () => {
@@ -27,15 +38,56 @@ export const openDeviceLocationSettings = () => {
 };
 
 /**
- * Prompt user with an alert to turn on location/GPS
- * and attach an AppState listener to automatically retry fetching and saving real coordinates
- * as soon as the user turns on Location in settings and returns to the app.
+ * Request Location Permission across Android (12+ Fine/Coarse) and iOS
  */
-const promptTurnOnLocationAlert = (reason = 'disabled') => {
+export const requestDeviceLocationPermissions = async () => {
+  try {
+    if (Platform.OS === 'android') {
+      const fineGranted = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+      );
+      const coarseGranted = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
+      );
+
+      if (fineGranted || coarseGranted) {
+        return true;
+      }
+
+      const grantedResults = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+      ]);
+
+      const isFineOk =
+        grantedResults[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+      const isCoarseOk =
+        grantedResults[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+
+      return isFineOk || isCoarseOk;
+    } else if (Platform.OS === 'ios') {
+      if (typeof Geolocation.requestAuthorization === 'function') {
+        Geolocation.requestAuthorization();
+      }
+      return true;
+    }
+    return true;
+  } catch (err) {
+    console.log('Permission request error:', err);
+    return false;
+  }
+};
+
+/**
+ * Prompt user with an alert to turn on location/GPS or grant permission
+ */
+export const promptTurnOnLocationAlert = (reason = 'disabled', onRetry = null) => {
   if (reason === 'permission_denied') {
     Alert.alert(
       'Location Permission Required',
-      'Please allow location access so we can show you nearby profiles around you.',
+      'Please allow location access in your device settings so we can capture your temporary location.',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Open Settings', onPress: () => Linking.openSettings() },
@@ -44,7 +96,7 @@ const promptTurnOnLocationAlert = (reason = 'disabled') => {
   } else {
     Alert.alert(
       'Location Services Disabled',
-      'Your device location (GPS) is turned off. Please turn on Location services to find matches around you.',
+      'Your device location (GPS) is turned off. Please turn on Location services to capture your live location.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -52,24 +104,23 @@ const promptTurnOnLocationAlert = (reason = 'disabled') => {
           onPress: () => {
             openDeviceLocationSettings();
 
-            // Set up listener: when user turns Location ON and returns to app,
-            // immediately fetch real GPS coordinates and save to MongoDB via API!
-            let subscription;
-            const handleAppStateChange = async (nextAppState) => {
-              if (nextAppState === 'active') {
-                if (subscription && typeof subscription.remove === 'function') {
-                  subscription.remove();
-                } else {
-                  AppState.removeEventListener('change', handleAppStateChange);
+            if (onRetry) {
+              let subscription;
+              const handleAppStateChange = async (nextAppState) => {
+                if (nextAppState === 'active') {
+                  if (subscription && typeof subscription.remove === 'function') {
+                    subscription.remove();
+                  } else if (typeof AppState.removeEventListener === 'function') {
+                    AppState.removeEventListener('change', handleAppStateChange);
+                  }
+                  console.log('📍 [LOCATION SERVICE] App active. Retrying GPS acquisition...');
+                  setTimeout(() => {
+                    onRetry();
+                  }, 1500);
                 }
-                console.log('📍 [LOCATION SERVICE] App returned to active. Retrying real GPS acquisition...');
-                setTimeout(async () => {
-                  await syncUserLocationService(false);
-                }, 1500);
-              }
-            };
-
-            subscription = AppState.addEventListener('change', handleAppStateChange);
+              };
+              subscription = AppState.addEventListener('change', handleAppStateChange);
+            }
           },
         },
       ]
@@ -78,9 +129,79 @@ const promptTurnOnLocationAlert = (reason = 'disabled') => {
 };
 
 /**
- * Main Location Service method: acquires real device GPS coordinates ONLY
- * and syncs them to backend database. If location is turned off or denied,
- * prompts an Alert for the user to turn on location settings.
+ * Fetch raw GPS coordinates from device (tries High Accuracy first, then Network fallback)
+ */
+export const getCurrentDeviceLocation = async (showAlerts = true) => {
+  const hasPermission = await requestDeviceLocationPermissions();
+  if (!hasPermission) {
+    console.log('❌ [LOCATION SERVICE] Permission denied by user.');
+    if (showAlerts) {
+      promptTurnOnLocationAlert('permission_denied');
+    }
+    return null;
+  }
+
+  const getPosition = (highAccuracy, timeoutMs = 6000, maxAgeMs = 10000) =>
+    new Promise((resolve) => {
+      Geolocation.getCurrentPosition(
+        (position) => {
+          if (
+            position &&
+            position.coords &&
+            isValidCoordinates(position.coords.latitude, position.coords.longitude)
+          ) {
+            resolve({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            });
+          } else {
+            resolve(null);
+          }
+        },
+        (err) => {
+          console.log(`⚠️ Geolocation getCurrentPosition (highAccuracy=${highAccuracy}) code ${err?.code}:`, err?.message || err);
+          resolve({ error: err });
+        },
+        {
+          enableHighAccuracy: highAccuracy,
+          timeout: timeoutMs,
+          maximumAge: maxAgeMs,
+        }
+      );
+    });
+
+  // Attempt 1: High Accuracy GPS (6s timeout)
+  let result = await getPosition(true, 6000, 10000);
+
+  // Fallback if result has error or null
+  if (!result || result.error || !isValidCoordinates(result.latitude, result.longitude)) {
+    const lastErrCode = result?.error?.code;
+    if (lastErrCode === 1) { // PERMISSION_DENIED
+      if (showAlerts) promptTurnOnLocationAlert('permission_denied');
+      return null;
+    }
+
+    console.log('📍 High Accuracy GPS timed out/failed, trying Network location accuracy fallback...');
+    result = await getPosition(false, 15000, 30000);
+  }
+
+  if (result && isValidCoordinates(result.latitude, result.longitude)) {
+    console.log(`✅ [GPS SUCCESS] Latitude: ${result.latitude}, Longitude: ${result.longitude}`);
+    return {
+      latitude: result.latitude,
+      longitude: result.longitude,
+    };
+  }
+
+  console.log('❌ [LOCATION SERVICE] GPS turned off or location acquisition timed out.');
+  if (showAlerts) {
+    promptTurnOnLocationAlert('disabled');
+  }
+  return null;
+};
+
+/**
+ * Sync user location with backend MongoDB database
  */
 export const syncUserLocationService = async (showAlertOnFailure = true) => {
   console.log('----------------------------------------------------');
@@ -88,81 +209,16 @@ export const syncUserLocationService = async (showAlertOnFailure = true) => {
   console.log('----------------------------------------------------');
 
   try {
-    let hasPermission = false;
-    if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        {
-          title: 'Location Permission Required',
-          message: 'Please allow location access so we can suggest nearby profiles around you.',
-          buttonNegative: 'Cancel',
-          buttonPositive: 'Allow',
-        }
-      );
-      hasPermission = granted === PermissionsAndroid.RESULTS.GRANTED;
-    } else {
-      hasPermission = true;
-    }
-
-    if (!hasPermission) {
-      console.log('❌ [LOCATION SERVICE] Permission denied by user.');
-      if (showAlertOnFailure) {
-        promptTurnOnLocationAlert('permission_denied');
-      }
-      return null;
-    }
-
-    const getPosition = (highAccuracy, timeoutMs = 15000, maxAgeMs = 10000) =>
-      new Promise((resolve) => {
-        Geolocation.getCurrentPosition(
-          (position) => {
-            if (position && position.coords && typeof position.coords.latitude === 'number' && typeof position.coords.longitude === 'number') {
-              resolve({
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-              });
-            } else {
-              resolve(null);
-            }
-          },
-          (err) => {
-            console.log(`⚠️ Geolocation getCurrentPosition (highAccuracy=${highAccuracy}) note:`, err?.message || err);
-            resolve(null);
-          },
-          {
-            enableHighAccuracy: highAccuracy,
-            timeout: timeoutMs,
-            maximumAge: maxAgeMs,
-          }
-        );
-      });
-
-    // Try High Accuracy GPS first
-    let coords = await getPosition(true, 15000, 10000);
-
-    // Fallback to Network Provider
-    if (!coords) {
-      console.log('📍 High Accuracy GPS timed out, trying Network location accuracy fallback...');
-      coords = await getPosition(false, 20000, 30000);
-    }
-
-    if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
-      console.log(`✅ [REAL DEVICE GPS SUCCESS] Latitude: ${coords.latitude}, Longitude: ${coords.longitude}`);
-      
-      // Update location via backend API
+    const coords = await getCurrentDeviceLocation(showAlertOnFailure);
+    if (coords && isValidCoordinates(coords.latitude, coords.longitude)) {
       const res = await apiClient.updateLocation({
         latitude: coords.latitude,
         longitude: coords.longitude,
       });
-      console.log('✅ [DATABASE SUCCESS] Saved real device coordinates to MongoDB:', JSON.stringify(res, null, 2));
+      console.log('✅ [DATABASE SUCCESS] Saved coordinates to MongoDB:', JSON.stringify(res, null, 2));
       return coords;
-    } else {
-      console.log('❌ [LOCATION SERVICE] Device GPS is turned OFF or unavailable.');
-      if (showAlertOnFailure) {
-        promptTurnOnLocationAlert('disabled');
-      }
-      return null;
     }
+    return null;
   } catch (err) {
     console.log('❌ [LOCATION SERVICE ERROR]:', err.message || err);
     if (showAlertOnFailure) {
@@ -171,3 +227,4 @@ export const syncUserLocationService = async (showAlertOnFailure = true) => {
     return null;
   }
 };
+
