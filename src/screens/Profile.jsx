@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+// Profile Screen component - updated with Hide & Unhide Media support
 import {
   StyleSheet,
   Text,
@@ -59,11 +60,32 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [isQuestionnaireModalOpen, setIsQuestionnaireModalOpen] = useState(false);
   const [questionnaireModalStep, setQuestionnaireModalStep] = useState(6);
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
+  const [activeHiddenStoryIndex, setActiveHiddenStoryIndex] = useState(null);
+  const [fetchedHiddenMediaList, setFetchedHiddenMediaList] = useState([]);
   const [activePlan, setActivePlan] = useState('free');
 
   const openGalleryModal = (stepNum = 6) => {
     setQuestionnaireModalStep(stepNum);
     setIsQuestionnaireModalOpen(true);
+  };
+
+  const handleFetchAndShowHiddenMedia = async () => {
+    try {
+      setLoading(true);
+      const res = await apiClient.getHiddenProfileMedia();
+      const list = res.hiddenMedia || res.data?.hiddenMedia || [];
+      if (!list || list.length === 0) {
+        Alert.alert('No Hidden Media 🙈', 'You do not have any hidden photos or videos.');
+        return;
+      }
+      setFetchedHiddenMediaList(list);
+      setActiveHiddenStoryIndex(0);
+    } catch (err) {
+      console.log('Error fetching hidden media:', err);
+      Alert.alert('Error', 'Failed to fetch hidden media list.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Change / Reset Password state
@@ -235,10 +257,12 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             const ext = isVideo ? 'mp4' : 'jpg';
             const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
 
+            const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}.${ext}`;
+
             formData.append('photo', {
               uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
               type: mime,
-              name: asset.fileName || `media_${Date.now()}.${ext}`,
+              name: safeName,
             });
 
             const uploadRes = await apiClient.uploadImage(formData);
@@ -389,8 +413,11 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     }
   });
 
-  const hasUserUploadedPhoto = rawPhotosList.length > 0;
-  const photosList = rawPhotosList.map((p) => formatImageUri(p));
+  const hiddenMediaList = Array.isArray(displayData.hiddenMedia) ? displayData.hiddenMedia : [];
+  const publicRawPhotosList = rawPhotosList.filter((url) => !hiddenMediaList.includes(url));
+
+  const hasUserUploadedPhoto = publicRawPhotosList.length > 0;
+  const photosList = publicRawPhotosList.map((p) => formatImageUri(p));
   const mainPhotoUrl = hasUserUploadedPhoto ? photosList[0] : null;
 
   const computeExactAge = () => {
@@ -750,6 +777,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
+          onPress={handleFetchAndShowHiddenMedia}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionIcon}>🙈</Text>
+          <Text style={styles.actionText}>Show Hidden Photos / Videos</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionRow}
           onPress={onLogout}
           activeOpacity={0.7}
         >
@@ -852,14 +888,56 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       {/* Fullscreen Status & Photo Preview Modal */}
       <PreviewModal
         visible={activeStoryIndex !== null}
-        photos={rawPhotosList}
+        photos={publicRawPhotosList}
         initialIndex={activeStoryIndex || 0}
         userName={displayData.firstName || displayData.name || 'My Status'}
         userAvatar={mainPhotoUrl}
         onClose={() => setActiveStoryIndex(null)}
-        onHideMedia={(hiddenUrl, index) => {
-          if (typeof index === 'number' && index >= 0) {
-            handleDeletePhoto(index);
+        onHideMedia={async (hiddenUrl) => {
+          try {
+            if (!hiddenUrl) return;
+            await apiClient.hideProfileMedia(hiddenUrl);
+            Alert.alert(
+              'Media Hidden 🙈',
+              'This item has been hidden from public view. It is NOT deleted from your database, and you can Unhide it anytime on your Profile Screen.'
+            );
+            fetchProfileFromBackend();
+          } catch (e) {
+            console.log('Error hiding profile media:', e);
+            Alert.alert('Error', 'Could not hide media item.');
+          }
+        }}
+      />
+
+      {/* Fullscreen Hidden Status & Photo Preview Modal */}
+      <PreviewModal
+        visible={activeHiddenStoryIndex !== null}
+        photos={fetchedHiddenMediaList}
+        initialIndex={activeHiddenStoryIndex || 0}
+        userName="Hidden Photos & Videos 🙈"
+        userAvatar={mainPhotoUrl}
+        isHiddenMode={true}
+        onClose={() => setActiveHiddenStoryIndex(null)}
+        onUnhideMedia={async (unhideUrl) => {
+          try {
+            if (!unhideUrl) return;
+            setLoading(true);
+            await apiClient.unhideProfileMedia(unhideUrl);
+            Alert.alert(
+              'Media Restored 👁️',
+              'This item has been unhidden! It is now visible again on your public profile & story preview.'
+            );
+            const updatedList = fetchedHiddenMediaList.filter((u) => u !== unhideUrl);
+            setFetchedHiddenMediaList(updatedList);
+            if (updatedList.length === 0) {
+              setActiveHiddenStoryIndex(null);
+            }
+            fetchProfileFromBackend();
+          } catch (e) {
+            console.log('Error unhiding profile media:', e);
+            Alert.alert('Error', 'Could not unhide media item.');
+          } finally {
+            setLoading(false);
           }
         }}
       />
@@ -1364,16 +1442,55 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  storyFullImage: {
-    width: width * 0.9,
-    height: width * 1.3,
-    borderRadius: 16,
+  hiddenMediaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 14,
   },
-  storyCounter: {
+  hiddenMediaCard: {
+    width: 105,
+    height: 135,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#1E1E2E',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 8,
+  },
+  hiddenMediaThumb: {
+    width: '100%',
+    height: 90,
+    borderRadius: 10,
+    opacity: 0.6,
+  },
+  hiddenBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  hiddenBadgeText: {
     color: '#FFFFFF',
-    fontSize: 14,
-    marginTop: 16,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  unhideBtn: {
+    backgroundColor: '#00E676',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  unhideBtnText: {
+    color: '#000000',
+    fontSize: 11,
+    fontWeight: '800',
   },
 });
 

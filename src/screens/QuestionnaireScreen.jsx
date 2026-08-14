@@ -333,10 +333,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           const ext = isVideo ? 'mp4' : 'jpg';
           const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
 
+          const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}_slot${slotIndex + 1}.${ext}`;
+
           formData.append('photo', {
             uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
             type: mime,
-            name: asset.fileName || `media_${Date.now()}_slot${slotIndex + 1}.${ext}`,
+            name: safeName,
           });
 
           console.log('[QuestionnaireScreen] Uploading slot media to /api/profile/upload...', { mime, ext });

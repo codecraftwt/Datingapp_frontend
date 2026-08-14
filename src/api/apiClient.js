@@ -91,10 +91,18 @@ const request = async (url, options = {}, isRetry = false) => {
       console.warn(`[apiClient] Network request failed on ${currentBase}${url}. Retrying with auto-resolution...`);
       activeResolvedUrl = null;
       currentBase = await resolveWorkingBaseUrl();
-      response = await fetch(`${currentBase}${url}`, {
-        ...options,
-        headers,
-      });
+      try {
+        response = await fetch(`${currentBase}${url}`, {
+          ...options,
+          headers,
+        });
+      } catch (retryErr) {
+        console.warn(`[apiClient] Retry on ${currentBase} failed. Falling back to LIVE_URL...`);
+        response = await fetch(`${LIVE_URL}${url}`, {
+          ...options,
+          headers,
+        });
+      }
     }
 
     // Auto-retry 1 time on 500 Cold Start errors
@@ -266,6 +274,23 @@ export const apiClient = {
   },
   getOnlineUsers: async () => {
     return await request('/api/profile/online-users', {
+      method: 'GET',
+    });
+  },
+  hideProfileMedia: async (mediaUrl) => {
+    return await request('/api/profile/hide-media', {
+      method: 'PUT',
+      body: JSON.stringify({ mediaUrl }),
+    });
+  },
+  unhideProfileMedia: async (mediaUrl) => {
+    return await request('/api/profile/unhide-media', {
+      method: 'PUT',
+      body: JSON.stringify({ mediaUrl }),
+    });
+  },
+  getHiddenProfileMedia: async () => {
+    return await request('/api/profile/hidden-media', {
       method: 'GET',
     });
   },

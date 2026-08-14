@@ -10,6 +10,7 @@ export const LIVE_URL = 'https://datingapp-backend-api.vercel.app';
 export const CANDIDATE_URLS = typeof __DEV__ !== 'undefined' && __DEV__
   ? [
       'http://localhost:5000',
+      'http://10.0.3.78:5000',
       'http://10.0.3.64:5000',
       'http://10.0.2.2:5000',
       LIVE_URL,

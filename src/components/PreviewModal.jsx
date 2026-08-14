@@ -23,6 +23,8 @@ export const PreviewModal = ({
   userAvatar,
   onClose,
   onHideMedia,
+  onUnhideMedia,
+  isHiddenMode = false,
 }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
@@ -121,6 +123,34 @@ export const PreviewModal = ({
 
     if (onHideMedia) {
       onHideMedia(targetMedia, targetIdx);
+    }
+
+    const remainingIndices = photos
+      .map((_, i) => i)
+      .filter((i) => !nextHidden.has(i));
+
+    if (remainingIndices.length === 0) {
+      onClose();
+    } else {
+      const nextTarget = remainingIndices.find((i) => i >= targetIdx) ?? remainingIndices[0];
+      setCurrentIndex(nextTarget);
+      setProgress(0);
+    }
+  };
+
+  const handleUnhideCurrentMedia = () => {
+    setMenuVisible(false);
+    setIsPaused(false);
+
+    const targetMedia = rawPhoto;
+    const targetIdx = currentIndex;
+
+    const nextHidden = new Set(hiddenIndices);
+    nextHidden.add(targetIdx);
+    setHiddenIndices(nextHidden);
+
+    if (onUnhideMedia) {
+      onUnhideMedia(targetMedia, targetIdx);
     }
 
     const remainingIndices = photos
@@ -299,19 +329,35 @@ export const PreviewModal = ({
                     <Text style={styles.menuHeaderTitle}>Media Options</Text>
                   </View>
 
-                  <TouchableOpacity
-                    style={styles.menuOptionBtn}
-                    onPress={handleHideCurrentMedia}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.menuOptionIconBox}>
-                      <Text style={styles.menuOptionIcon}>🙈</Text>
-                    </View>
-                    <View style={styles.menuOptionTextCol}>
-                      <Text style={styles.menuOptionText}>Hide {isCurrentVideo ? 'Video' : 'Image'}</Text>
-                      <Text style={styles.menuOptionSubText}>Remove this {isCurrentVideo ? 'video clip' : 'image'} from preview</Text>
-                    </View>
-                  </TouchableOpacity>
+                  {isHiddenMode ? (
+                    <TouchableOpacity
+                      style={styles.menuOptionBtn}
+                      onPress={handleUnhideCurrentMedia}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.menuOptionIconBox}>
+                        <Text style={styles.menuOptionIcon}>👁️</Text>
+                      </View>
+                      <View style={styles.menuOptionTextCol}>
+                        <Text style={styles.menuOptionText}>Unhide {isCurrentVideo ? 'Video' : 'Image'}</Text>
+                        <Text style={styles.menuOptionSubText}>Restore this {isCurrentVideo ? 'video clip' : 'image'} to your public profile</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.menuOptionBtn}
+                      onPress={handleHideCurrentMedia}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.menuOptionIconBox}>
+                        <Text style={styles.menuOptionIcon}>🙈</Text>
+                      </View>
+                      <View style={styles.menuOptionTextCol}>
+                        <Text style={styles.menuOptionText}>Hide {isCurrentVideo ? 'Video' : 'Image'}</Text>
+                        <Text style={styles.menuOptionSubText}>Remove this {isCurrentVideo ? 'video clip' : 'image'} from preview</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
 
                   <TouchableOpacity
                     style={styles.menuCancelBtn}
