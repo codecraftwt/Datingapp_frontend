@@ -251,6 +251,17 @@ export const apiClient = {
       method: 'GET',
     });
   },
+  getUserById: async (userId) => {
+    if (!userId) return { message: 'No userId provided', user: null };
+    try {
+      return await request(`/api/profile/user/${userId}`, {
+        method: 'GET',
+      });
+    } catch (err) {
+      console.log('[apiClient] getUserById gracefully handled error:', err?.message || err);
+      return { message: err?.message || 'Error', user: null };
+    }
+  },
   getQuestionnaires: async () => {
     return await request('/api/profile/questionnaire', {
       method: 'GET',

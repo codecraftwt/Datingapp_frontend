@@ -20,6 +20,7 @@ import {
   NativeModules,
   SafeAreaView,
   BackHandler,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { launchImageLibrary } from 'react-native-image-picker';
@@ -255,6 +256,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const [unreadLikesCount, setUnreadLikesCount] = useState(0);
+  const [selectedLikesProfile, setSelectedLikesProfile] = useState(null);
+  const [likesActivePhotoIndex, setLikesActivePhotoIndex] = useState(0);
+  const [likesPreviewStoryIndex, setLikesPreviewStoryIndex] = useState(null);
   const [viewMediaModal, setViewMediaModal] = useState({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const chatScrollViewRef = useRef(null);
@@ -1213,6 +1217,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       });
 
+      socketRef.current.on('online_status_response', ({ targetUserId, isOnline, lastSeen }) => {
+        console.log(`Socket.IO online_status_response: targetUserId=${targetUserId}, isOnline=${isOnline}, lastSeen=${lastSeen}`);
+        if (targetUserId) {
+          setOnlineUsersMap((prev) => ({
+            ...prev,
+            [targetUserId.toString()]: !!isOnline,
+          }));
+          if (lastSeen) {
+            setLastSeenMap((prev) => ({
+              ...prev,
+              [targetUserId.toString()]: lastSeen,
+            }));
+          }
+        }
+      });
+
       socketRef.current.on('message_delivered', ({ messageId, receiverId }) => {
         console.log(`Socket.IO message_delivered: ${messageId}`);
         setChats((prevChats) =>
@@ -1278,7 +1298,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         refetchChatMessages();
 
         // If user is not currently in the active chat conversation with sender, show instant pop-up banner notification
-        const isCurrentlyViewingChat = activeChatRef.current && activeChatRef.current.id === msg.senderId;
+        const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
+        const isCurrentlyViewingChat = activePartnerId && activePartnerId === msg.senderId?.toString();
         if (!isCurrentlyViewingChat) {
           const senderDisplayName = msg.senderName || 'Someone';
           let bodyText = msg.text || '💬 Sent a message';
@@ -1638,18 +1659,55 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
-  // Emit mark_seen when activeChat changes / opens
+  // Emit mark_seen & check_online_status when activeChat changes / opens
   useEffect(() => {
-    if (activeChat && activeChat.id && currentUser) {
+    if (activeChat && currentUser) {
+      const partnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
       const currentId = (currentUser.id || currentUser._id)?.toString();
-      if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit('mark_seen', {
-          senderId: activeChat.id,
-          receiverId: currentId,
-        });
+      if (socketRef.current && partnerId) {
+        if (socketRef.current.connected) {
+          socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+          if (currentId) {
+            socketRef.current.emit('mark_seen', {
+              senderId: partnerId,
+              receiverId: currentId,
+            });
+          }
+        }
       }
     }
-  }, [activeChat?.id, currentUser]);
+  }, [activeChat, currentUser]);
+
+  // AppState change listener: reconnect socket & re-emit join when app comes to foreground
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState) => {
+      if (nextAppState === 'active' && currentUser) {
+        const currentId = (currentUser.id || currentUser._id)?.toString();
+        if (socketRef.current) {
+          if (!socketRef.current.connected) {
+            console.log('[AppState] Socket disconnected. Reconnecting...');
+            socketRef.current.connect();
+          } else if (currentId) {
+            console.log('[AppState] App in foreground. Re-emitting join for user:', currentId);
+            socketRef.current.emit('join', currentId);
+          }
+        }
+        if (activeChat && socketRef.current) {
+          const partnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+          if (partnerId && socketRef.current.connected) {
+            socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+          }
+        }
+      }
+    };
+
+    const appStateSubscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      if (appStateSubscription && typeof appStateSubscription.remove === 'function') {
+        appStateSubscription.remove();
+      }
+    };
+  }, [currentUser, activeChat]);
 
   // Sync database messages with state
   useEffect(() => {
@@ -2994,52 +3052,81 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 </TouchableOpacity>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.sectionTitle}>People Who Liked You</Text>
-                  <Text style={styles.sectionSubtitle}>Tap a profile card to match instantly!</Text>
+                  <Text style={styles.sectionSubtitle}>Tap any profile to view details & expand!</Text>
                 </View>
               </View>
               {likesList.length > 0 ? (
                 <ScrollView style={styles.likesGridScroll} showsVerticalScrollIndicator={false}>
-                  <View style={styles.likesGrid}>
+                  <View style={styles.likesListContainer}>
                     {likesList.map((item) => (
-                      <View key={item.id} style={[styles.likeGridCard, item.isSuperLike && { borderColor: '#3897F0', borderWidth: 2 }]}>
-                        <View style={{ position: 'relative' }}>
-                          <Image source={{ uri: getImageUrl(item.image) }} style={styles.likeGridImage} />
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[styles.instaRowCard, item.isSuperLike && { borderColor: '#3897F0', borderWidth: 1.5 }]}
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          setSelectedLikesProfile(item);
+                          setLikesActivePhotoIndex(0);
+                        }}
+                      >
+                        {/* Left: Avatar with Online Dot */}
+                        <View style={styles.instaAvatarWrapper}>
+                          <Image
+                            source={{
+                              uri: item.profileImage
+                                ? getImageUrl(item.profileImage)
+                                : getImageUrl(item.image)
+                            }}
+                            style={styles.instaAvatar}
+                          />
                           {!!onlineUsersMap[item.id.toString()] && (
-                            <View style={[styles.onlineDotOverlay, { top: 8, left: 8, width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: '#1E1E1E' }]} />
-                          )}
-                          {item.isSuperLike && (
-                            <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: '#3897F0', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 }}>
-                              <Text style={{ color: '#FFF', fontSize: 10, fontWeight: 'bold' }}>⭐ Super Liked You</Text>
-                            </View>
+                            <View style={styles.instaOnlineDot} />
                           )}
                         </View>
-                        <View style={styles.likeGridInfo}>
-                          <Text style={styles.likeGridName}>{item.name}, {item.age}</Text>
-                          <Text style={styles.likeGridDistance}>{item.distance}</Text>
-                          
-                          {/* Reject / Accept buttons */}
-                          <View style={styles.likeGridCardActionRow}>
-                            <TouchableOpacity
-                              style={[styles.likeGridCardActionBtn, styles.likeGridCardActionBtnDislike]}
-                              onPress={() => handleRejectLike(item)}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={[styles.likeGridCardActionText, styles.likeGridCardActionTextDislike]}>✖</Text>
-                            </TouchableOpacity>
-                            
-                            <TouchableOpacity
-                              style={[styles.likeGridCardActionBtn, styles.likeGridCardActionBtnLike]}
-                              onPress={() => handleLikeMatch(item)}
-                              activeOpacity={0.8}
-                            >
-                              <Text style={[styles.likeGridCardActionText, styles.likeGridCardActionTextLike]}>♥</Text>
-                            </TouchableOpacity>
+
+                        {/* Middle: Name, Age, Subtitle */}
+                        <View style={styles.instaInfoCol}>
+                          <View style={styles.instaNameRow}>
+                            <Text style={styles.instaNameText} numberOfLines={1}>
+                              {item.name}{item.age ? `, ${item.age}` : ''}
+                            </Text>
+                            {item.isSuperLike && (
+                              <Text style={styles.instaSuperStar}>⭐</Text>
+                            )}
                           </View>
+                          <Text style={styles.instaSubtitleText} numberOfLines={1}>
+                            {item.isSuperLike
+                              ? '⭐ Super Liked you!'
+                              : item.distance
+                              ? `📍 ${item.distance}`
+                              : 'Liked your profile'}
+                          </Text>
                         </View>
-                        <View style={[styles.likeGridHeartBadge, item.isSuperLike && { backgroundColor: '#3897F0' }]}>
-                          <Text style={styles.likeGridHeartEmoji}>{item.isSuperLike ? '⭐' : '❤️'}</Text>
+
+                        {/* Right: Instagram-Style Action Buttons (Pass ✖ & Like ♥) */}
+                        <View style={styles.instaActionsGroup}>
+                          <TouchableOpacity
+                            style={styles.instaPassBtn}
+                            onPress={(e) => {
+                              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+                              handleRejectLike(item);
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.instaPassText}>✖</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            style={styles.instaLikeBtn}
+                            onPress={(e) => {
+                              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+                              handleLikeMatch(item);
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.instaLikeIcon}>♥</Text>
+                          </TouchableOpacity>
                         </View>
-                      </View>
+                      </TouchableOpacity>
                     ))}
                   </View>
                 </ScrollView>
@@ -3071,20 +3158,50 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     >
                       <Text style={styles.chatBackArrow}>←</Text>
                     </TouchableOpacity>
-                    <View style={styles.avatarWrapper}>
-                      <Image source={{ uri: getImageUrl(activeChat.image) }} style={styles.chatHeaderAvatar} />
-                      {!!onlineUsersMap[activeChat.id.toString()] && (
-                        <View style={styles.onlineDotOverlay} />
-                      )}
-                    </View>
-                    <View style={styles.chatHeaderTitleContainer}>
-                      <Text style={styles.chatHeaderName}>{activeChat.name}</Text>
-                      <Text style={styles.chatHeaderStatusText}>
-                        {onlineUsersMap[activeChat.id.toString()]
-                          ? 'Active Now'
-                          : formatLastSeen(lastSeenMap[activeChat.id.toString()] || activeChat.lastSeen)}
-                      </Text>
-                    </View>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                      activeOpacity={0.8}
+                      onPress={async () => {
+                        const partnerId = activeChat.id || activeChat._id || activeChat.userId;
+                        setLikesActivePhotoIndex(0);
+
+                        const localCandidate =
+                          (Array.isArray(MOCK_MATCHES) ? MOCK_MATCHES : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                          (Array.isArray(likesList) ? likesList : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                          (Array.isArray(chats) ? chats : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                          {};
+
+                        let enrichedProfile = { ...localCandidate, ...activeChat };
+
+                        try {
+                          if (partnerId) {
+                            const res = await apiClient.getUserById(partnerId);
+                            if (res && res.user) {
+                              enrichedProfile = { ...enrichedProfile, ...res.user };
+                            }
+                          }
+                        } catch (e) {
+                          console.log('Error fetching chat partner full profile by ID:', e);
+                        }
+
+                        setSelectedLikesProfile(enrichedProfile);
+                      }}
+                    >
+                      <View style={styles.avatarWrapper}>
+                        <Image source={{ uri: getImageUrl(activeChat.image || activeChat.profileImage) }} style={styles.chatHeaderAvatar} />
+                        {!!((activeChat.id || activeChat._id || activeChat.userId) && onlineUsersMap[(activeChat.id || activeChat._id || activeChat.userId).toString()]) && (
+                          <View style={styles.onlineDotOverlay} />
+                        )}
+                      </View>
+                      <View style={styles.chatHeaderTitleContainer}>
+                        <Text style={styles.chatHeaderName}>{activeChat.name || activeChat.firstName}</Text>
+                        <Text style={styles.chatHeaderStatusText}>
+                          {onlineUsersMap[(activeChat.id || activeChat._id || activeChat.userId)?.toString()]
+                            ? 'Active Now'
+                            : formatLastSeen(lastSeenMap[(activeChat.id || activeChat._id || activeChat.userId)?.toString()] || activeChat.lastSeen)}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.callChatHeaderButton}
                       onPress={makeVoiceCall}
@@ -3569,7 +3686,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           >
                             <View style={styles.avatarWrapper}>
                               <Image source={{ uri: getImageUrl(chat.image) }} style={styles.chatRowAvatar} />
-                              {!!onlineUsersMap[chat.id.toString()] && (
+                              {!!((chat.id || chat._id || chat.userId) && onlineUsersMap[(chat.id || chat._id || chat.userId).toString()]) && (
                                 <View style={styles.onlineDotOverlay} />
                               )}
                             </View>
@@ -3952,6 +4069,313 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </Modal>
         )}
 
+        {/* Expanded Profile Details Modal for Likes Screen Candidate */}
+        {!!selectedLikesProfile && (
+          <Modal
+            visible={!!selectedLikesProfile}
+            animationType="slide"
+            onRequestClose={() => setSelectedLikesProfile(null)}
+          >
+            <SafeAreaView style={styles.candidateDetailsWrapper}>
+              <View style={styles.cardExpandedHeader}>
+                <TouchableOpacity
+                  style={styles.cardDetailMinimizeHeaderBtn}
+                  onPress={() => setSelectedLikesProfile(null)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.cardDetailMinimizeArrow}>▼</Text>
+                  <Text style={styles.cardDetailMinimizeLabel}>Minimize Profile</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.cardExpandedScrollBody} showsVerticalScrollIndicator={false}>
+                {/* Photo Preview Carousel Header (Above) */}
+                <View style={{ position: 'relative', width: '100%', height: 420 }}>
+                  {(() => {
+                    const photos = [
+                      selectedLikesProfile.profileImage || selectedLikesProfile.image,
+                      ...(selectedLikesProfile.profileImages || []),
+                      ...(selectedLikesProfile.photos || []),
+                      ...(selectedLikesProfile.videos || []),
+                      ...(selectedLikesProfile.media || []),
+                    ].filter(Boolean);
+                    const uniquePhotos = Array.from(new Set(photos));
+                    const displayPhotos = uniquePhotos.length > 0 ? uniquePhotos : ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
+                    const activePhoto = displayPhotos[likesActivePhotoIndex % displayPhotos.length];
+
+                    return (
+                      <View style={{ width: '100%', height: 420, position: 'relative' }}>
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          style={{ width: '100%', height: '100%' }}
+                          onPress={() => setLikesPreviewStoryIndex(likesActivePhotoIndex)}
+                        >
+                          <Image
+                            source={{ uri: getImageUrl(activePhoto) }}
+                            style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                          />
+                        </TouchableOpacity>
+                        {displayPhotos.length > 1 && (
+                          <View style={{ position: 'absolute', bottom: 15, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
+                            {displayPhotos.map((_, idx) => (
+                              <TouchableOpacity
+                                key={idx}
+                                style={{
+                                  width: idx === likesActivePhotoIndex ? 22 : 8,
+                                  height: 8,
+                                  borderRadius: 4,
+                                  backgroundColor: idx === likesActivePhotoIndex ? '#FF4458' : 'rgba(255,255,255,0.5)',
+                                }}
+                                onPress={() => setLikesActivePhotoIndex(idx)}
+                              />
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })()}
+                </View>
+
+                {/* Profile Identity & Detailed Info Section (Below) */}
+                <View style={styles.cardExpandedContentPadding}>
+                  <View style={styles.matchNameRow}>
+                    <Text style={styles.matchNameTextLarge}>
+                      {selectedLikesProfile.firstName || selectedLikesProfile.name}
+                      {selectedLikesProfile.age ? `, ${selectedLikesProfile.age}` : ''}
+                    </Text>
+                    {selectedLikesProfile.distance ? (
+                      <View style={styles.distanceBadgeLarge}>
+                        <Text style={styles.distanceBadgeTextLarge}>
+                          📍 {selectedLikesProfile.distance}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {selectedLikesProfile.bio ? (
+                    <Text style={styles.matchBioTextLarge}>
+                      {selectedLikesProfile.bio}
+                    </Text>
+                  ) : null}
+
+                  <Text style={styles.cardDetailSectionTitleLarge}>About Me & Habits</Text>
+                  <View style={styles.cardExpandedGrid}>
+                    {selectedLikesProfile.gender && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>👤</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.gender}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.orientation && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🏳️‍🌈</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.orientation}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.lookingFor && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🎯</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.lookingFor}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.drinkHabit && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🍷</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.drinkHabit}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.smokeHabit && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🚭</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.smokeHabit}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.exercise && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>💪</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.exercise}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.pets && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🐕</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.pets}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.educationLevel && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🎓</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.educationLevel}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.height && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>📏</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.height}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.weight && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>⚖️</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.weight}</Text>
+                      </View>
+                    )}
+                    {(selectedLikesProfile.job || selectedLikesProfile.profession) && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>💼</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.job || selectedLikesProfile.profession}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.college && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🏛️</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.college}</Text>
+                      </View>
+                    )}
+                    {selectedLikesProfile.zodiac && (
+                      <View style={styles.cardExpandedItem}>
+                        <Text style={styles.cardExpandedEmoji}>🌌</Text>
+                        <Text style={styles.cardExpandedText}>{selectedLikesProfile.zodiac}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {((selectedLikesProfile.interests && selectedLikesProfile.interests.length > 0) ||
+                    (selectedLikesProfile.languages && selectedLikesProfile.languages.length > 0)) && (
+                    <>
+                      <Text style={[styles.cardDetailSectionTitleLarge, { marginTop: 16 }]}>Interests & Languages</Text>
+                      <View style={styles.cardExpandedInterests}>
+                        {(selectedLikesProfile.interests || []).map((interest, idx) => (
+                          <View key={`int-${idx}`} style={styles.cardExpandedInterestBadge}>
+                            <Text style={styles.cardExpandedInterestText}>{interest}</Text>
+                          </View>
+                        ))}
+                        {(selectedLikesProfile.languages || []).map((lang, idx) => (
+                          <View key={`lang-${idx}`} style={[styles.cardExpandedInterestBadge, { backgroundColor: '#262630' }]}>
+                            <Text style={styles.cardExpandedInterestText}>🗣️ {lang}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </>
+                  )}
+
+                  {/* Safety & Moderation Actions */}
+                  <View style={{ marginTop: 24, gap: 10 }}>
+                    <TouchableOpacity
+                      style={{
+                        paddingVertical: 12,
+                        paddingHorizontal: 16,
+                        borderRadius: 12,
+                        backgroundColor: 'rgba(255, 59, 48, 0.15)',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        const target = selectedLikesProfile;
+                        setSelectedLikesProfile(null);
+                        handleReportUser ? handleReportUser(target.id || target._id, target.firstName || target.name) : handleReportProfile(target);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ color: '#FF3B30', fontWeight: '600', fontSize: 15 }}>
+                        ⚠️ Report Profile
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{
+                        paddingVertical: 12,
+                        borderRadius: 12,
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        const target = selectedLikesProfile;
+                        setSelectedLikesProfile(null);
+                        handleBlockUser(target.id || target._id, target.firstName || target.name);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ color: '#aaa', fontWeight: '600', fontSize: 14 }}>
+                        🔒 Block Profile
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Horizontal Pass & Like Action Option Buttons */}
+                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 24, marginBottom: 30 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        height: 52,
+                        borderRadius: 26,
+                        backgroundColor: '#262630',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        borderWidth: 1,
+                        borderColor: '#3A3A48',
+                      }}
+                      onPress={() => {
+                        const target = selectedLikesProfile;
+                        setSelectedLikesProfile(null);
+                        handleRejectLike(target);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 18, color: '#FF4A4A' }}>✖</Text>
+                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF4A4A' }}>Pass</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        height: 52,
+                        borderRadius: 26,
+                        backgroundColor: '#FF4458',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                      }}
+                      onPress={() => {
+                        const target = selectedLikesProfile;
+                        setSelectedLikesProfile(null);
+                        handleLikeMatch(target);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 18, color: '#FFF' }}>♥</Text>
+                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#FFF' }}>Like Back</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            </SafeAreaView>
+          </Modal>
+        )}
+
+        {/* Full-Screen Story & Video Preview Modal for Likes Candidate */}
+        {likesPreviewStoryIndex !== null && selectedLikesProfile && (
+          <PreviewModal
+            visible={likesPreviewStoryIndex !== null}
+            photos={
+              [
+                selectedLikesProfile.profileImage || selectedLikesProfile.image,
+                ...(selectedLikesProfile.profileImages || []),
+                ...(selectedLikesProfile.photos || []),
+                ...(selectedLikesProfile.videos || []),
+                ...(selectedLikesProfile.media || []),
+              ].filter(Boolean)
+            }
+            initialIndex={likesPreviewStoryIndex || 0}
+            userName={selectedLikesProfile.firstName || selectedLikesProfile.name || 'Candidate'}
+            userAvatar={selectedLikesProfile.profileImage || selectedLikesProfile.image}
+            isOwnProfile={false}
+            onClose={() => setLikesPreviewStoryIndex(null)}
+          />
+        )}
+
         {/* Candidate Full Story / Video Status Preview Modal */}
         {candidateStoryIndex !== null && swipeIndex < MOCK_MATCHES.length && (
           <PreviewModal
@@ -3966,6 +4390,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             initialIndex={candidateStoryIndex || 0}
             userName={MOCK_MATCHES[swipeIndex]?.name || MOCK_MATCHES[swipeIndex]?.firstName || 'Suggested Match'}
             userAvatar={MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image}
+            isOwnProfile={false}
             onClose={() => setCandidateStoryIndex(null)}
           />
         )}
@@ -4737,20 +5162,22 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   interestMiniBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: 'rgba(20, 22, 28, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     marginRight: 6,
     marginBottom: 6,
   },
   interestMiniText: {
     color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
   },
   commonInterestHighlightBadge: {
-    backgroundColor: '#FE3C72',
+    backgroundColor: '#FF4458',
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -4764,13 +5191,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   commonInterestBadgeActive: {
-    backgroundColor: 'rgba(254, 60, 114, 0.35)',
+    backgroundColor: '#FF4458',
     borderWidth: 1,
-    borderColor: '#FE3C72',
+    borderColor: '#FF4458',
   },
   commonInterestTextActive: {
     color: '#FFFFFF',
     fontWeight: '800',
+    fontSize: 12,
   },
   actionButtonsRow: {
     position: 'absolute',
@@ -6116,25 +6544,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(254, 60, 114, 0.18)',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    backgroundColor: '#FF4458',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     borderRadius: 20,
-    marginVertical: 6,
+    marginVertical: 8,
     alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: 'rgba(254, 60, 114, 0.3)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    elevation: 4,
   },
   cardDetailToggleArrow: {
-    color: '#FE3C72',
-    fontSize: 11,
-    marginRight: 5,
-    fontWeight: 'bold',
+    color: '#FFFFFF',
+    fontSize: 12,
+    marginRight: 6,
+    fontWeight: '900',
   },
   cardDetailToggleLabel: {
-    color: '#FE3C72',
-    fontSize: 10,
-    fontWeight: '700',
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   cardExpandedScroll: {
     flex: 1,
@@ -6490,6 +6922,235 @@ const styles = StyleSheet.create({
   likesGridScroll: {
     flex: 1,
     marginTop: 15,
+  },
+  likesListContainer: {
+    paddingHorizontal: 15,
+    paddingBottom: 30,
+    gap: 8,
+  },
+  instaRowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1C1C24',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  instaAvatarWrapper: {
+    position: 'relative',
+  },
+  instaAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1.5,
+    borderColor: '#FF4458',
+  },
+  instaOnlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#4CAF50',
+    borderWidth: 2,
+    borderColor: '#1C1C24',
+  },
+  instaInfoCol: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
+    justifyContent: 'center',
+  },
+  instaNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  instaNameText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  instaSuperStar: {
+    fontSize: 12,
+  },
+  instaSubtitleText: {
+    color: '#AAAAAA',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  instaActionsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  instaPassBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#2A2A36',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#3A3A4A',
+  },
+  instaPassText: {
+    color: '#FF4A4A',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  instaLikeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#2A2A36',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#3A3A4A',
+  },
+  instaLikeIcon: {
+    color: '#FF4458',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  likeRowCard: {
+    backgroundColor: '#1E1E26',
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  likeRowTopGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  likeRowAvatarWrapper: {
+    position: 'relative',
+  },
+  likeRowAvatar: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: '#FF4458',
+  },
+  likeRowOnlineDot: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#4CAF50',
+    borderWidth: 2.5,
+    borderColor: '#1E1E26',
+  },
+  likeRowSuperBadge: {
+    position: 'absolute',
+    top: -6,
+    left: -4,
+    backgroundColor: '#3897F0',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  likeRowSuperBadgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  likeRowMetaCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  likeRowNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  likeRowNameText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  likeRowAgeText: {
+    color: '#DDDDDD',
+    fontSize: 17,
+    fontWeight: '400',
+  },
+  likeRowDistanceText: {
+    color: '#AAAAAA',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  likeRowJobText: {
+    color: '#CCCCCC',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  likeRowBioSnippet: {
+    color: '#999999',
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  likeRowHorizontalActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  likeRowActionBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  likeRowActionBtnPass: {
+    backgroundColor: '#282834',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  likeRowActionPassIcon: {
+    fontSize: 14,
+    color: '#FF4A4A',
+    fontWeight: '700',
+  },
+  likeRowActionPassLabel: {
+    fontSize: 14,
+    color: '#FF4A4A',
+    fontWeight: '700',
+  },
+  likeRowActionBtnLike: {
+    backgroundColor: '#FF4458',
+  },
+  likeRowActionLikeIcon: {
+    fontSize: 15,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  likeRowActionLikeLabel: {
+    fontSize: 14,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   likeGridCard: {
     width: '47%',

@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl } from '../api/config';
+import { PreviewModal } from '../components/PreviewModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
@@ -109,6 +110,40 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
   const [actionStatusMap, setActionStatusMap] = useState({});
   const [matchedCelebrationUser, setMatchedCelebrationUser] = useState(null);
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
+
+  // Full Screen Media Preview Modal State
+  const [previewMediaModal, setPreviewMediaModal] = useState({
+    visible: false,
+    photos: [],
+    initialIndex: 0,
+    userName: '',
+    userAvatar: '',
+  });
+
+  const openMediaPreview = (profile, initialIdx = 0) => {
+    if (!profile) return;
+    const photosList = [
+      profile.profileImage,
+      ...(profile.profileImages || []),
+      ...(profile.photos || []),
+      ...(profile.videos || []),
+      ...(profile.media || []),
+    ].filter(Boolean);
+
+    const uniquePhotos = Array.from(new Set(photosList));
+    const finalPhotos =
+      uniquePhotos.length > 0
+        ? uniquePhotos
+        : [profile.profileImage || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
+
+    setPreviewMediaModal({
+      visible: true,
+      photos: finalPhotos,
+      initialIndex: initialIdx < finalPhotos.length ? initialIdx : 0,
+      userName: profile.firstName || profile.name || 'Suggested Match',
+      userAvatar: profile.profileImage || finalPhotos[0],
+    });
+  };
 
   // Initialize Search & Load Filter Metadata
   useEffect(() => {
@@ -656,16 +691,16 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               >
                 {/* Profile Image & Badges */}
                 <View style={styles.cardHeaderImageRow}>
-                <Image
-                  source={{
-                    uri: item.profileImage
-                      ? getImageUrl(item.profileImage)
-                      : (item.profileImages && item.profileImages[0]
-                          ? getImageUrl(item.profileImages[0])
-                          : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400')
-                  }}
-                  style={styles.cardAvatar}
-                />
+                  <Image
+                    source={{
+                      uri: item.profileImage
+                        ? getImageUrl(item.profileImage)
+                        : (item.profileImages && item.profileImages[0]
+                            ? getImageUrl(item.profileImages[0])
+                            : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400')
+                    }}
+                    style={styles.cardAvatar}
+                  />
                 <View style={styles.cardHeaderMeta}>
                   <View style={styles.nameRow}>
                     <Text style={styles.cardName}>{item.firstName || item.name}</Text>
@@ -1362,13 +1397,22 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   const photos = [
                     selectedProfileModal.profileImage,
                     ...(selectedProfileModal.profileImages || []),
+                    ...(selectedProfileModal.photos || []),
+                    ...(selectedProfileModal.videos || []),
+                    ...(selectedProfileModal.media || []),
                   ].filter(Boolean);
-                  const displayPhotos = photos.length > 0 ? photos : ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
+                  const uniquePhotos = Array.from(new Set(photos));
+                  const displayPhotos = uniquePhotos.length > 0 ? uniquePhotos : ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
                   const activePhoto = displayPhotos[activePhotoIndex % displayPhotos.length];
 
                   return (
                     <View style={styles.carouselImageWrapper}>
-                      <Image source={{ uri: getImageUrl(activePhoto) }} style={styles.carouselImage} />
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => openMediaPreview(selectedProfileModal, activePhotoIndex)}
+                      >
+                        <Image source={{ uri: getImageUrl(activePhoto) }} style={styles.carouselImage} />
+                      </TouchableOpacity>
                       {displayPhotos.length > 1 && (
                         <View style={styles.photoIndicatorRow}>
                           {displayPhotos.map((_, idx) => (
@@ -1608,6 +1652,19 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
           </View>
         )}
       </Modal>
+
+      {/* Full-Screen Photo & Video Preview Modal */}
+      {previewMediaModal.visible && (
+        <PreviewModal
+          visible={previewMediaModal.visible}
+          photos={previewMediaModal.photos}
+          initialIndex={previewMediaModal.initialIndex}
+          userName={previewMediaModal.userName}
+          userAvatar={previewMediaModal.userAvatar}
+          isOwnProfile={false}
+          onClose={() => setPreviewMediaModal((prev) => ({ ...prev, visible: false }))}
+        />
+      )}
     </SafeAreaView>
   );
 }

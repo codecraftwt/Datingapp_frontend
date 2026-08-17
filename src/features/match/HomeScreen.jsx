@@ -3008,6 +3008,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             initialIndex={candidateStoryIndex || 0}
             userName={MOCK_MATCHES[swipeIndex]?.name || MOCK_MATCHES[swipeIndex]?.firstName || 'Suggested Match'}
             userAvatar={MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image}
+            isOwnProfile={false}
             onClose={() => setCandidateStoryIndex(null)}
           />
         )}

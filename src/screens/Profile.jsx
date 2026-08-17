@@ -794,15 +794,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.actionRow}
-          onPress={handleLogoutAllDevices}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.actionIcon}>🌐</Text>
-          <Text style={[styles.actionText, styles.logoutText]}>Logout From All Devices</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
           style={[styles.actionRow, styles.deleteAccountRow]}
           onPress={handleDeleteAccount}
           activeOpacity={0.7}
@@ -892,6 +883,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         initialIndex={activeStoryIndex || 0}
         userName={displayData.firstName || displayData.name || 'My Status'}
         userAvatar={mainPhotoUrl}
+        isOwnProfile={true}
         onClose={() => setActiveStoryIndex(null)}
         onHideMedia={async (hiddenUrl) => {
           try {
@@ -917,6 +909,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         userName="Hidden Photos & Videos 🙈"
         userAvatar={mainPhotoUrl}
         isHiddenMode={true}
+        isOwnProfile={true}
         onClose={() => setActiveHiddenStoryIndex(null)}
         onUnhideMedia={async (unhideUrl) => {
           try {

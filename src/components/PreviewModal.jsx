@@ -25,6 +25,7 @@ export const PreviewModal = ({
   onHideMedia,
   onUnhideMedia,
   isHiddenMode = false,
+  isOwnProfile = false,
 }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
@@ -37,6 +38,8 @@ export const PreviewModal = ({
   // Three Dots options menu state & hidden media set
   const [menuVisible, setMenuVisible] = useState(false);
   const [hiddenIndices, setHiddenIndices] = useState(new Set());
+
+  const showHideOptionsBtn = isOwnProfile && (typeof onHideMedia === 'function' || typeof onUnhideMedia === 'function');
 
   const IMAGE_DURATION = 4000; // 4 seconds for images
   const DEFAULT_VIDEO_DURATION = 15000; // fallback max 15 seconds for video status items
@@ -281,16 +284,18 @@ export const PreviewModal = ({
             </View>
 
             <View style={styles.headerRightControls}>
-              <TouchableOpacity
-                style={styles.threeDotsBtn}
-                onPress={() => {
-                  setIsPaused(true);
-                  setMenuVisible(true);
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.threeDotsText}>⋮</Text>
-              </TouchableOpacity>
+              {showHideOptionsBtn && (
+                <TouchableOpacity
+                  style={styles.threeDotsBtn}
+                  onPress={() => {
+                    setIsPaused(true);
+                    setMenuVisible(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.threeDotsText}>⋮</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity style={styles.closeButton} onPress={onClose} activeOpacity={0.7}>
                 <Text style={styles.closeButtonText}>✕</Text>
@@ -306,74 +311,74 @@ export const PreviewModal = ({
           </Text>
         </View>
 
-        {/* Three Dots Options Menu Modal */}
-        <Modal
-          visible={menuVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => {
-            setMenuVisible(false);
-            setIsPaused(false);
-          }}
-        >
-          <TouchableWithoutFeedback
-            onPress={() => {
+        {/* Three Dots Options Menu Modal (Only visible when managing own profile media) */}
+        {showHideOptionsBtn && (
+          <Modal
+            visible={menuVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => {
               setMenuVisible(false);
               setIsPaused(false);
             }}
           >
-            <View style={styles.menuOverlay}>
-              <TouchableWithoutFeedback>
-                <View style={styles.menuCard}>
-                  <View style={styles.menuHeaderRow}>
-                    <Text style={styles.menuHeaderTitle}>Media Options</Text>
+            <TouchableWithoutFeedback
+              onPress={() => {
+                setMenuVisible(false);
+                setIsPaused(false);
+              }}
+            >
+              <View style={styles.menuOverlay}>
+                <TouchableWithoutFeedback>
+                  <View style={styles.menuCard}>
+                    <View style={styles.menuHeaderRow}>
+                      <Text style={styles.menuHeaderTitle}>Media Options</Text>
+                    </View>
+
+                    {isHiddenMode ? (
+                      <TouchableOpacity
+                        style={styles.menuOptionBtn}
+                        onPress={handleUnhideCurrentMedia}
+                        activeOpacity={0.8}
+                      >
+                        <View style={styles.menuOptionIconBox}>
+                          <Text style={styles.menuOptionIcon}>👁️</Text>
+                        </View>
+                        <View style={styles.menuOptionTextCol}>
+                          <Text style={styles.menuOptionText}>Unhide {isCurrentVideo ? 'Video' : 'Image'}</Text>
+                          <Text style={styles.menuOptionSubText}>Restore this {isCurrentVideo ? 'video clip' : 'image'} to your public profile</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.menuOptionBtn}
+                        onPress={handleHideCurrentMedia}
+                        activeOpacity={0.8}
+                      >
+
+                        <View style={styles.menuOptionTextCol}>
+                          <Text style={styles.menuOptionText}>Hide {isCurrentVideo ? 'Video' : 'Image'}</Text>
+                          <Text style={styles.menuOptionSubText}>Remove this {isCurrentVideo ? 'video clip' : 'image'} from preview</Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+
+                    <TouchableOpacity
+                      style={styles.menuCancelBtn}
+                      onPress={() => {
+                        setMenuVisible(false);
+                        setIsPaused(false);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.menuCancelText}>Cancel</Text>
+                    </TouchableOpacity>
                   </View>
-
-                  {isHiddenMode ? (
-                    <TouchableOpacity
-                      style={styles.menuOptionBtn}
-                      onPress={handleUnhideCurrentMedia}
-                      activeOpacity={0.8}
-                    >
-                      <View style={styles.menuOptionIconBox}>
-                        <Text style={styles.menuOptionIcon}>👁️</Text>
-                      </View>
-                      <View style={styles.menuOptionTextCol}>
-                        <Text style={styles.menuOptionText}>Unhide {isCurrentVideo ? 'Video' : 'Image'}</Text>
-                        <Text style={styles.menuOptionSubText}>Restore this {isCurrentVideo ? 'video clip' : 'image'} to your public profile</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.menuOptionBtn}
-                      onPress={handleHideCurrentMedia}
-                      activeOpacity={0.8}
-                    >
-                      <View style={styles.menuOptionIconBox}>
-                        <Text style={styles.menuOptionIcon}>🙈</Text>
-                      </View>
-                      <View style={styles.menuOptionTextCol}>
-                        <Text style={styles.menuOptionText}>Hide {isCurrentVideo ? 'Video' : 'Image'}</Text>
-                        <Text style={styles.menuOptionSubText}>Remove this {isCurrentVideo ? 'video clip' : 'image'} from preview</Text>
-                      </View>
-                    </TouchableOpacity>
-                  )}
-
-                  <TouchableOpacity
-                    style={styles.menuCancelBtn}
-                    onPress={() => {
-                      setMenuVisible(false);
-                      setIsPaused(false);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.menuCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                </View>
-              </TouchableWithoutFeedback>
-            </View>
-          </TouchableWithoutFeedback>
-        </Modal>
+                </TouchableWithoutFeedback>
+              </View>
+            </TouchableWithoutFeedback>
+          </Modal>
+        )}
       </View>
     </Modal>
   );

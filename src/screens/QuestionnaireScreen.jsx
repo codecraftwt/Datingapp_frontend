@@ -295,10 +295,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           return;
         }
 
-        // Check 15 seconds video duration limit for slots 2-9
+        // If video is longer than 15s, backend Cloudinary transformation automatically trims to first 15s
         if (isVideo && asset.duration && asset.duration > 15) {
-          Alert.alert('Video Duration Limit', 'Video clips must be 15 seconds or less. Please select a shorter video.');
-          return;
+          console.log('[QuestionnaireScreen] Selected video > 15s. Cloudinary will automatically trim to first 15s.');
         }
 
         console.log(`[QuestionnaireScreen] Selected asset for Slot #${slotIndex + 1}:`, {
@@ -1274,6 +1273,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         initialIndex={activeStoryIndex || 0}
         userName={firstName || 'My Status'}
         userAvatar={validStoryPhotos[0]}
+        isOwnProfile={true}
         onClose={() => setActiveStoryIndex(null)}
         onHideMedia={(hiddenUrl, index) => {
           if (typeof index === 'number' && index >= 0) {
