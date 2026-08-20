@@ -193,7 +193,7 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
   return (
     <SimulatedGradientBackground>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardView}
       >
         <ScrollView

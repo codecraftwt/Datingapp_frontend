@@ -9,14 +9,16 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  ToastAndroid,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch } from 'react-redux';
 import { setCredentials } from '../redux/slices/authSlice';
-import { apiClient } from '../api/apiClient';
+import { apiClient, setAuthToken } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
+import { registerFcmToken } from '../services/notificationService';
 
 export const LoginScreen = ({ onNavigate }) => {
   const dispatch = useDispatch();
@@ -56,7 +58,17 @@ export const LoginScreen = ({ onNavigate }) => {
         await AsyncStorage.setItem(`profileData_${userId}`, JSON.stringify(user));
       }
 
+      setAuthToken(token);
       dispatch(setCredentials({ user, token }));
+
+      // Immediately trigger FCM Token registration after credentials set
+      registerFcmToken().catch((e) => console.log('[LoginScreen] FCM register notice:', e));
+
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Logged in successfully! 👋', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Login Successful 🎉', 'Welcome back!');
+      }
 
       if (onNavigate) {
         if (isReturningUser) {
@@ -154,7 +166,7 @@ export const LoginScreen = ({ onNavigate }) => {
   return (
     <SimulatedGradientBackground>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardView}
       >
         <ScrollView

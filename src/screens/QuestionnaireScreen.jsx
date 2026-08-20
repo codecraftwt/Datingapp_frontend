@@ -14,10 +14,11 @@ import {
   useWindowDimensions,
   PermissionsAndroid,
 } from 'react-native';
-import { launchImageLibrary } from 'react-native-image-picker';
+import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
 import { syncUserLocationService } from '../services/locationService';
+import { registerFcmToken } from '../services/notificationService';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
@@ -200,15 +201,35 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       if (initialData.interests && Array.isArray(initialData.interests)) setSelectedInterests(initialData.interests);
       if (initialData.languages && Array.isArray(initialData.languages)) setSelectedLanguages(initialData.languages);
 
-      // Populate 9 photos grid
-      const existingPhotos = initialData.profileImages || initialData.photos || [];
+      // Populate 9 photos grid with 1-to-1 index matching:
+      // Slot #1 (index 0) reads ONLY from profileImage (POST /api/profile/main-photo)
       const initialGrid = Array(9).fill(null);
-      if (initialData.profileImage) {
+      if (
+        initialData.profileImage &&
+        typeof initialData.profileImage === 'string' &&
+        initialData.profileImage.trim().length > 0
+      ) {
         initialGrid[0] = initialData.profileImage;
+      } else {
+        initialGrid[0] = null; // Strictly BLANK if no main profile photo exists!
       }
-      existingPhotos.forEach((img, idx) => {
-        if (idx < 9 && img) initialGrid[idx] = img;
-      });
+
+      // Slots #2 through #9 (indices 1 to 8) read strictly from photos[1..8] / media[1..8]
+      const photosArray = Array.isArray(initialData.photos)
+        ? initialData.photos
+        : Array.isArray(initialData.media)
+        ? initialData.media
+        : [];
+
+      for (let i = 1; i < 9; i++) {
+        const item = photosArray[i];
+        if (item && typeof item === 'string' && item.trim().length > 0) {
+          initialGrid[i] = item;
+        } else {
+          initialGrid[i] = null;
+        }
+      }
+
       setPhotos(initialGrid);
     } else {
       setPhotos(Array(9).fill(null));
@@ -267,14 +288,190 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     );
   };
 
-  const handlePickImageForSlot = (slotIndex) => {
+  const processSelectedAsset = async (slotIndex, asset) => {
+    if (!asset || !asset.uri) return;
+    const isMainProfileSlot = slotIndex === 0;
+    const localUri = asset.uri;
+    const isVideo = asset.type?.startsWith('video/') || isVideoUrl(asset.fileName || localUri);
+
+    // Slot #1 (Main Profile Picture) MUST be a photo ONLY
+    if (isMainProfileSlot && isVideo) {
+      Alert.alert(
+        'Main Profile Picture (Slot #1)',
+        'Your main profile picture (Slot #1) must be a photo. You can upload video clips in slots #2 through #9.'
+      );
+      return;
+    }
+
+    // If video is longer than 15s, backend Cloudinary transformation automatically trims to first 15s
+    if (isVideo && asset.duration && asset.duration > 15) {
+      console.log('[QuestionnaireScreen] Selected video > 15s. Cloudinary will automatically trim to first 15s.');
+    }
+
+    console.log(`[QuestionnaireScreen] Selected asset for Slot #${slotIndex + 1}:`, {
+      uri: localUri,
+      type: asset.type,
+      fileName: asset.fileName,
+      fileSize: asset.fileSize,
+      isVideo,
+    });
+
+    // 100MB video limit
+    const maxVideoSizeBytes = 100 * 1024 * 1024; // 100 MB
+    if (isVideo && asset.fileSize && asset.fileSize > maxVideoSizeBytes) {
+      Alert.alert(
+        'Video Size Exceeded',
+        `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video clip under 100MB (or 15 seconds or less) for app stability.`
+      );
+      return;
+    }
+
+    // Optimistically set local URI for immediate UI preview so preview never disappears
+    setPhotos((prevPhotos) => {
+      const updated = [...prevPhotos];
+      updated[slotIndex] = localUri;
+      return updated;
+    });
+
+    // Upload file (Photo or Video) to Backend & Cloudinary
+    try {
+      setUploadingSlotIndex(slotIndex);
+      const formData = new FormData();
+      const ext = isVideo ? 'mp4' : 'jpg';
+      const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
+
+      const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}_slot${slotIndex + 1}.${ext}`;
+
+      formData.append('photo', {
+        uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
+        type: mime,
+        name: safeName,
+      });
+
+      console.log(`[QuestionnaireScreen] Uploading slot media (Slot #${slotIndex + 1})...`, { mime, ext });
+      const uploadRes = slotIndex === 0
+        ? await apiClient.uploadMainPhoto(formData)
+        : await apiClient.uploadGalleryMedia(formData, slotIndex);
+
+      console.log('[QuestionnaireScreen] Upload response:', uploadRes);
+
+      const cloudinaryUrl = uploadRes?.profileImage || uploadRes?.mediaUrl || uploadRes?.url || uploadRes?.data?.url || uploadRes?.secure_url;
+      console.log('[QuestionnaireScreen] Cloudinary URL for slot:', cloudinaryUrl);
+
+      if (cloudinaryUrl) {
+        setPhotos((prevPhotos) => {
+          const updated = [...prevPhotos];
+          updated[slotIndex] = cloudinaryUrl;
+          return updated;
+        });
+      }
+    } catch (uploadErr) {
+      console.error('[QuestionnaireScreen] Backend upload error:', uploadErr);
+      const errorMsg =
+        uploadErr?.data?.message ||
+        uploadErr?.message ||
+        'Upload encountered an issue. Please try again.';
+      Alert.alert('Upload Error', errorMsg);
+    } finally {
+      setUploadingSlotIndex(null);
+    }
+  };
+
+  const requestAndroidCameraPermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const isGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+        if (isGranted) return true;
+
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.CAMERA,
+          {
+            title: 'Camera Permission Required',
+            message: 'Spark Dating App needs camera access so you can capture photos or videos for your profile.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED || granted === true || granted === 'granted';
+      } catch (err) {
+        console.warn('Camera permission request error:', err);
+        return true;
+      }
+    }
+    return true;
+  };
+
+  const openCameraForSlot = async (slotIndex) => {
+    const isMainProfileSlot = slotIndex === 0;
+    const hasPermission = await requestAndroidCameraPermission();
+    if (!hasPermission) {
+      console.log('[QuestionnaireScreen] Camera permission check returned false, attempting launchCamera fallback...');
+    }
+
+    const cameraOptions = isMainProfileSlot
+      ? { mediaType: 'photo', quality: 0.7, maxWidth: 1080, maxHeight: 1080, cameraType: 'front' }
+      : { mediaType: 'mixed', videoQuality: 'low', quality: 0.7, durationLimit: 15, maxWidth: 1080, maxHeight: 1080 };
+
+    launchCamera(cameraOptions, (response) => {
+      if (response.didCancel) return;
+      if (response.errorCode) {
+        if (response.errorCode === 'permission') {
+          Alert.alert(
+            'Camera Permission Needed 📷',
+            'Please grant camera permission in your phone settings (Settings > Apps > Dating App > Permissions > Camera) to capture photos.'
+          );
+        } else {
+          Alert.alert('Camera Error', response.errorMessage || 'Unable to open camera.');
+        }
+        return;
+      }
+      if (response.assets && response.assets.length > 0) {
+        processSelectedAsset(slotIndex, response.assets[0]);
+      }
+    });
+  };
+
+  const openVideoCameraForSlot = async (slotIndex) => {
+    const hasPermission = await requestAndroidCameraPermission();
+    if (!hasPermission) {
+      console.log('[QuestionnaireScreen] Camera permission check returned false, attempting launchCamera fallback...');
+    }
+
+    launchCamera(
+      {
+        mediaType: 'video',
+        videoQuality: 'low',
+        durationLimit: 15,
+        cameraType: 'front',
+      },
+      (response) => {
+        if (response.didCancel) return;
+        if (response.errorCode) {
+          if (response.errorCode === 'permission') {
+            Alert.alert(
+              'Camera Permission Needed 📹',
+              'Please grant camera permission in your phone settings (Settings > Apps > Dating App > Permissions > Camera) to record video.'
+            );
+          } else {
+            Alert.alert('Camera Error', response.errorMessage || 'Unable to open video camera.');
+          }
+          return;
+        }
+        if (response.assets && response.assets.length > 0) {
+          processSelectedAsset(slotIndex, response.assets[0]);
+        }
+      }
+    );
+  };
+
+  const openGalleryForSlot = (slotIndex) => {
     const isMainProfileSlot = slotIndex === 0;
     const pickerOptions = isMainProfileSlot
       ? { mediaType: 'photo', quality: 0.7, maxWidth: 1080, maxHeight: 1080 }
       : { mediaType: 'mixed', videoQuality: 'low', quality: 0.7, durationLimit: 15, maxWidth: 1080, maxHeight: 1080 };
 
-    launchImageLibrary(pickerOptions, async (response) => {
-      console.log('[QuestionnaireScreen] launchImageLibrary response:', JSON.stringify(response));
+    launchImageLibrary(pickerOptions, (response) => {
       if (response.didCancel) return;
       if (response.errorCode) {
         console.error('[QuestionnaireScreen] Media Picker error:', response.errorMessage);
@@ -282,90 +479,62 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         return;
       }
       if (response.assets && response.assets.length > 0) {
-        const asset = response.assets[0];
-        const localUri = asset.uri;
-        const isVideo = asset.type?.startsWith('video/') || isVideoUrl(asset.fileName || localUri);
-
-        // Slot #1 (Main Profile Picture) MUST be a photo ONLY
-        if (isMainProfileSlot && isVideo) {
-          Alert.alert(
-            'Main Profile Picture (Slot #1)',
-            'Your main profile picture (Slot #1) must be a photo. You can upload video clips in slots #2 through #9.'
-          );
-          return;
-        }
-
-        // If video is longer than 15s, backend Cloudinary transformation automatically trims to first 15s
-        if (isVideo && asset.duration && asset.duration > 15) {
-          console.log('[QuestionnaireScreen] Selected video > 15s. Cloudinary will automatically trim to first 15s.');
-        }
-
-        console.log(`[QuestionnaireScreen] Selected asset for Slot #${slotIndex + 1}:`, {
-          uri: localUri,
-          type: asset.type,
-          fileName: asset.fileName,
-          fileSize: asset.fileSize,
-          isVideo,
-        });
-
-        // 100MB video limit
-        const maxVideoSizeBytes = 100 * 1024 * 1024; // 100 MB
-        if (isVideo && asset.fileSize && asset.fileSize > maxVideoSizeBytes) {
-          Alert.alert(
-            'Video Size Exceeded',
-            `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video clip under 100MB (or 15 seconds or less) for app stability.`
-          );
-          return;
-        }
-
-        // Optimistically set local URI for immediate UI preview so preview never disappears
-        setPhotos((prevPhotos) => {
-          const updated = [...prevPhotos];
-          updated[slotIndex] = localUri;
-          return updated;
-        });
-
-        // Upload file (Photo or Video) to Backend & Cloudinary
-        try {
-          setUploadingSlotIndex(slotIndex);
-          const formData = new FormData();
-          const ext = isVideo ? 'mp4' : 'jpg';
-          const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
-
-          const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}_slot${slotIndex + 1}.${ext}`;
-
-          formData.append('photo', {
-            uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
-            type: mime,
-            name: safeName,
-          });
-
-          console.log('[QuestionnaireScreen] Uploading slot media to /api/profile/upload...', { mime, ext });
-          const uploadRes = await apiClient.uploadImage(formData);
-          console.log('[QuestionnaireScreen] Cloudinary uploadRes:', uploadRes);
-
-          const cloudinaryUrl = uploadRes?.url || uploadRes?.data?.url || uploadRes?.secure_url;
-          console.log('[QuestionnaireScreen] Cloudinary URL for slot:', cloudinaryUrl);
-
-          if (cloudinaryUrl) {
-            setPhotos((prevPhotos) => {
-              const updated = [...prevPhotos];
-              updated[slotIndex] = cloudinaryUrl;
-              return updated;
-            });
-          }
-        } catch (uploadErr) {
-          console.error('[QuestionnaireScreen] Backend Cloudinary upload error:', uploadErr);
-          const errorMsg =
-            uploadErr?.data?.message ||
-            uploadErr?.message ||
-            'Video upload was delayed or encountered a server issue.';
-          Alert.alert('Upload Error', errorMsg);
-        } finally {
-          setUploadingSlotIndex(null);
-        }
+        processSelectedAsset(slotIndex, response.assets[0]);
       }
     });
+  };
+
+  const handlePickImageForSlot = (slotIndex) => {
+    const isMainProfileSlot = slotIndex === 0;
+    const hasExistingItem = photos[slotIndex] && typeof photos[slotIndex] === 'string' && photos[slotIndex].trim().length > 0;
+
+    const options = [];
+
+    if (isMainProfileSlot) {
+      options.push({
+        text: hasExistingItem ? '📸 Replace Photo (Camera)' : '📸 Take Photo (Camera)',
+        onPress: () => openCameraForSlot(slotIndex),
+      });
+      options.push({
+        text: hasExistingItem ? '🖼️ Replace Photo (Gallery)' : '🖼️ Choose Photo from Gallery',
+        onPress: () => openGalleryForSlot(slotIndex),
+      });
+    } else {
+      options.push({
+        text: hasExistingItem ? '📸 Replace with Photo (Camera)' : '📸 Take Photo (Camera)',
+        onPress: () => openCameraForSlot(slotIndex),
+      });
+      options.push({
+        text: hasExistingItem ? '🎥 Replace with Video Clip (Camera)' : '🎥 Record Video Clip (Camera)',
+        onPress: () => openVideoCameraForSlot(slotIndex),
+      });
+      options.push({
+        text: hasExistingItem ? '🖼️ Replace from Gallery' : '🖼️ Choose Photo / Video from Gallery',
+        onPress: () => openGalleryForSlot(slotIndex),
+      });
+    }
+
+    if (hasExistingItem) {
+      options.push({
+        text: '🗑️ Remove Item',
+        style: 'destructive',
+        onPress: () => handleRemovePhotoSlot(slotIndex),
+      });
+    }
+
+    options.push({
+      text: 'Cancel',
+      style: 'cancel',
+    });
+
+    Alert.alert(
+      isMainProfileSlot ? 'Main Profile Photo (Slot #1) 📷' : `Manage Slot #${slotIndex + 1} 📷`,
+      isMainProfileSlot
+        ? 'Slot #1 is your main profile picture and must be a photo.'
+        : (hasExistingItem ? 'Choose an action for this slot:' : 'Choose how you would like to add media to this slot:'),
+      options,
+      { cancelable: true }
+    );
   };
 
   const handleRemovePhotoSlot = (slotIndex) => {
@@ -374,9 +543,13 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     updatedPhotos[slotIndex] = null;
     setPhotos(updatedPhotos);
 
-    if (photoToRemove && typeof photoToRemove === 'string' && photoToRemove.trim().length > 0) {
-      apiClient.removeProfilePhoto({ imageUrl: photoToRemove, index: slotIndex }).catch((err) => {
-        console.log('Error removing photo slot from backend:', err);
+    if (slotIndex === 0) {
+      apiClient.removeMainPhoto().catch((err) => {
+        console.log('Error removing main photo slot from backend:', err);
+      });
+    } else {
+      apiClient.removeGalleryMedia(slotIndex).catch((err) => {
+        console.log('Error removing gallery media slot from backend:', err);
       });
     }
   };
@@ -449,20 +622,13 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
     console.log('[QuestionnaireScreen] Final uploadedPhotosList:', uploadedPhotosList);
 
+    const mainProfilePhoto = uploadedPhotosList[0] || null;
     const validPhotos = uploadedPhotosList.filter((p) => p && typeof p === 'string' && p.trim().length > 0);
-    const primaryPhoto = validPhotos[0] || null;
     const age = calculateAge();
 
     // [LOCATION SYNC DISABLED AFTER REGISTRATION]: Live location is captured ONLY at registration time in RegisterScreen.
     // Location check/sync after registration is disabled.
     let coords = null;
-    /*
-    try {
-      coords = await syncUserLocationService(false);
-    } catch (locErr) {
-      console.log('Location acquisition error during questionnaire submit:', locErr);
-    }
-    */
 
     const profileData = {
       firstName: firstName.trim(),
@@ -491,11 +657,11 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       bio: bio.trim(),
       interests: selectedInterests,
       languages: selectedLanguages,
-      profileImage: primaryPhoto,
-      profileImages: validPhotos,
-      photos: validPhotos,
-      videos: validPhotos.filter((p) => isVideoUrl(p)),
-      media: validPhotos,
+      profileImage: mainProfilePhoto,
+      profileImages: uploadedPhotosList,
+      photos: uploadedPhotosList,
+      videos: uploadedPhotosList.filter((p) => p && isVideoUrl(p)),
+      media: uploadedPhotosList,
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       completionPercentage: (() => {
         let computedPct = 0;
@@ -525,6 +691,8 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       const saveRes = await apiClient.saveQuestionnaire(profileData);
       console.log('[QuestionnaireScreen] saveQuestionnaire API Response:', saveRes);
 
+      registerFcmToken().catch((e) => console.log('[QuestionnaireScreen] FCM register error:', e));
+
       if (isEditMode && onCloseModal) {
         onCloseModal();
       }
@@ -547,7 +715,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   return (
     <SimulatedGradientBackground>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.keyboardView}
       >
         <ScrollView
@@ -1164,17 +1332,14 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                           activeOpacity={0.8}
                           style={styles.storyRing}
                         >
-                          {isVid ? (
-                            <Video
-                              source={{ uri: url }}
-                              style={styles.storyThumb}
-                              paused={true}
-                              muted={true}
-                              resizeMode="cover"
-                            />
-                          ) : (
+                          <View style={styles.circularThumbContainer}>
                             <Image source={{ uri: thumb }} style={styles.storyThumb} />
-                          )}
+                            {isVid && (
+                              <View style={styles.playIconOverlay}>
+                                <Text style={styles.playIconText}>▶</Text>
+                              </View>
+                            )}
+                          </View>
                           <Text style={styles.storyBadge}>{isVid ? '🎬 Video' : `Photo #${idx + 1}`}</Text>
                         </TouchableOpacity>
                       );
@@ -1550,10 +1715,34 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FE3C72',
   },
+  circularThumbContainer: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#000',
+  },
   storyThumb: {
     width: 58,
     height: 58,
     borderRadius: 29,
+  },
+  playIconOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playIconText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 2,
   },
   storyBadge: {
     color: '#FFFFFF',

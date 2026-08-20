@@ -4,8 +4,12 @@ import { BASE_URL, CANDIDATE_URLS, LIVE_URL, getBaseUrl, setBaseUrl } from './co
 let isResolving = false;
 let activeResolvedUrl = null;
 
+export const resetResolvedUrl = () => {
+  activeResolvedUrl = null;
+};
+
 const resolveWorkingBaseUrl = async () => {
-  if (activeResolvedUrl) return activeResolvedUrl;
+  if (activeResolvedUrl && activeResolvedUrl !== LIVE_URL) return activeResolvedUrl;
   if (isResolving) return getBaseUrl();
   isResolving = true;
 
@@ -150,9 +154,17 @@ const request = async (url, options = {}, isRetry = false) => {
 export const apiClient = {
   // Auth endpoints
   register: async (userData) => {
+    let payload = { ...userData };
+    if (!payload.fcmToken) {
+      try {
+        const { getFcmTokenOnly } = require('../services/notificationService');
+        const fcm = await getFcmTokenOnly();
+        if (fcm) payload.fcmToken = fcm;
+      } catch (e) {}
+    }
     const res = await request('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify(userData),
+      body: JSON.stringify(payload),
     });
     const token = res.token || res.data?.token;
     if (token) {
@@ -162,9 +174,17 @@ export const apiClient = {
     return res;
   },
   login: async (credentials) => {
+    let payload = { ...credentials };
+    if (!payload.fcmToken) {
+      try {
+        const { getFcmTokenOnly } = require('../services/notificationService');
+        const fcm = await getFcmTokenOnly();
+        if (fcm) payload.fcmToken = fcm;
+      } catch (e) {}
+    }
     const res = await request('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify(credentials),
+      body: JSON.stringify(payload),
     });
     const token = res.token || res.data?.token;
     if (token) {
@@ -230,10 +250,13 @@ export const apiClient = {
     });
   },
   updateFcmToken: async (fcmToken) => {
-    return await request('/api/profile/fcm-token', {
+    console.log('[API-CLIENT] Sending PUT /api/profile/fcm-token with token:', fcmToken ? (fcmToken.substring(0, 20) + '...') : 'EMPTY');
+    const res = await request('/api/profile/fcm-token', {
       method: 'PUT',
       body: JSON.stringify({ fcmToken }),
     });
+    console.log('[API-CLIENT] PUT /api/profile/fcm-token server response:', res);
+    return res;
   },
   updateLocation: async (locationData) => {
     return await request('/api/profile/location', {
@@ -482,5 +505,53 @@ export const apiClient = {
       method: 'PUT',
       body: JSON.stringify(preferences),
     });
+  },
+  // Main Profile Photo endpoints (Slot #1)
+  uploadMainPhoto: async (formData) => {
+    return await request('/api/profile/main-photo', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+  updateMainPhoto: async (formData) => {
+    return await request('/api/profile/main-photo', {
+      method: 'PUT',
+      body: formData,
+    });
+  },
+  removeMainPhoto: async () => {
+    return await request('/api/profile/main-photo', {
+      method: 'DELETE',
+    });
+  },
+
+  // Gallery & Preview Media endpoints (Slots #2 - #9)
+  uploadGalleryMedia: async (formData, slotIndex) => {
+    const query = slotIndex !== undefined ? `?slotIndex=${slotIndex}` : '';
+    return await request(`/api/profile/gallery-media${query}`, {
+      method: 'POST',
+      body: formData,
+    });
+  },
+  updateGalleryMedia: async (formData, slotIndex) => {
+    const query = slotIndex !== undefined ? `?slotIndex=${slotIndex}` : '';
+    return await request(`/api/profile/gallery-media${query}`, {
+      method: 'PUT',
+      body: formData,
+    });
+  },
+  removeGalleryMedia: async (slotIndex) => {
+    return await request(`/api/profile/gallery-media/${slotIndex}`, {
+      method: 'DELETE',
+    });
+  },
+  getGalleryPreview: async () => {
+    return await request('/api/profile/gallery-preview', {
+      method: 'GET',
+    });
+  },
+
+  resetResolvedUrl: () => {
+    resetResolvedUrl();
   },
 };

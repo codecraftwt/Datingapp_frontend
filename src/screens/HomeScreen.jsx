@@ -60,6 +60,7 @@ import {
 import io from 'socket.io-client';
 import { createSound } from 'react-native-nitro-sound';
 import soundService from '../services/soundService';
+import { registerFcmToken } from '../services/notificationService';
 
 const MOCK_STICKERS = [
   { id: 'heart', char: '❤️', label: 'Heart' },
@@ -80,7 +81,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const getImageUrl = (url) => {
   if (!url || typeof url !== 'string' || url.trim() === '') {
-    return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=600';
+    return '';
   }
   return formatConfigUrl(url);
 };
@@ -1174,7 +1175,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (currentUser && (currentUser.id || currentUser._id)) {
       const currentId = currentUser.id || currentUser._id;
       console.log('Connecting to Socket.IO at:', socketUrl);
-      socketRef.current = io(socketUrl);
+      socketRef.current = io(socketUrl, {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
+      });
 
       socketRef.current.on('connect', () => {
         console.log('Socket.IO connected successfully, emitting join with:', currentId);
@@ -1291,15 +1299,66 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('receive_message', (msg) => {
         console.log('Socket.IO received message:', msg);
+
+        const senderIdStr = (msg.senderId || msg.sender)?.toString();
+        const formattedMsg = {
+          id: (msg._id || msg.id || Date.now()).toString(),
+          sender: 'them',
+          text: msg.text || '',
+          time: new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          messageType: msg.messageType || 'text',
+          mediaUrl: msg.mediaUrl,
+          fileName: msg.fileName,
+          fileSize: msg.fileSize,
+          stickerId: msg.stickerId,
+          status: msg.status || 'delivered',
+        };
+
+        // 1. Instantly update activeChat state if user is currently chatting with sender
+        setActiveChat((prevActive) => {
+          if (!prevActive) return prevActive;
+          const activeId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+          if (activeId === senderIdStr) {
+            const existingMsgs = prevActive.messages || [];
+            if (existingMsgs.some((m) => (m.id || m._id)?.toString() === formattedMsg.id)) {
+              return prevActive;
+            }
+            return {
+              ...prevActive,
+              messages: [...existingMsgs, formattedMsg],
+            };
+          }
+          return prevActive;
+        });
+
+        // 2. Instantly update chats list state
+        setChats((prevChats) => {
+          if (!Array.isArray(prevChats)) return prevChats;
+          return prevChats.map((c) => {
+            const chatPartnerId = (c.id || c._id || c.userId)?.toString();
+            if (chatPartnerId === senderIdStr) {
+              const msgs = c.messages || [];
+              const exists = msgs.some((m) => (m.id || m._id)?.toString() === formattedMsg.id);
+              return {
+                ...c,
+                lastMessage: formattedMsg.text || 'Message',
+                lastMessageTime: formattedMsg.time,
+                messages: exists ? msgs : [...msgs, formattedMsg],
+              };
+            }
+            return c;
+          });
+        });
+
         if (handleIncomingMessageRef.current) {
-          handleIncomingMessageRef.current(msg);
+          try { handleIncomingMessageRef.current(msg); } catch (e) { console.log('Error handling incoming msg:', e); }
         }
-        refetchMessages();
-        refetchChatMessages();
+        try { if (typeof refetchMessages === 'function') refetchMessages(); } catch (e) {}
+        try { if (typeof refetchChatMessages === 'function') refetchChatMessages(); } catch (e) {}
 
         // If user is not currently in the active chat conversation with sender, show instant pop-up banner notification
         const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
-        const isCurrentlyViewingChat = activePartnerId && activePartnerId === msg.senderId?.toString();
+        const isCurrentlyViewingChat = activePartnerId && activePartnerId === senderIdStr;
         if (!isCurrentlyViewingChat) {
           const senderDisplayName = msg.senderName || 'Someone';
           let bodyText = msg.text || '💬 Sent a message';
@@ -1315,8 +1374,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               body: bodyText,
               data: {
                 type: 'chat',
-                senderId: msg.senderId,
-                messageId: msg._id,
+                senderId: senderIdStr,
+                messageId: formattedMsg.id,
               },
             }).catch((e) => console.log('Instant message notification display note:', e));
           }
@@ -1325,24 +1384,34 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('new_match', (data) => {
         console.log('Socket.IO received new_match event:', data);
-        refetchMatchesList();
-        refetchLikes();
+        try { if (typeof refetchMatchesList === 'function') refetchMatchesList(); } catch (e) {}
+        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) {}
         if (data?.matchedUser) {
           setMatchedUser(data.matchedUser);
           setShowMatchPopup(true);
+        }
+        if (data?.title && data?.body) {
+          if (typeof displayLocalSystemNotification === 'function') {
+            displayLocalSystemNotification({
+              title: data.title,
+              body: data.body,
+              data: { type: 'match', userId: data.matchedUser?.id || data.matchedUser?._id },
+            }).catch(() => {});
+          }
         }
       });
 
       socketRef.current.on('new_like', (data) => {
         console.log('Socket.IO received new_like event:', data);
-        refetchLikes();
+        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) {}
+        try { if (typeof fetchUnreadLikesCount === 'function') fetchUnreadLikesCount(); } catch (e) {}
         setUnreadLikesCount((prev) => prev + 1);
         if (data?.title && data?.body) {
           if (typeof displayLocalSystemNotification === 'function') {
             displayLocalSystemNotification({
               title: data.title,
               body: data.body,
-              data: { type: 'like' },
+              data: { type: 'like', userId: data.likerUser?.id || data.likerUser?._id },
             }).catch(() => {});
           }
         }
@@ -1659,35 +1728,72 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
-  // Emit mark_seen & check_online_status when activeChat changes / opens
+  // Emit mark_seen & check_online_status & mark notifications read when activeChat changes / opens
   useEffect(() => {
+    let intervalId;
     if (activeChat && currentUser) {
-      const partnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+      const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
       const currentId = (currentUser.id || currentUser._id)?.toString();
-      if (socketRef.current && partnerId) {
-        if (socketRef.current.connected) {
-          socketRef.current.emit('check_online_status', { targetUserId: partnerId });
-          if (currentId) {
-            socketRef.current.emit('mark_seen', {
-              senderId: partnerId,
-              receiverId: currentId,
-            });
-          }
-        }
+
+      if (partnerId && activeChat.isOnline !== undefined) {
+        setOnlineUsersMap((prev) => ({
+          ...prev,
+          [partnerId]: !!activeChat.isOnline,
+        }));
       }
+
+      const checkStatus = () => {
+        if (socketRef.current && partnerId && socketRef.current.connected) {
+          socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+        }
+      };
+
+      checkStatus();
+
+      if (socketRef.current && partnerId && socketRef.current.connected && currentId) {
+        socketRef.current.emit('mark_seen', {
+          senderId: partnerId,
+          receiverId: currentId,
+        });
+      }
+
+      if (partnerId && typeof apiClient.getChatMessages === 'function') {
+        apiClient.getChatMessages(partnerId).catch(() => {});
+      }
+
+      // Periodically refresh partner's online status every 5 seconds while chatting
+      intervalId = setInterval(checkStatus, 5000);
     }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [activeChat, currentUser]);
 
-  // AppState change listener: reconnect socket & re-emit join when app comes to foreground
+  // AppState change listener & global presence ping: reconnect socket & re-emit join on foreground, going_offline on background
   useEffect(() => {
+    const currentId = (currentUser?.id || currentUser?._id)?.toString();
+
+    if (currentId) {
+      registerFcmToken().catch((e) => console.log('[HomeScreen] FCM token registration error:', e));
+    }
+
+    let pingInterval;
+    if (currentId) {
+      pingInterval = setInterval(() => {
+        if (socketRef.current && socketRef.current.connected) {
+          socketRef.current.emit('ping_presence', currentId);
+        }
+      }, 15000);
+    }
+
     const handleAppStateChange = (nextAppState) => {
-      if (nextAppState === 'active' && currentUser) {
-        const currentId = (currentUser.id || currentUser._id)?.toString();
+      if (nextAppState === 'active' && currentId) {
         if (socketRef.current) {
           if (!socketRef.current.connected) {
             console.log('[AppState] Socket disconnected. Reconnecting...');
             socketRef.current.connect();
-          } else if (currentId) {
+          } else {
             console.log('[AppState] App in foreground. Re-emitting join for user:', currentId);
             socketRef.current.emit('join', currentId);
           }
@@ -1698,11 +1804,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             socketRef.current.emit('check_online_status', { targetUserId: partnerId });
           }
         }
+      } else if ((nextAppState === 'background' || nextAppState === 'inactive') && currentId) {
+        if (socketRef.current) {
+          console.log('[AppState] App in background/inactive. Emitting going_offline for user:', currentId);
+          socketRef.current.emit('going_offline', currentId);
+        }
       }
     };
 
     const appStateSubscription = AppState.addEventListener('change', handleAppStateChange);
     return () => {
+      if (pingInterval) clearInterval(pingInterval);
       if (appStateSubscription && typeof appStateSubscription.remove === 'function') {
         appStateSubscription.remove();
       }
@@ -2900,6 +3012,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             {MOCK_MATCHES[swipeIndex + 1].name}
                             {getCandidateAge(MOCK_MATCHES[swipeIndex + 1]) ? `, ${getCandidateAge(MOCK_MATCHES[swipeIndex + 1])}` : ''}
                           </Text>
+                          {!!(MOCK_MATCHES[swipeIndex + 1] && (MOCK_MATCHES[swipeIndex + 1].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex + 1].id || MOCK_MATCHES[swipeIndex + 1]._id || MOCK_MATCHES[swipeIndex + 1].userId)?.toString()])) && (
+                            <View style={styles.swipeOnlineBadge}>
+                              <View style={styles.swipeOnlineDot} />
+                              <Text style={styles.swipeOnlineText}>Online</Text>
+                            </View>
+                          )}
                           <View style={styles.distanceBadge}>
                             <Text style={styles.distanceBadgeText}>
                               {MOCK_MATCHES[swipeIndex + 1].distance}
@@ -2944,6 +3062,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           {MOCK_MATCHES[swipeIndex].name}
                           {getCandidateAge(MOCK_MATCHES[swipeIndex]) ? `, ${getCandidateAge(MOCK_MATCHES[swipeIndex])}` : ''}
                         </Text>
+                        {!!(MOCK_MATCHES[swipeIndex] && (MOCK_MATCHES[swipeIndex].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()])) && (
+                          <View style={styles.swipeOnlineBadge}>
+                            <View style={styles.swipeOnlineDot} />
+                            <Text style={styles.swipeOnlineText}>Online</Text>
+                          </View>
+                        )}
                         <View style={styles.distanceBadge}>
                           <Text style={styles.distanceBadgeText}>
                             {MOCK_MATCHES[swipeIndex].distance}
@@ -3187,20 +3311,28 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         setSelectedLikesProfile(enrichedProfile);
                       }}
                     >
-                      <View style={styles.avatarWrapper}>
-                        <Image source={{ uri: getImageUrl(activeChat.image || activeChat.profileImage) }} style={styles.chatHeaderAvatar} />
-                        {!!((activeChat.id || activeChat._id || activeChat.userId) && onlineUsersMap[(activeChat.id || activeChat._id || activeChat.userId).toString()]) && (
-                          <View style={styles.onlineDotOverlay} />
-                        )}
-                      </View>
-                      <View style={styles.chatHeaderTitleContainer}>
-                        <Text style={styles.chatHeaderName}>{activeChat.name || activeChat.firstName}</Text>
-                        <Text style={styles.chatHeaderStatusText}>
-                          {onlineUsersMap[(activeChat.id || activeChat._id || activeChat.userId)?.toString()]
-                            ? 'Active Now'
-                            : formatLastSeen(lastSeenMap[(activeChat.id || activeChat._id || activeChat.userId)?.toString()] || activeChat.lastSeen)}
-                        </Text>
-                      </View>
+                      {(() => {
+                        const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
+                        const isPartnerOnline = !!(partnerId && onlineUsersMap[partnerId]);
+                        return (
+                          <>
+                            <View style={styles.avatarWrapper}>
+                              <Image source={{ uri: getImageUrl(activeChat.image || activeChat.profileImage) }} style={styles.chatHeaderAvatar} />
+                              {isPartnerOnline && (
+                                <View style={styles.onlineDotOverlay} />
+                              )}
+                            </View>
+                            <View style={styles.chatHeaderTitleContainer}>
+                              <Text style={styles.chatHeaderName}>{activeChat.name || activeChat.firstName}</Text>
+                              <Text style={styles.chatHeaderStatusText}>
+                                {isPartnerOnline
+                                  ? 'Online'
+                                  : formatLastSeen(lastSeenMap[partnerId] || activeChat.lastSeen)}
+                              </Text>
+                            </View>
+                          </>
+                        );
+                      })()}
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.callChatHeaderButton}
@@ -3573,6 +3705,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           onChangeText={handleInputChange}
                           onFocus={() => {
                             setShowStickerPicker(false);
+                            setTimeout(() => {
+                              chatScrollViewRef.current?.scrollToEnd({ animated: true });
+                            }, 150);
                           }}
                         />
 
@@ -3694,18 +3829,32 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               <Text style={[styles.chatRowName, unreadCount > 0 && styles.chatRowNameUnread]}>
                                 {chat.name}
                               </Text>
-                              <Text style={[styles.chatRowLastMessage, unreadCount > 0 && styles.chatRowLastMessageUnread]} numberOfLines={1}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                                 {(() => {
-                                  if (!lastMsg) return '';
-                                  if (lastMsg.messageType === 'voice') return '🎤 Voice Note';
-                                  if (lastMsg.messageType === 'call') return lastMsg.text || '📞 Voice Call';
-                                  if (lastMsg.messageType === 'image') return '📷 Image';
-                                  if (lastMsg.messageType === 'video') return '🎬 Video';
-                                  if (lastMsg.messageType === 'document') return '📄 Document';
-                                  if (lastMsg.messageType === 'sticker') return '😊 Sticker';
-                                  return lastMsg.text || '';
+                                  const currentId = (currentUser?.id || currentUser?._id)?.toString();
+                                  const isLastMsgSentByMe = !!(lastMsg && (lastMsg.sender === 'you' || lastMsg.senderId?.toString() === currentId));
+                                  if (!isLastMsgSentByMe || !lastMsg) return null;
+                                  const isSeen = lastMsg.status === 'seen';
+                                  const isDelivered = lastMsg.status === 'delivered';
+                                  return (
+                                    <Text style={[styles.chatStatusTicks, isSeen && styles.chatStatusTicksSeen]}>
+                                      {isSeen ? '✓✓' : isDelivered ? '✓✓' : '✓'}
+                                    </Text>
+                                  );
                                 })()}
-                              </Text>
+                                <Text style={[styles.chatRowLastMessage, unreadCount > 0 && styles.chatRowLastMessageUnread, { flex: 1 }]} numberOfLines={1}>
+                                  {(() => {
+                                    if (!lastMsg) return '';
+                                    if (lastMsg.messageType === 'voice') return '🎤 Voice Note';
+                                    if (lastMsg.messageType === 'call') return lastMsg.text || '📞 Voice Call';
+                                    if (lastMsg.messageType === 'image') return '📷 Image';
+                                    if (lastMsg.messageType === 'video') return '🎬 Video';
+                                    if (lastMsg.messageType === 'document') return '📄 Document';
+                                    if (lastMsg.messageType === 'sticker') return '😊 Sticker';
+                                    return lastMsg.text || '';
+                                  })()}
+                                </Text>
+                              </View>
                             </View>
                             <View style={styles.chatRowRightMeta}>
                               <Text style={[styles.chatRowTime, unreadCount > 0 && styles.chatRowTimeUnread]}>
@@ -3858,7 +4007,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             animationType="slide"
             onRequestClose={() => setShowActiveCardDetails(false)}
           >
-            <View style={styles.candidateDetailsWrapper}>
+            <View style={[styles.candidateDetailsWrapper, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 15 : 0) }]}>
               <View style={styles.cardExpandedHeader}>
                 <TouchableOpacity
                   style={styles.cardDetailMinimizeHeaderBtn}
@@ -3917,6 +4066,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     <Text style={styles.matchNameTextLarge}>
                       {MOCK_MATCHES[swipeIndex].name}, {MOCK_MATCHES[swipeIndex].age}
                     </Text>
+                    {!!(MOCK_MATCHES[swipeIndex] && (MOCK_MATCHES[swipeIndex].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()])) && (
+                      <View style={styles.swipeOnlineBadge}>
+                        <View style={styles.swipeOnlineDot} />
+                        <Text style={styles.swipeOnlineText}>Online</Text>
+                      </View>
+                    )}
                     <View style={styles.distanceBadgeLarge}>
                       <Text style={styles.distanceBadgeTextLarge}>
                         {MOCK_MATCHES[swipeIndex].distance}
@@ -4076,7 +4231,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             animationType="slide"
             onRequestClose={() => setSelectedLikesProfile(null)}
           >
-            <SafeAreaView style={styles.candidateDetailsWrapper}>
+            <SafeAreaView style={[styles.candidateDetailsWrapper, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 15 : 0) }]}>
               <View style={styles.cardExpandedHeader}>
                 <TouchableOpacity
                   style={styles.cardDetailMinimizeHeaderBtn}
@@ -4143,6 +4298,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       {selectedLikesProfile.firstName || selectedLikesProfile.name}
                       {selectedLikesProfile.age ? `, ${selectedLikesProfile.age}` : ''}
                     </Text>
+                    {!!(selectedLikesProfile && (selectedLikesProfile.isOnline || onlineUsersMap[(selectedLikesProfile.id || selectedLikesProfile._id || selectedLikesProfile.userId)?.toString()])) && (
+                      <View style={styles.swipeOnlineBadge}>
+                        <View style={styles.swipeOnlineDot} />
+                        <Text style={styles.swipeOnlineText}>Online</Text>
+                      </View>
+                    )}
                     {selectedLikesProfile.distance ? (
                       <View style={styles.distanceBadgeLarge}>
                         <Text style={styles.distanceBadgeTextLarge}>
@@ -5072,6 +5233,29 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.94 }, { translateY: 15 }],
     opacity: 0.65,
   },
+  swipeOnlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(37, 211, 102, 0.18)',
+    borderColor: '#25D366',
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  swipeOnlineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#25D366',
+    marginRight: 4,
+  },
+  swipeOnlineText: {
+    color: '#25D366',
+    fontSize: 11,
+    fontWeight: '700',
+  },
   swipeBadge: {
     position: 'absolute',
     top: 20,
@@ -5421,6 +5605,15 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: 'bold',
+  },
+  chatStatusTicks: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#8E8E93',
+    marginRight: 4,
+  },
+  chatStatusTicksSeen: {
+    color: '#34B7F1',
   },
   navChatBadge: {
     position: 'absolute',

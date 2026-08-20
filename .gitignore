@@ -107,7 +107,10 @@ Desktop.ini
 *~
 # Firebase Config Files
 **/google-services.json
+android/app/google-services.json
 **/GoogleService-Info.plist
+*firebase*.json
+*firebase-adminsdk*.json
 
 # Zip Archives
 *.zip

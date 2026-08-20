@@ -1,9 +1,12 @@
 import React from 'react';
-import { StyleSheet, View, Dimensions, SafeAreaView, Platform } from 'react-native';
+import { StyleSheet, View, Dimensions, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
 export const SimulatedGradientBackground = ({ children }) => {
+  const insets = useSafeAreaInsets();
+
   return (
     <View style={styles.container}>
       {/* Base background color: vibrant coral orange */}
@@ -24,11 +27,9 @@ export const SimulatedGradientBackground = ({ children }) => {
       <View style={[styles.floatingCircle, { width: 16, height: 16, borderRadius: 8, bottom: height * 0.25, left: width * 0.15, opacity: 0.2 }]} />
       <View style={[styles.floatingCircle, { width: 8, height: 8, borderRadius: 4, bottom: height * 0.15, right: width * 0.2, opacity: 0.3 }]} />
 
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.content}>
-          {children}
-        </View>
-      </SafeAreaView>
+      <View style={[styles.content, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 20 : 0), paddingBottom: Math.max(insets.bottom, 10) }]}>
+        {children}
+      </View>
     </View>
   );
 };

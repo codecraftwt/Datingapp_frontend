@@ -1,4 +1,5 @@
 import { createSlice } from '@reduxjs/toolkit';
+import { setAuthToken } from '../../api/apiClient';
 
 const initialState = {
   user: null,
@@ -15,11 +16,15 @@ const authSlice = createSlice({
       state.user = user;
       state.token = token;
       state.isAuthenticated = !!token;
+      if (token) {
+        setAuthToken(token);
+      }
     },
     logout: (state) => {
       state.user = null;
       state.token = null;
       state.isAuthenticated = false;
+      setAuthToken(null);
     },
   },
 });

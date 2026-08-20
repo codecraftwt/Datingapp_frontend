@@ -17,6 +17,7 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl } from '../api/config';
 import { PreviewModal } from '../components/PreviewModal';
@@ -25,6 +26,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
 
 export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
+  const insets = useSafeAreaInsets();
   // Search Bar State
   const [searchKeyword, setSearchKeyword] = useState('');
   
@@ -218,6 +220,8 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
 
     try {
       const payload = {
+        searchKeyword: searchKeyword.trim(),
+        query: searchKeyword.trim(),
         profession: activeProf === 'All' ? '' : activeProf,
         ageMin,
         ageMax,
@@ -414,7 +418,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 20 : 0) }]}>
       {/* Search Header Bar */}
       <View style={styles.searchHeader}>
         <TouchableOpacity
@@ -697,7 +701,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                         ? getImageUrl(item.profileImage)
                         : (item.profileImages && item.profileImages[0]
                             ? getImageUrl(item.profileImages[0])
-                            : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400')
+                            : '')
                     }}
                     style={styles.cardAvatar}
                   />

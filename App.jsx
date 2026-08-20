@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState, Alert, BackHandler } from 'react-native';
+import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState, Alert, BackHandler, ToastAndroid } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider, useSelector, useDispatch } from 'react-redux';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -51,7 +51,9 @@ function MainApp() {
       const res = await apiClient.getUnreadNotifications();
       console.log('🔔 [checkUnreadNotifications] result:', res);
       if (res && res.unreadCount > 0 && Array.isArray(res.notifications)) {
+        const notifIds = [];
         for (const notif of res.notifications) {
+          if (notif._id) notifIds.push(notif._id);
           if (typeof displayLocalSystemNotification === 'function') {
             await displayLocalSystemNotification({
               title: notif.title,
@@ -64,6 +66,9 @@ function MainApp() {
               },
             });
           }
+        }
+        if (notifIds.length > 0 && typeof apiClient.markNotificationsAsRead === 'function') {
+          await apiClient.markNotificationsAsRead({ notificationIds: notifIds });
         }
       }
     } catch (e) {
@@ -238,6 +243,13 @@ function MainApp() {
     }
     dispatch(logout());
     setUserProfile(null);
+
+    if (Platform.OS === 'android') {
+      ToastAndroid.show('Logged out successfully. See you soon! 👋', ToastAndroid.SHORT);
+    } else {
+      Alert.alert('Logged Out', 'You have been logged out successfully.');
+    }
+
     navigateTo('LOGIN');
   };
 

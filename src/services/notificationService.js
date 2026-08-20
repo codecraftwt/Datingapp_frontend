@@ -1,4 +1,5 @@
-import messaging, { AuthorizationStatus } from '@react-native-firebase/messaging';
+import messaging, { AuthorizationStatus, getMessaging, getToken as getModularToken } from '@react-native-firebase/messaging';
+import firebase from '@react-native-firebase/app';
 import { PermissionsAndroid, Platform, Alert } from 'react-native';
 import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 import { apiClient } from '../api/apiClient';
@@ -58,79 +59,244 @@ export const displayLocalSystemNotification = async ({ title, body, data }) => {
 };
 
 /**
+ * Ensure default Firebase App is initialized
+ */
+const ensureFirebaseInitialized = async () => {
+  try {
+    if (!firebase?.apps?.length) {
+      console.log('[FCM-DEBUG] Firebase apps count is 0. Initializing default app in JS...');
+      await firebase.initializeApp({
+        appId: '1:470179138168:android:7f8c32b3aeabec6c137b8d',
+        apiKey: 'AIzaSyDyIc3uxKKZku_oqTLwa1wqM1-1Q_PvATc',
+        projectId: 'dating-app-51de6',
+        messagingSenderId: '470179138168',
+        storageBucket: 'dating-app-51de6.firebasestorage.app',
+      });
+      console.log('[FCM-DEBUG] ✅ Firebase default app successfully initialized in JS!');
+    }
+  } catch (err) {
+    console.warn('[FCM-DEBUG] Firebase initialize notice:', err?.message || err);
+  }
+};
+
+/**
  * Safely get messaging instance if native module is compiled and linked
  */
 const getMessagingInstance = () => {
   try {
-    if (typeof messaging === 'function') {
-      const instance = messaging();
-      if (instance && typeof instance.requestPermission === 'function') {
-        return instance;
-      }
+    if (typeof getMessaging === 'function') {
+      const inst = getMessaging();
+      if (inst) return inst;
     }
-  } catch (err) {
-    console.warn('[FCM] Firebase messaging native module not compiled into APK yet:', err.message);
+  } catch (e) {
+    console.warn('[FCM-DEBUG] getMessaging() notice:', e?.message || e);
   }
-  return null;
+  try {
+    if (typeof messaging === 'function') {
+      return messaging();
+    }
+  } catch (e) {
+    console.warn('[FCM-DEBUG] messaging() notice:', e?.message || e);
+  }
+  return messaging || null;
 };
 
 /**
  * Request notification permissions on Android (13+) & iOS
  */
 export const requestNotificationPermission = async () => {
+  console.log('[FCM-DEBUG] Step 3: Requesting Notification Permission...');
   try {
     if (Platform.OS === 'android' && Platform.Version >= 33) {
+      console.log('[FCM-DEBUG] Android 13+ detected (API ' + Platform.Version + '). Requesting POST_NOTIFICATIONS permission...');
       const granted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
       );
+      console.log('[FCM-DEBUG] Android POST_NOTIFICATIONS result:', granted);
       if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        console.log('[FCM] Android 13+ Notification permission denied.');
+        console.warn('[FCM-DEBUG] ⚠️ Android 13+ Notification permission denied by user.');
         return false;
       }
     }
 
+    console.log('[FCM-DEBUG] Requesting Notifee permission...');
     await notifee.requestPermission();
 
-    const messagingInstance = getMessagingInstance();
-    if (!messagingInstance || typeof messagingInstance.requestPermission !== 'function') {
-      console.warn('[FCM] Notifee permissions granted; Firebase Messaging native instance deferred.');
+    const messagingModule = getMessagingInstance();
+    if (!messagingModule) {
+      console.warn('[FCM-DEBUG] Notifee permissions granted; Firebase Messaging native instance deferred.');
       return true;
     }
 
+    let messagingInstance = messagingModule;
+    if (typeof messagingModule === 'function') {
+      try {
+        messagingInstance = messagingModule();
+      } catch (e) {}
+    }
+
+    if (!messagingInstance || typeof messagingInstance.requestPermission !== 'function') {
+      console.warn('[FCM-DEBUG] Notifee permissions granted; Firebase Messaging native instance deferred.');
+      return true;
+    }
+
+    console.log('[FCM-DEBUG] Requesting Firebase Messaging permission...');
     const authStatus = await messagingInstance.requestPermission();
     const authorizedVal = AuthorizationStatus?.AUTHORIZED ?? 1;
     const provisionalVal = AuthorizationStatus?.PROVISIONAL ?? 2;
 
     const enabled = authStatus === authorizedVal || authStatus === provisionalVal;
-    if (enabled) {
-      console.log('[FCM] Notification permission status:', authStatus);
-    }
-    return true;
+    console.log('[FCM-DEBUG] Step 4: Notification permission status code:', authStatus, 'Enabled:', enabled);
+    return enabled;
   } catch (error) {
-    console.warn('[FCM] Error requesting notification permission:', error?.message || error);
+    console.warn('[FCM-DEBUG] ⚠️ Error requesting notification permission:', error?.message || error);
     return true;
   }
+};
+
+/**
+ * Helper to fetch device FCM Token without calling backend API
+ */
+export const getFcmTokenOnly = async () => {
+  console.log('[FCM-DEBUG-ONLY] 1. getFcmTokenOnly() invoked...');
+  try {
+    await ensureFirebaseInitialized();
+    let token = null;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const inst = getMessagingInstance();
+        if (inst) {
+          if (typeof inst.setAutoInitEnabled === 'function') {
+            await inst.setAutoInitEnabled(true).catch(() => {});
+          }
+          if (typeof inst.registerDeviceForRemoteMessages === 'function') {
+            await inst.registerDeviceForRemoteMessages().catch(() => {});
+          }
+
+          if (typeof getModularToken === 'function') {
+            try {
+              token = await getModularToken(inst);
+            } catch (mErr) {}
+          }
+
+          if (!token && typeof inst.getToken === 'function') {
+            token = await inst.getToken();
+          }
+
+          if (token) break;
+        }
+      } catch (err) {
+        console.warn(`[FCM-DEBUG-ONLY] Attempt ${attempt} error:`, err?.code || '', err?.message || err);
+      }
+      if (attempt < 4 && !token) await new Promise((r) => setTimeout(r, 1500));
+    }
+    console.log('[FCM-DEBUG-ONLY] 2. getToken result:', token ? (token.substring(0, 20) + '...') : 'NULL');
+    return token || null;
+  } catch (e) {
+    console.log('[FCM-DEBUG-ONLY] ⚠️ getFcmTokenOnly error:', e?.message || e);
+  }
+  return null;
 };
 
 /**
  * Fetch and register FCM Token with Backend
  */
 export const registerFcmToken = async () => {
+  console.log('----------------------------------------------------');
+  console.log('[FCM-DEBUG] Step 1: Starting registerFcmToken()...');
   try {
-    const hasPermission = await requestNotificationPermission();
-    if (!hasPermission) return;
+    await ensureFirebaseInitialized();
 
-    const messagingInstance = getMessagingInstance();
-    if (!messagingInstance || typeof messagingInstance.getToken !== 'function') return;
+    // Non-blocking permission request so getToken is never stuck on UI permission prompts
+    requestNotificationPermission().catch((permErr) => {
+      console.log('[FCM-DEBUG] Request permission notice:', permErr?.message || permErr);
+    });
 
-    const fcmToken = await messagingInstance.getToken();
+    let fcmToken = null;
+    let lastError = null;
+
+    // Retry loop to handle cold startup FIS network initialization delay
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        console.log(`[FCM-DEBUG] Step 5 Attempt ${attempt}: Getting Firebase Messaging instance...`);
+        const inst = getMessagingInstance();
+        if (inst) {
+          if (typeof inst.setAutoInitEnabled === 'function') {
+            await inst.setAutoInitEnabled(true).catch(() => {});
+          }
+          if (typeof inst.registerDeviceForRemoteMessages === 'function') {
+            await inst.registerDeviceForRemoteMessages().catch(() => {});
+          }
+
+          if (typeof inst.getToken === 'function') {
+            try {
+              console.log(`[FCM-DEBUG] Attempt ${attempt}: Calling getModularToken(inst)...`);
+              fcmToken = await getModularToken(inst);
+            } catch (mErr) {
+              console.warn(`[FCM-DEBUG] Attempt ${attempt} getModularToken notice:`, mErr?.code || '', mErr?.message || mErr);
+            }
+
+            if (!fcmToken) {
+              try {
+                console.log(`[FCM-DEBUG] Attempt ${attempt}: Calling inst.getToken()...`);
+                fcmToken = await inst.getToken();
+              } catch (gErr) {
+                console.warn(`[FCM-DEBUG] Attempt ${attempt} inst.getToken error:`, gErr?.code || '', gErr?.message || gErr);
+                if (typeof inst.deleteToken === 'function') {
+                  try {
+                    await inst.deleteToken();
+                    console.log('[FCM-DEBUG] Cleared stale token cache. Retrying getToken()...');
+                    fcmToken = await inst.getToken();
+                  } catch (delErr) {}
+                }
+              }
+            }
+
+            if (!fcmToken) {
+              try {
+                console.log(`[FCM-DEBUG] Attempt ${attempt}: Trying inst.getToken('470179138168')...`);
+                fcmToken = await inst.getToken('470179138168');
+              } catch (sErr) {
+                console.warn(`[FCM-DEBUG] Attempt ${attempt} senderId getToken error:`, sErr?.code || '', sErr?.message || sErr);
+              }
+            }
+          }
+
+          if (fcmToken) {
+            console.log(`[FCM-DEBUG] Step 5 Attempt ${attempt} SUCCESS! Token length: ${fcmToken.length}`);
+            break;
+          }
+        } else {
+          console.warn(`[FCM-DEBUG] Step 5 Attempt ${attempt}: getMessagingInstance() returned null`);
+        }
+      } catch (err) {
+        lastError = err;
+        console.warn(`[FCM-DEBUG] ⚠️ Step 5 Attempt ${attempt} failed: Code: ${err?.code || 'NONE'}, Message: ${err?.message || err}`);
+      }
+      if (attempt < 4 && !fcmToken) {
+        console.log('[FCM-DEBUG] Waiting 2s before retrying getToken()...');
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+
     if (fcmToken) {
-      console.log('[FCM] Device FCM Token:', fcmToken);
-      await apiClient.updateFcmToken(fcmToken);
-      console.log('[FCM] Token successfully registered with backend.');
+      console.log('[FCM-DEBUG] Step 6: FCM Token fetched successfully! Token:', fcmToken.substring(0, 20) + '...');
+      console.log('[FCM-DEBUG] Step 7: Sending token to backend via apiClient.updateFcmToken()...');
+      const res = await apiClient.updateFcmToken(fcmToken);
+      console.log('[FCM-DEBUG] Step 8: SUCCESS 🎉 Token registered with backend:', res);
+      console.log('----------------------------------------------------');
+      return fcmToken;
+    } else {
+      const codeStr = lastError?.code || 'N/A';
+      const msgStr = lastError?.message || (typeof lastError === 'string' ? lastError : JSON.stringify(lastError || {}));
+      console.error(`[FCM-DEBUG] ❌ Step 6 FAILED: messaging().getToken() returned null. Code: ${codeStr} | Message: ${msgStr}`);
+      console.log('----------------------------------------------------');
+      return null;
     }
   } catch (error) {
-    console.warn('[FCM] Error registering FCM Token:', error?.message || error);
+    console.error('[FCM-DEBUG] ❌ EXCEPTION in registerFcmToken():', error?.message || error, error);
+    console.log('----------------------------------------------------');
+    return null;
   }
 };
 
@@ -156,15 +322,14 @@ export const setupNotificationListeners = (onNotificationClick) => {
     // 1. Foreground Message Handler (App is actively open)
     const unsubscribeForeground = messagingInstance.onMessage(async (remoteMessage) => {
       console.log('[FCM] Foreground Notification Received:', remoteMessage);
-      if (remoteMessage.notification) {
-        const { title, body } = remoteMessage.notification;
-        // Display system notification banner using Notifee
-        await displayLocalSystemNotification({
-          title: title || 'New Notification',
-          body: body || '',
-          data: remoteMessage.data || {},
-        });
-      }
+      const title = remoteMessage.notification?.title || remoteMessage.data?.title || 'New Notification';
+      const body = remoteMessage.notification?.body || remoteMessage.data?.body || '';
+      // Display system notification banner using Notifee
+      await displayLocalSystemNotification({
+        title,
+        body,
+        data: remoteMessage.data || {},
+      });
     });
 
     // 2. Token Refresh Listener

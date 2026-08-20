@@ -12,14 +12,17 @@ import {
   ActivityIndicator,
   Dimensions,
   Platform,
+  RefreshControl,
+  PermissionsAndroid,
 } from 'react-native';
-import { launchImageLibrary } from 'react-native-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
 import { QuestionnaireScreen } from './QuestionnaireScreen';
 import { PreviewModal } from '../components/PreviewModal';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
+import { registerFcmToken } from '../services/notificationService';
 import Video from 'react-native-video';
 
 const { width } = Dimensions.get('window');
@@ -55,6 +58,7 @@ const SUBSCRIPTION_PLANS = [
 ];
 
 export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile, onGoBack, onBack }) => {
+  const insets = useSafeAreaInsets();
   const [profile, setProfile] = useState(userProfile || null);
   const [loading, setLoading] = useState(false);
   const [isQuestionnaireModalOpen, setIsQuestionnaireModalOpen] = useState(false);
@@ -95,14 +99,22 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
 
+  const [refreshing, setRefreshing] = useState(false);
+
   // Fetch real profile data directly from Backend API
   const fetchProfileFromBackend = async () => {
     try {
       setLoading(true);
+      if (typeof apiClient.resetResolvedUrl === 'function') {
+        apiClient.resetResolvedUrl();
+      }
       const res = await apiClient.getProfile();
       const userData = res.user || res.data?.user || res;
-      if (userData) {
-        setProfile(userData);
+      if (userData && typeof userData === 'object' && userData.firstName) {
+        setProfile((prev) => ({
+          ...(prev || {}),
+          ...userData,
+        }));
         if (onUpdateProfile) {
           onUpdateProfile(userData);
         }
@@ -111,13 +123,30 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       console.log('Error fetching user profile from API:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const handlePullToRefresh = () => {
+    setRefreshing(true);
+    if (typeof apiClient.resetResolvedUrl === 'function') {
+      apiClient.resetResolvedUrl();
+    }
+    fetchProfileFromBackend();
   };
 
   useEffect(() => {
     fetchProfileFromBackend();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (userProfile && typeof userProfile === 'object') {
+      setProfile((prev) => ({
+        ...userProfile,
+        ...(prev || {}),
+      }));
+    }
+  }, [userProfile]);
 
   const handleFinishEditQuestionnaire = async (updatedData) => {
     setProfile(updatedData);
@@ -222,94 +251,188 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     );
   };
 
-  const handleChangeProfilePhoto = () => {
-    launchImageLibrary({ mediaType: 'photo', quality: 0.8, maxWidth: 1024, maxHeight: 1024 }, async (response) => {
-      if (response.didCancel) return;
-      if (response.errorCode) {
-        Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo from gallery');
+  const processSelectedPhotoAsset = async (asset) => {
+    if (!asset || !asset.uri) return;
+    const localUri = asset.uri;
+    const isVideo = asset.type?.startsWith('video/') || (asset.fileName && (asset.fileName.endsWith('.mp4') || asset.fileName.endsWith('.mov')));
+
+    // Slot #1 (Main Profile Picture) must be a photo ONLY
+    if (isVideo) {
+      Alert.alert('Main Profile Picture', 'Your main profile picture (Slot #1) must be a photo.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // Upload image to Cloudinary via Backend API
+      let finalPhotoUrl = localUri;
+      try {
+        const formData = new FormData();
+        const ext = 'jpg';
+        const mime = asset.type || 'image/jpeg';
+        const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `photo_${Date.now()}.${ext}`;
+
+        formData.append('photo', {
+          uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
+          type: mime,
+          name: safeName,
+        });
+
+        const uploadRes = await apiClient.uploadMainPhoto(formData);
+        const cloudinaryUrl = uploadRes.profileImage || uploadRes.url || uploadRes.data?.url || uploadRes.secure_url;
+        if (cloudinaryUrl) {
+          finalPhotoUrl = cloudinaryUrl;
+        }
+      } catch (uploadErr) {
+        console.log('Cloudinary upload error:', uploadErr);
+        const errorMsg =
+          uploadErr?.data?.message ||
+          uploadErr?.message ||
+          'Failed to upload photo to server. Please try again.';
+
+        Alert.alert('Upload Error', errorMsg);
+        setLoading(false);
         return;
       }
-      if (response.assets && response.assets.length > 0) {
-        const asset = response.assets[0];
-        const localUri = asset.uri;
-        const isVideo = asset.type?.startsWith('video/') || (asset.fileName && (asset.fileName.endsWith('.mp4') || asset.fileName.endsWith('.mov')));
 
-        // Slot #1 (Main Profile Picture) must be a photo ONLY
-        if (isVideo) {
-          Alert.alert('Main Profile Picture', 'Your main profile picture (Slot #1) must be a photo. You can upload video clips in gallery slots 2 through 9.');
-          return;
-        }
+      const updatedPhotos = [...rawPhotosList];
+      if (updatedPhotos.length > 0) {
+        updatedPhotos[0] = finalPhotoUrl;
+      } else {
+        updatedPhotos.push(finalPhotoUrl);
+      }
 
-        // 100MB video limit
-        const maxSizeBytes = 100 * 1024 * 1024; // 100 MB
-        if (isVideo && asset.fileSize && asset.fileSize > maxSizeBytes) {
-          Alert.alert('Video Size Exceeded', 'The selected video exceeds 100MB. Please choose a smaller video clip (15s or less) for app stability.');
-          return;
-        }
+      const updatedProfile = {
+        ...displayData,
+        profileImage: finalPhotoUrl,
+        profileImages: updatedPhotos,
+        photos: updatedPhotos,
+      };
 
-        try {
-          setLoading(true);
+      setProfile(updatedProfile);
+      if (onUpdateProfile) {
+        onUpdateProfile(updatedProfile);
+      }
 
-          // Upload image or video file to Cloudinary via Backend API
-          let finalPhotoUrl = localUri;
-          try {
-            const formData = new FormData();
-            const ext = isVideo ? 'mp4' : 'jpg';
-            const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
+      Alert.alert('Photo Uploaded 📸', 'Your main profile photo has been updated successfully!');
+    } catch (err) {
+      console.log('Error saving new profile media:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-            const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}.${ext}`;
+  const requestAndroidCameraPermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const isAlreadyGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+        if (isAlreadyGranted) return true;
 
-            formData.append('photo', {
-              uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
-              type: mime,
-              name: safeName,
-            });
-
-            const uploadRes = await apiClient.uploadImage(formData);
-            const cloudinaryUrl = uploadRes.url || uploadRes.data?.url || uploadRes.secure_url;
-            if (cloudinaryUrl) {
-              finalPhotoUrl = cloudinaryUrl;
-            }
-          } catch (uploadErr) {
-            console.log('Cloudinary upload error:', uploadErr);
-            const errorMsg =
-              uploadErr?.data?.message ||
-              uploadErr?.message ||
-              'Failed to upload media to server. Please try a smaller video or photo.';
-
-            Alert.alert('Upload Error', errorMsg);
-            setLoading(false);
-            return;
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.CAMERA,
+          {
+            title: 'Camera Permission Required',
+            message: 'Spark Dating App needs access to your camera so you can take a profile photo.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
           }
+        );
+        return (
+          granted === PermissionsAndroid.RESULTS.GRANTED ||
+          granted === true ||
+          granted === 'granted'
+        );
+      } catch (err) {
+        console.warn('Camera permission request error:', err);
+        return true; // Fallback to let launchCamera handle native prompt
+      }
+    }
+    return true;
+  };
 
-          const updatedPhotos = [...rawPhotosList];
-          if (updatedPhotos.length > 0) {
-            updatedPhotos[0] = finalPhotoUrl;
+  const openCameraPicker = async () => {
+    try {
+      const hasPermission = await requestAndroidCameraPermission();
+      if (!hasPermission) {
+        console.log('Camera permission check returned false, attempting launchCamera fallback...');
+      }
+    } catch (e) {
+      console.log('Camera permission check exception:', e);
+    }
+
+    launchCamera(
+      {
+        mediaType: 'photo',
+        quality: 0.8,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        saveToPhotos: false,
+        cameraType: 'front',
+      },
+      (response) => {
+        if (response.didCancel) return;
+        if (response.errorCode) {
+          console.warn('Camera launch response error:', response.errorCode, response.errorMessage);
+          if (response.errorCode === 'permission') {
+            Alert.alert(
+              'Camera Permission Needed 📷',
+              'Please grant camera permission in your phone settings (Settings > Apps > Dating App > Permissions > Camera) to take photos.'
+            );
           } else {
-            updatedPhotos.push(finalPhotoUrl);
+            Alert.alert('Camera Error', response.errorMessage || 'Unable to open device camera.');
           }
-
-          const updatedProfile = {
-            ...displayData,
-            profileImage: finalPhotoUrl,
-            profileImages: updatedPhotos,
-            photos: updatedPhotos,
-          };
-
-          setProfile(updatedProfile);
-          if (onUpdateProfile) {
-            onUpdateProfile(updatedProfile);
-          }
-
-          await apiClient.saveQuestionnaire(updatedProfile);
-          Alert.alert('Media Uploaded', isVideo ? 'Your preview video has been uploaded' : 'Your profile picture has been uploaded');
-        } catch (err) {
-          console.log('Error saving new profile media:', err);
-        } finally {
-          setLoading(false);
+          return;
+        }
+        if (response.assets && response.assets.length > 0) {
+          processSelectedPhotoAsset(response.assets[0]);
         }
       }
-    });
+    );
+  };
+
+  const openGalleryPicker = () => {
+    launchImageLibrary(
+      {
+        mediaType: 'photo',
+        quality: 0.8,
+        maxWidth: 1024,
+        maxHeight: 1024,
+      },
+      (response) => {
+        if (response.didCancel) return;
+        if (response.errorCode) {
+          Alert.alert('Gallery Error', response.errorMessage || 'Failed to pick photo from gallery.');
+          return;
+        }
+        if (response.assets && response.assets.length > 0) {
+          processSelectedPhotoAsset(response.assets[0]);
+        }
+      }
+    );
+  };
+
+  const handleChangeProfilePhoto = () => {
+    Alert.alert(
+      'Update Profile Photo 📷',
+      'Choose how you would like to update your profile photo:',
+      [
+        {
+          text: '📸 Take Photo (Camera)',
+          onPress: openCameraPicker,
+        },
+        {
+          text: '🖼️ Choose from Gallery',
+          onPress: openGalleryPicker,
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   const handleRemoveProfilePhoto = () => {
@@ -324,13 +447,27 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress: async () => {
             try {
               setLoading(true);
-              const photoToRemove = rawPhotosList[0];
-              const remainingPhotos = rawPhotosList.slice(1);
+              const photoToRemove = displayData.profileImage || rawPhotosList[0];
+
+              const updatedProfileImages = Array.isArray(displayData.profileImages)
+                ? [...displayData.profileImages]
+                : [];
+              if (updatedProfileImages.length > 0) {
+                updatedProfileImages[0] = null;
+              }
+
+              const updatedPhotos = Array.isArray(displayData.photos)
+                ? [...displayData.photos]
+                : [];
+              if (updatedPhotos.length > 0) {
+                updatedPhotos[0] = null;
+              }
 
               const updatedProfile = {
                 ...displayData,
-                profileImage: remainingPhotos[0] || null,
-                profileImages: remainingPhotos,
+                profileImage: null, // Slot #1 remains explicitly BLANK
+                profileImages: updatedProfileImages,
+                photos: updatedPhotos,
               };
 
               setProfile(updatedProfile);
@@ -338,18 +475,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                 onUpdateProfile(updatedProfile);
               }
 
-              if (photoToRemove) {
-                try {
-                  await apiClient.removeProfilePhoto({ imageUrl: photoToRemove, index: 0 });
-                } catch (apiErr) {
-                  console.log('removeProfilePhoto API call failed, falling back to saveQuestionnaire:', apiErr);
-                  await apiClient.saveQuestionnaire(updatedProfile);
-                }
-              } else {
+              try {
+                await apiClient.removeMainPhoto();
+              } catch (apiErr) {
+                console.log('removeMainPhoto API call failed, falling back to saveQuestionnaire:', apiErr);
                 await apiClient.saveQuestionnaire(updatedProfile);
               }
 
-              Alert.alert('Photo Removed', 'Your profile photo has been removed.');
+              Alert.alert('Photo Removed', 'Your main profile photo has been removed. Slot #1 is now blank.');
             } catch (err) {
               console.log('Error removing profile photo:', err);
               Alert.alert('Error', 'Failed to remove profile photo.');
@@ -365,7 +498,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const displayData = profile || userProfile || {};
 
   const formatImageUri = (url) => {
-    if (!url) return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=600';
+    if (!url) return '';
     return getImageUrl(url);
   };
 
@@ -380,10 +513,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     Array.isArray(displayData.videos)
       ? displayData.videos
       : Array.isArray(displayData.profileVideos)
-      ? displayData.profileVideos
-      : Array.isArray(displayData.media)
-      ? displayData.media
-      : []
+        ? displayData.profileVideos
+        : Array.isArray(displayData.media)
+          ? displayData.media
+          : []
   ).filter((p) => typeof p === 'string' && p.trim().length > 0);
 
   let rawPhotosList = [];
@@ -416,9 +549,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const hiddenMediaList = Array.isArray(displayData.hiddenMedia) ? displayData.hiddenMedia : [];
   const publicRawPhotosList = rawPhotosList.filter((url) => !hiddenMediaList.includes(url));
 
+  const hasMainProfilePhoto =
+    displayData.profileImage &&
+    typeof displayData.profileImage === 'string' &&
+    displayData.profileImage.trim().length > 0 &&
+    !hiddenMediaList.includes(displayData.profileImage);
+
   const hasUserUploadedPhoto = publicRawPhotosList.length > 0;
   const photosList = publicRawPhotosList.map((p) => formatImageUri(p));
-  const mainPhotoUrl = hasUserUploadedPhoto ? photosList[0] : null;
+  const mainPhotoUrl = hasMainProfilePhoto ? formatImageUri(displayData.profileImage) : null;
 
   const computeExactAge = () => {
     if (displayData.bdayYear && displayData.bdayYear.toString().trim().length === 4) {
@@ -484,8 +623,19 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       : null;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.topBarHeader}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handlePullToRefresh}
+          colors={['#FE3C72']}
+          tintColor="#FE3C72"
+        />
+      }
+    >
+      <View style={[styles.topBarHeader, { paddingTop: Math.max(insets.top, Platform.OS === 'ios' ? 10 : 5) }]}>
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => {
@@ -534,7 +684,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       <View style={styles.card}>
         <View style={styles.avatarWrapper}>
           <View style={[styles.avatarRingOuter, { borderColor: completionPct >= 100 ? '#00E676' : '#FE3C72' }]}>
-            {hasUserUploadedPhoto ? (
+            {hasMainProfilePhoto ? (
               <TouchableOpacity onPress={() => setActiveStoryIndex(0)} activeOpacity={0.9}>
                 <Image source={{ uri: getVideoThumbnailUrl(mainPhotoUrl) }} style={styles.avatar} />
               </TouchableOpacity>
@@ -574,20 +724,20 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           <Text style={styles.bioText}>"{displayData.bio.trim()}"</Text>
         ) : null}
 
-        {/* Quick Action Chips for Profile Photo */}
+        {/* Quick Action Chips for Profile Photo & Gallery Preview */}
         <View style={styles.photoActionRow}>
           <TouchableOpacity style={styles.changePhotoChip} onPress={handleChangeProfilePhoto} activeOpacity={0.8}>
-            <Text style={styles.changePhotoChipText}>📷 {hasUserUploadedPhoto ? 'Change Photo' : 'Upload Photo'}</Text>
+            <Text style={styles.changePhotoChipText}>📷 {hasMainProfilePhoto ? 'Change Photo' : 'Upload Photo'}</Text>
           </TouchableOpacity>
-          {hasUserUploadedPhoto && (
-            <>
-              <TouchableOpacity style={styles.previewPhotoChip} onPress={() => setActiveStoryIndex(0)} activeOpacity={0.8}>
-                <Text style={styles.previewPhotoChipText}>👀 Preview</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.removePhotoChip} onPress={handleRemoveProfilePhoto} activeOpacity={0.8}>
-                <Text style={styles.removePhotoChipText}>🗑️ Remove</Text>
-              </TouchableOpacity>
-            </>
+          {photosList.length > 0 && (
+            <TouchableOpacity style={styles.previewPhotoChip} onPress={() => setActiveStoryIndex(0)} activeOpacity={0.8}>
+              <Text style={styles.previewPhotoChipText}>Preview </Text>
+            </TouchableOpacity>
+          )}
+          {hasMainProfilePhoto && (
+            <TouchableOpacity style={styles.removePhotoChip} onPress={handleRemoveProfilePhoto} activeOpacity={0.8}>
+              <Text style={styles.removePhotoChipText}>🗑️ Remove</Text>
+            </TouchableOpacity>
           )}
         </View>
 
@@ -782,6 +932,35 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         >
           <Text style={styles.actionIcon}>🙈</Text>
           <Text style={styles.actionText}>Show Hidden Photos / Videos</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionRow}
+          onPress={async () => {
+            try {
+              setLoading(true);
+              const token = await registerFcmToken();
+              if (token) {
+                Alert.alert(
+                  'Push Notifications Active 🔔',
+                  `Successfully connected device token:\n\n${token.substring(0, 32)}...`
+                );
+              } else {
+                Alert.alert(
+                  'Push Notification Setup',
+                  'Attempted token sync. Please ensure Google Play Services and Notification permissions are enabled.'
+                );
+              }
+            } catch (e) {
+              Alert.alert('Push Token Error', e?.message || 'Failed to sync FCM token');
+            } finally {
+              setLoading(false);
+            }
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionIcon}>🔔</Text>
+          <Text style={styles.actionText}>Sync Push Notifications</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
