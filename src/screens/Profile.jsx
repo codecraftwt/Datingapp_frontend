@@ -99,6 +99,26 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
 
+  // Reported Users Modal State
+  const [isReportedUsersModalOpen, setIsReportedUsersModalOpen] = useState(false);
+  const [reportedUsersList, setReportedUsersList] = useState([]);
+  const [reportedUsersLoading, setReportedUsersLoading] = useState(false);
+
+  const handleFetchAndShowReportedUsers = async () => {
+    try {
+      setReportedUsersLoading(true);
+      setIsReportedUsersModalOpen(true);
+      const res = await apiClient.getMyReports();
+      const list = res.reports || res.data?.reports || [];
+      setReportedUsersList(list);
+    } catch (err) {
+      console.log('Error fetching reported users:', err);
+      Alert.alert('Error', 'Failed to fetch your reported users list.');
+    } finally {
+      setReportedUsersLoading(false);
+    }
+  };
+
   const [refreshing, setRefreshing] = useState(false);
 
   // Fetch real profile data directly from Backend API
@@ -936,6 +956,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
+          onPress={handleFetchAndShowReportedUsers}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionIcon}>🚩</Text>
+          <Text style={styles.actionText}>Reported Users</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionRow}
           onPress={async () => {
             try {
               setLoading(true);
@@ -1051,6 +1080,101 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                 style={styles.submitPasswordBtn}
               />
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reported Users Modal */}
+      <Modal visible={isReportedUsersModalOpen} animationType="slide" transparent>
+        <View style={styles.passwordModalOverlay}>
+          <View style={styles.reportedModalCard}>
+            <View style={styles.passwordModalHeader}>
+              <Text style={styles.passwordModalTitle}>🚩 Reported Users</Text>
+              <TouchableOpacity
+                onPress={() => setIsReportedUsersModalOpen(false)}
+                style={styles.passwordCloseBtn}
+              >
+                <Text style={styles.passwordCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {reportedUsersLoading ? (
+              <View style={styles.reportedLoadingContainer}>
+                <ActivityIndicator size="large" color="#FF4458" />
+                <Text style={styles.reportedLoadingText}>Loading reported users...</Text>
+              </View>
+            ) : reportedUsersList.length === 0 ? (
+              <View style={styles.reportedEmptyContainer}>
+                <Text style={styles.reportedEmptyIcon}>🛡️</Text>
+                <Text style={styles.reportedEmptyTitle}>No Reported Users</Text>
+                <Text style={styles.reportedEmptySub}>You have not reported any users yet.</Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.reportedListScroll} showsVerticalScrollIndicator={false}>
+                {reportedUsersList.map((rep) => {
+                  const u = rep.reportedUser || {};
+                  const avatarUrl = getImageUrl(u.profileImage);
+                  const statusColor =
+                    rep.status === 'resolved'
+                      ? '#4CAF50'
+                      : rep.status === 'reviewed'
+                      ? '#2196F3'
+                      : rep.status === 'dismissed'
+                      ? '#9E9E9E'
+                      : '#FF9800';
+
+                  return (
+                    <View key={rep._id} style={styles.reportedCardItem}>
+                      <View style={styles.reportedHeaderRow}>
+                        {avatarUrl ? (
+                          <Image source={{ uri: avatarUrl }} style={styles.reportedAvatar} />
+                        ) : (
+                          <View style={[styles.reportedAvatar, styles.reportedAvatarPlaceholder]}>
+                            <Text style={styles.reportedAvatarInitial}>
+                              {(u.name || 'U').charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                        <View style={styles.reportedUserInfo}>
+                          <Text style={styles.reportedUserName}>
+                            {u.name || u.firstName || 'User'}{u.age ? `, ${u.age}` : ''}
+                          </Text>
+                          <Text style={styles.reportedUserEmail}>{u.email || 'Reported Profile'}</Text>
+                        </View>
+                        <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+                          <Text style={styles.statusBadgeText}>
+                            {(rep.status || 'pending').toUpperCase()}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.reportedReasonWrap}>
+                        <Text style={styles.reportedReasonLabel}>Reason: </Text>
+                        <Text style={styles.reportedReasonVal}>{rep.reason}</Text>
+                      </View>
+
+                      {rep.details ? (
+                        <View style={styles.reportedDetailsWrap}>
+                          <Text style={styles.reportedDetailsLabel}>Details: </Text>
+                          <Text style={styles.reportedDetailsVal}>{rep.details}</Text>
+                        </View>
+                      ) : null}
+
+                      <Text style={styles.reportedDateText}>
+                        Reported on: {new Date(rep.createdAt).toLocaleDateString()}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity
+              style={styles.reportedCloseBtn}
+              onPress={() => setIsReportedUsersModalOpen(false)}
+            >
+              <Text style={styles.reportedCloseBtnText}>CLOSE</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1663,6 +1787,154 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontSize: 11,
     fontWeight: '800',
+  },
+  reportedModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '80%',
+    backgroundColor: '#1E1E2E',
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  reportedLoadingContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reportedLoadingText: {
+    color: '#8A8A9E',
+    fontSize: 14,
+    marginTop: 12,
+  },
+  reportedEmptyContainer: {
+    paddingVertical: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reportedEmptyIcon: {
+    fontSize: 42,
+    marginBottom: 10,
+  },
+  reportedEmptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  reportedEmptySub: {
+    color: '#8A8A9E',
+    fontSize: 14,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  reportedListScroll: {
+    marginVertical: 10,
+  },
+  reportedCardItem: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  reportedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  reportedAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    marginRight: 12,
+  },
+  reportedAvatarPlaceholder: {
+    backgroundColor: '#33334A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reportedAvatarInitial: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  reportedUserInfo: {
+    flex: 1,
+  },
+  reportedUserName: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  reportedUserEmail: {
+    color: '#8A8A9E',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  statusBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  reportedReasonWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  reportedReasonLabel: {
+    color: '#FF4458',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  reportedReasonVal: {
+    color: '#E1E1E6',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  reportedDetailsWrap: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  reportedDetailsLabel: {
+    color: '#8A8A9E',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  reportedDetailsVal: {
+    color: '#CCCCCC',
+    fontSize: 12,
+    flex: 1,
+  },
+  reportedDateText: {
+    color: '#66667A',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  reportedCloseBtn: {
+    marginTop: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingVertical: 12,
+    borderRadius: 20,
+    alignItems: 'center',
+  },
+  reportedCloseBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
 

@@ -258,6 +258,11 @@ export const apiClient = {
     console.log('[API-CLIENT] PUT /api/profile/fcm-token server response:', res);
     return res;
   },
+  getMyReports: async () => {
+    return await request('/api/profile/my-reports', {
+      method: 'GET',
+    });
+  },
   updateLocation: async (locationData) => {
     return await request('/api/profile/location', {
       method: 'PUT',

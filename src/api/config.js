@@ -1,6 +1,6 @@
 export const LIVE_URL = 'https://datingapp-backend-api.vercel.app';
-export const LOCAL_URL = 'http://localhost:5000';
-export const NETWORK_URL = 'http://10.0.3.64:5000';
+// export const LOCAL_URL = 'http://localhost:5000';
+// export const NETWORK_URL = 'http://10.0.3.64:5000';
 
 /**
  * Candidate URLs used in Development mode:
@@ -9,11 +9,13 @@ export const NETWORK_URL = 'http://10.0.3.64:5000';
  * - Android Emulator: 'http://10.0.2.2:5000'
  * - Live Production Fallback: LIVE_URL
  */
-export const CANDIDATE_URLS = __DEV__
-  ? [LOCAL_URL, NETWORK_URL, 'http://10.0.2.2:5000', LIVE_URL]
-  : [LIVE_URL];
+// export const CANDIDATE_URLS = __DEV__
+//   ? [LOCAL_URL, NETWORK_URL, 'http://10.0.2.2:5000', LIVE_URL]
+//   : [LIVE_URL];
+export const CANDIDATE_URLS = [LIVE_URL];
 
-let workingBaseUrl = __DEV__ ? LOCAL_URL : LIVE_URL;
+// let workingBaseUrl = __DEV__ ? LOCAL_URL : LIVE_URL;
+let workingBaseUrl = LIVE_URL;
 
 export const getBaseUrl = () => workingBaseUrl;
 
