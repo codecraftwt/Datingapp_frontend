@@ -465,23 +465,94 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     );
   };
 
-  const openGalleryForSlot = (slotIndex) => {
-    const isMainProfileSlot = slotIndex === 0;
-    const pickerOptions = isMainProfileSlot
-      ? { mediaType: 'photo', quality: 0.7, maxWidth: 1080, maxHeight: 1080 }
-      : { mediaType: 'mixed', videoQuality: 'low', quality: 0.7, durationLimit: 15, maxWidth: 1080, maxHeight: 1080 };
+  const requestAndroidGalleryPermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        if (Platform.Version >= 33) {
+          const hasImagesPermission = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
+          );
+          if (hasImagesPermission) return true;
 
-    launchImageLibrary(pickerOptions, (response) => {
-      if (response.didCancel) return;
-      if (response.errorCode) {
-        console.error('[QuestionnaireScreen] Media Picker error:', response.errorMessage);
-        Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo or video');
-        return;
+          const granted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+            {
+              title: 'Storage Permission Required 🖼️',
+              message: 'Dating App needs access to your media so you can upload profile photos.',
+              buttonNeutral: 'Ask Me Later',
+              buttonNegative: 'Cancel',
+              buttonPositive: 'OK',
+            }
+          );
+          return (
+            granted === PermissionsAndroid.RESULTS.GRANTED ||
+            granted === true ||
+            granted === 'granted'
+          );
+        } else {
+          const hasStoragePermission = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
+          );
+          if (hasStoragePermission) return true;
+
+          const granted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+            {
+              title: 'Storage Permission Required 🖼️',
+              message: 'Dating App needs access to your media so you can upload profile photos.',
+              buttonNeutral: 'Ask Me Later',
+              buttonNegative: 'Cancel',
+              buttonPositive: 'OK',
+            }
+          );
+          return (
+            granted === PermissionsAndroid.RESULTS.GRANTED ||
+            granted === true ||
+            granted === 'granted'
+          );
+        }
+      } catch (err) {
+        console.warn('Gallery permission request error:', err);
+        return true;
       }
-      if (response.assets && response.assets.length > 0) {
-        processSelectedAsset(slotIndex, response.assets[0]);
+    }
+    return true;
+  };
+
+  const openGalleryForSlot = async (slotIndex) => {
+    try {
+      try {
+        await requestAndroidGalleryPermission();
+      } catch (permErr) {
+        console.log('Questionnaire gallery permission check warning:', permErr);
       }
-    });
+      const isMainProfileSlot = slotIndex === 0;
+      const pickerOptions = isMainProfileSlot
+        ? { mediaType: 'photo', quality: 0.7, maxWidth: 1080, maxHeight: 1080 }
+        : { mediaType: 'mixed', videoQuality: 'low', quality: 0.7, durationLimit: 15, maxWidth: 1080, maxHeight: 1080 };
+
+      launchImageLibrary(pickerOptions, (response) => {
+        if (!response || response.didCancel) return;
+        if (response.errorCode) {
+          console.error('[QuestionnaireScreen] Media Picker error:', response.errorMessage);
+          if (response.errorCode === 'permission') {
+            Alert.alert(
+              'Permission Needed 🖼️',
+              'Please grant media storage permission in your phone settings to select photos.'
+            );
+          } else {
+            Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo or video');
+          }
+          return;
+        }
+        if (response.assets && response.assets.length > 0) {
+          processSelectedAsset(slotIndex, response.assets[0]);
+        }
+      });
+    } catch (e) {
+      console.error('Exception in openGalleryForSlot:', e);
+      Alert.alert('Error', 'Unable to open media picker. Please check app permissions.');
+    }
   };
 
   const handlePickImageForSlot = (slotIndex) => {

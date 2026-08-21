@@ -769,6 +769,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     const lastItem = swipeHistory[swipeHistory.length - 1] || (swipeIndex > 0 ? { candidate: MOCK_MATCHES[swipeIndex - 1] } : null);
     const targetId = lastItem?.candidate?.id || lastItem?.candidate?._id;
+    const candidateName = lastItem?.candidate?.name || lastItem?.candidate?.firstName || 'previous profile';
 
     if (lastItem && lastItem.candidate && targetId) {
       try {
@@ -778,10 +779,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
     }
 
-    setSwipeHistory((prev) => prev.slice(0, -1));
+    setSwipeHistory((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
     position.setValue({ x: 0, y: 0 });
+    Animated.spring(position, {
+      toValue: { x: 0, y: 0 },
+      friction: 5,
+      tension: 40,
+      useNativeDriver: false,
+    }).start();
+
+    setShowActiveCardDetails(false);
     setSwipeIndex((prev) => Math.max(0, prev - 1));
-    Alert.alert('Swipe Rewound ⏪', 'Restored previous profile onto your card deck!');
+    Alert.alert('Swipe Rewound ⏪', `Restored ${candidateName}'s profile onto your card deck!`);
   };
 
   useEffect(() => {
@@ -944,12 +953,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       socketRef.current.on('message_delivered', ({ messageId, receiverId }) => {
         console.log(`Socket.IO message_delivered: ${messageId}`);
         setChats((prevChats) =>
+      socketRef.current.on('message_delivered', ({ messageId, tempId, receiverId, status }) => {
+        console.log('Socket.IO message_delivered event received:', messageId, status);
+        const newStatus = status || 'delivered';
+        const rIdStr = receiverId?.toString();
+        setChats((prevChats) =>
           prevChats.map((c) => {
-            if (c.id === receiverId) {
+            if (!rIdStr || c.id === rIdStr) {
               return {
                 ...c,
-                messages: c.messages.map((m) =>
-                  m.id === messageId ? { ...m, status: 'delivered' } : m
+                messages: (c.messages || []).map((m) =>
+                  m.id === messageId || (tempId && m.id === tempId) ? { ...m, status: newStatus } : m
                 ),
               };
             }
@@ -957,11 +971,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           })
         );
         setActiveChat((prevActive) => {
-          if (prevActive && prevActive.id === receiverId) {
+          if (!prevActive) return prevActive;
+          const activeId = (prevActive.id || prevActive._id)?.toString();
+          if (!rIdStr || activeId === rIdStr) {
             return {
               ...prevActive,
-              messages: prevActive.messages.map((m) =>
-                m.id === messageId ? { ...m, status: 'delivered' } : m
+              messages: (prevActive.messages || []).map((m) =>
+                m.id === messageId || (tempId && m.id === tempId) ? { ...m, status: newStatus } : m
               ),
             };
           }
@@ -969,28 +985,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         });
       });
 
-      socketRef.current.on('messages_seen', ({ receiverId }) => {
-        console.log(`Socket.IO messages_seen: User ${receiverId} read our messages`);
+      socketRef.current.on('messages_seen', ({ senderId, receiverId, status }) => {
+        console.log('Socket.IO messages_seen event received for sender/receiver:', senderId, receiverId);
+        const sIdStr = senderId?.toString();
+        const rIdStr = receiverId?.toString();
         setChats((prevChats) =>
           prevChats.map((c) => {
-            if (c.id === receiverId) {
+            const partnerId = c.id?.toString();
+            if (!rIdStr || partnerId === rIdStr || partnerId === sIdStr) {
               return {
                 ...c,
-                messages: c.messages.map((m) =>
-                  m.sender === 'you' ? { ...m, status: 'seen' } : m
-                ),
+                messages: (c.messages || []).map((m) => (m.sender === 'you' ? { ...m, status: 'seen' } : m)),
               };
             }
             return c;
           })
         );
         setActiveChat((prevActive) => {
-          if (prevActive && prevActive.id === receiverId) {
+          if (!prevActive) return prevActive;
+          const activeId = (prevActive.id || prevActive._id)?.toString();
+          if (!rIdStr || activeId === rIdStr || activeId === sIdStr) {
             return {
               ...prevActive,
-              messages: prevActive.messages.map((m) =>
-                m.sender === 'you' ? { ...m, status: 'seen' } : m
-              ),
+              messages: (prevActive.messages || []).map((m) => (m.sender === 'you' ? { ...m, status: 'seen' } : m)),
             };
           }
           return prevActive;
@@ -999,29 +1016,94 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('receive_message', (msg) => {
         console.log('Socket.IO received message:', msg);
+
+        const senderIdStr = (msg.senderId || msg.sender)?.toString();
+        const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
+        const isCurrentlyViewingChat = activePartnerId && activePartnerId === senderIdStr;
+
+        const formattedMsg = {
+          id: (msg._id || msg.id || Date.now()).toString(),
+          sender: 'them',
+          text: msg.text || '',
+          time: new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          messageType: msg.messageType || 'text',
+          mediaUrl: msg.mediaUrl,
+          fileName: msg.fileName,
+          fileSize: msg.fileSize,
+          stickerId: msg.stickerId,
+          status: isCurrentlyViewingChat ? 'seen' : (msg.status || 'delivered'),
+          createdAt: msg.createdAt || new Date().toISOString(),
+        };
+
+        // 1. Instantly update activeChat state if user is currently chatting with sender
+        setActiveChat((prevActive) => {
+          if (!prevActive) return prevActive;
+          const activeId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+          if (activeId === senderIdStr) {
+            const existingMsgs = prevActive.messages || [];
+            if (existingMsgs.some((m) => (m.id || m._id)?.toString() === formattedMsg.id)) {
+              return prevActive;
+            }
+            return {
+              ...prevActive,
+              messages: [...existingMsgs, formattedMsg],
+            };
+          }
+          return prevActive;
+        });
+
+        // 2. Instantly update chats list state
+        setChats((prevChats) => {
+          if (!Array.isArray(prevChats)) return prevChats;
+          return prevChats.map((c) => {
+            const chatPartnerId = (c.id || c._id || c.userId)?.toString();
+            if (chatPartnerId === senderIdStr) {
+              const msgs = c.messages || [];
+              const exists = msgs.some((m) => (m.id || m._id)?.toString() === formattedMsg.id);
+              return {
+                ...c,
+                lastMessage: formattedMsg.text || 'Message',
+                lastMessageTime: formattedMsg.time,
+                messages: exists ? msgs : [...msgs, formattedMsg],
+              };
+            }
+            return c;
+          });
+        });
+
         if (handleIncomingMessageRef.current) {
-          handleIncomingMessageRef.current(msg);
+          try { handleIncomingMessageRef.current(msg); } catch (e) { console.log('Error handling incoming msg:', e); }
         }
-        refetchMessages();
-        refetchChatMessages();
 
-        const senderDisplayName = msg.senderName || 'Someone';
-        let bodyText = msg.text || '💬 Sent a message';
-        if (msg.messageType === 'image') bodyText = '📷 Sent a photo';
-        else if (msg.messageType === 'video') bodyText = '🎬 Sent a video';
-        else if (msg.messageType === 'voice') bodyText = '🎤 Sent a voice message';
-        else if (msg.messageType === 'sticker') bodyText = '😊 Sent a sticker';
+        // If user is currently viewing active chat conversation with sender, emit mark_seen back immediately
+        if (isCurrentlyViewingChat) {
+          if (socketRef.current && socketRef.current.connected && currentUser) {
+            const currentId = (currentUser.id || currentUser._id)?.toString();
+            socketRef.current.emit('mark_seen', {
+              senderId: senderIdStr,
+              receiverId: currentId,
+            });
+          }
+        } else {
+          // If user is not currently in active chat, show pop-up notification
+          const senderDisplayName = msg.senderName || 'Someone';
+          let bodyText = msg.text || '💬 Sent a message';
+          if (msg.messageType === 'image') bodyText = '📷 Sent a photo';
+          else if (msg.messageType === 'video') bodyText = '🎬 Sent a video';
+          else if (msg.messageType === 'voice') bodyText = '🎤 Sent a voice message';
+          else if (msg.messageType === 'sticker') bodyText = '😊 Sent a sticker';
 
-        if (typeof displayLocalSystemNotification === 'function') {
-          displayLocalSystemNotification({
-            title: `💬 ${senderDisplayName}`,
-            body: bodyText,
-            data: {
-              type: 'chat',
-              senderId: msg.senderId,
-              messageId: msg._id,
-            },
-          }).catch((e) => console.log('Notification note:', e));
+          if (typeof displayLocalSystemNotification === 'function') {
+            displayLocalSystemNotification({
+              title: `💬 ${senderDisplayName}`,
+              body: bodyText,
+              data: {
+                type: 'chat',
+                senderId: msg.senderId,
+                messageId: msg._id,
+              },
+            }).catch((e) => console.log('Notification note:', e));
+          }
         }
       });
 
@@ -1651,192 +1733,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
-  const startRecording = async () => {
-    try {
-      setRecordTime('0:00');
-      setRecordingSeconds(0);
-      setIsRecording(true);
-
-      // Start simulated duration timer
-      let seconds = 0;
-      if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
-      recordIntervalRef.current = setInterval(() => {
-        seconds += 1;
-        setRecordingSeconds(seconds);
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        setRecordTime(`${mins}:${secs < 10 ? '0' : ''}${secs}`);
-      }, 1000);
-
-      // Try actual recording if instance is available
-      if (audioRecorderPlayerRef.current) {
-        try {
-          const uri = await audioRecorderPlayerRef.current.startRecorder();
-          console.log('Started voice recording: ', uri);
-        } catch (err) {
-          console.log('Error starting native recorder, fallback will be used:', err);
-        }
-      }
-    } catch (e) {
-      console.log('Error inside startRecording:', e);
-    }
-  };
-
-  const stopRecording = async (shouldSend = true) => {
-    try {
-      if (recordIntervalRef.current) {
-        clearInterval(recordIntervalRef.current);
-        recordIntervalRef.current = null;
-      }
-      setIsRecording(false);
-
-      let localUri = null;
-      if (audioRecorderPlayerRef.current) {
-        try {
-          localUri = await audioRecorderPlayerRef.current.stopRecorder();
-          console.log('Stopped voice recording: ', localUri);
-        } catch (err) {
-          console.log('Error stopping native recorder:', err);
-        }
-      }
-
-      if (!shouldSend) {
-        console.log('Recording cancelled by user.');
-        return;
-      }
-
-      // Check duration
-      if (recordingSeconds < 1) {
-        Alert.alert('Too Short', 'Hold or record for at least 1 second.');
-        return;
-      }
-
-      let audioUrl = '';
-      let fileName = 'voice_note_' + Date.now() + '.mp4';
-      let fileSize = 45000;
-
-      // Try uploading actual recording
-      let uploadSuccess = false;
-      if (localUri) {
-        try {
-          const formattedUri = localUri.startsWith('file://') || localUri.startsWith('content://') ? localUri : `file://${localUri}`;
-          const formData = new FormData();
-          formData.append('file', {
-            uri: formattedUri,
-            name: fileName,
-            type: 'audio/mp4',
-          });
-          const res = await apiClient.uploadChatMedia(formData);
-          audioUrl = res.url;
-          fileName = res.fileName || fileName;
-          fileSize = res.fileSize || fileSize;
-          uploadSuccess = true;
-          console.log('Voice note uploaded successfully:', audioUrl);
-        } catch (uploadErr) {
-          console.log('Failed to upload native audio file, falling back to simulated:', uploadErr);
-        }
-      }
-
-      // Fallback if simulation or upload failed
-      if (!uploadSuccess) {
-        audioUrl = `${BASE_URL}/uploads/sample_voice.mp3`;
-        fileName = 'sample_voice.mp3';
-        fileSize = 32000;
-        console.log('Using simulated fallback audio URL:', audioUrl);
-      }
-
-      // Send message
-      handleSendMessage({
-        messageType: 'voice',
-        mediaUrl: audioUrl,
-        fileName: fileName,
-        fileSize: fileSize,
-      });
-
-    } catch (e) {
-      console.log('Error inside stopRecording:', e);
-      Alert.alert('Error', 'Failed to stop recording.');
-    }
-  };
-
-  const playVoiceNote = async (messageId, audioUrl) => {
-    try {
-      if (playingMessageId === messageId) {
-        // Toggle play/pause (stop playing if clicked on same message)
-        await stopVoicePlayback();
-        return;
-      }
-
-      // Stop current playback if active
-      if (playingMessageId) {
-        await stopVoicePlayback();
-      }
-
-      setPlayingMessageId(messageId);
-      setPlaybackPosition(0);
-      setPlaybackDuration(0);
-
-      const resolvedUrl = getImageUrl(audioUrl);
-      let startedNativePlayer = false;
-
-      if (audioRecorderPlayerRef.current) {
-        try {
-          await audioRecorderPlayerRef.current.startPlayer(resolvedUrl);
-          startedNativePlayer = true;
-          audioRecorderPlayerRef.current.addPlayBackListener((e) => {
-            setPlaybackPosition(e.currentPosition);
-            setPlaybackDuration(e.duration);
-            if (e.currentPosition >= e.duration) {
-              stopVoicePlayback();
-            }
-          });
-          console.log('Playing native voice note:', resolvedUrl);
-        } catch (playerErr) {
-          console.log('Native playback start failed, falling back to simulation:', playerErr);
-        }
-      }
-
-      if (!startedNativePlayer) {
-        console.log('Simulating playback for voice note:', resolvedUrl);
-        let cur = 0;
-        const dur = 5; // simulated 5 seconds duration
-        setPlaybackDuration(dur * 1000);
-        if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
-        playbackIntervalRef.current = setInterval(() => {
-          cur += 0.2;
-          if (cur >= dur) {
-            stopVoicePlayback();
-          } else {
-            setPlaybackPosition(cur * 1000);
-          }
-        }, 200);
-      }
-    } catch (e) {
-      console.log('Error playing voice note:', e);
-    }
-  };
-
-  const stopVoicePlayback = async () => {
-    try {
-      if (playbackIntervalRef.current) {
-        clearInterval(playbackIntervalRef.current);
-        playbackIntervalRef.current = null;
-      }
-      setPlayingMessageId(null);
-      setPlaybackPosition(0);
-      setPlaybackDuration(0);
-
-      if (audioRecorderPlayerRef.current) {
-        try {
-          await audioRecorderPlayerRef.current.stopPlayer();
-          audioRecorderPlayerRef.current.removePlayBackListener();
-        } catch (_) {}
-      }
-    } catch (e) {
-      console.log('Error stopping voice note playback:', e);
-    }
-  };
-
   const handleMessageLongPress = (msg) => {
     if (msg.sender !== 'you' || msg.id === 'match-init') return;
 
@@ -2322,6 +2218,178 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
+  // --- Voice Note Recording & Playback Implementation ---
+  const startRecording = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: 'Microphone Permission 🎤',
+            message: 'Dating App needs microphone access to record voice notes.',
+            buttonPositive: 'OK',
+            buttonNegative: 'Cancel',
+          }
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Permission Denied', 'Microphone permission is required to record voice notes.');
+          return;
+        }
+      }
+
+      if (audioRecorderPlayerRef.current) {
+        try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) {}
+      }
+      setPlayingMessageId(null);
+
+      if (audioRecorderPlayerRef.current && typeof audioRecorderPlayerRef.current.startRecorder === 'function') {
+        await audioRecorderPlayerRef.current.startRecorder();
+      }
+
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      setRecordTime('0:00');
+
+      if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
+      recordIntervalRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => {
+          const nextSec = prev + 1;
+          const mins = Math.floor(nextSec / 60);
+          const secs = nextSec % 60;
+          setRecordTime(`${mins}:${secs < 10 ? '0' : ''}${secs}`);
+          return nextSec;
+        });
+      }, 1000);
+    } catch (e) {
+      console.error('Error starting voice note recording:', e);
+      Alert.alert('Recording Error', 'Unable to start recording voice note.');
+    }
+  };
+
+  const stopRecording = async (shouldSend = true) => {
+    try {
+      if (recordIntervalRef.current) {
+        clearInterval(recordIntervalRef.current);
+        recordIntervalRef.current = null;
+      }
+      setIsRecording(false);
+
+      let recordedPath = '';
+      if (audioRecorderPlayerRef.current && typeof audioRecorderPlayerRef.current.stopRecorder === 'function') {
+        recordedPath = await audioRecorderPlayerRef.current.stopRecorder();
+      }
+
+      if (!shouldSend) {
+        setRecordingSeconds(0);
+        setRecordTime('0:00');
+        return;
+      }
+
+      if (recordingSeconds < 1 && !recordedPath) {
+        Alert.alert('Voice Note Too Short', 'Please hold or tap record for at least 1 second.');
+        setRecordingSeconds(0);
+        setRecordTime('0:00');
+        return;
+      }
+
+      const audioUri = recordedPath || '';
+      if (!audioUri) {
+        Alert.alert('Recording Error', 'No voice recording audio found.');
+        return;
+      }
+
+      const ext = Platform.OS === 'ios' ? 'm4a' : 'mp4';
+      const fileName = `voice_${Date.now()}.${ext}`;
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri: Platform.OS === 'android' ? audioUri : audioUri.replace('file://', ''),
+        name: fileName,
+        type: Platform.OS === 'ios' ? 'audio/m4a' : 'audio/mp4',
+      });
+
+      try {
+        const uploadRes = await apiClient.uploadChatMedia(formData);
+        const voiceUrl = uploadRes.url || uploadRes.data?.url || audioUri;
+
+        handleSendMessage({
+          text: '🎤 Voice Note',
+          messageType: 'voice',
+          mediaUrl: voiceUrl,
+          fileName: fileName,
+          fileSize: uploadRes.fileSize || 0,
+        });
+      } catch (uploadErr) {
+        console.error('Error uploading voice note audio:', uploadErr);
+        Alert.alert('Upload Error', 'Failed to upload voice note to server.');
+      }
+    } catch (e) {
+      console.error('Error stopping voice note recording:', e);
+    } finally {
+      setRecordingSeconds(0);
+      setRecordTime('0:00');
+    }
+  };
+
+  const playVoiceNote = async (msgId, rawMediaUrl) => {
+    try {
+      const fullAudioUrl = getImageUrl(rawMediaUrl);
+      if (!fullAudioUrl) {
+        Alert.alert('Playback Error', 'Voice note audio URL is missing or invalid.');
+        return;
+      }
+
+      if (playingMessageId === msgId) {
+        if (audioRecorderPlayerRef.current) {
+          try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) {}
+        }
+        if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
+        setPlayingMessageId(null);
+        setPlaybackPosition(0);
+        return;
+      }
+
+      if (audioRecorderPlayerRef.current) {
+        try {
+          audioRecorderPlayerRef.current.removePlaybackEndListener();
+          await audioRecorderPlayerRef.current.stopPlayer();
+        } catch (_) {}
+      }
+      if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
+
+      setPlayingMessageId(msgId);
+      setPlaybackPosition(0);
+      setPlaybackDuration(5000);
+
+      const sound = audioRecorderPlayerRef.current || createSound();
+      audioRecorderPlayerRef.current = sound;
+
+      sound.removePlaybackEndListener();
+      sound.addPlaybackEndListener(() => {
+        setPlayingMessageId(null);
+        setPlaybackPosition(0);
+        if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
+      });
+
+      console.log('🔊 Playing voice note from URL:', fullAudioUrl);
+      await sound.startPlayer(fullAudioUrl);
+
+      let posMs = 0;
+      playbackIntervalRef.current = setInterval(() => {
+        posMs += 250;
+        setPlaybackPosition(posMs);
+        if (posMs >= 5000) {
+          if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
+        }
+      }, 250);
+    } catch (e) {
+      console.error('Error playing voice note:', e);
+      setPlayingMessageId(null);
+      setPlaybackPosition(0);
+      Alert.alert('Playback Error', 'Unable to play voice note audio.');
+    }
+  };
+
   return (
     <View style={styles.screenWrapper}>
       <View style={[styles.container, { paddingTop: safeTopPadding }]}>
@@ -2465,7 +2533,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               )}
 
               {/* Action Buttons (static relative to swipeContainer) */}
-              {swipeIndex < MOCK_MATCHES.length && (
+              {(swipeIndex < MOCK_MATCHES.length || swipeIndex > 0 || swipeHistory.length > 0) && (
                 <View style={styles.actionButtonsRow}>
                   <TouchableOpacity
                     style={[styles.actionCircle, styles.actionRewind, (swipeIndex === 0 && swipeHistory.length === 0) && { opacity: 0.5 }]}
@@ -2474,27 +2542,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   >
                     <Text style={[styles.actionIconText, styles.actionRewindText]}>⏪</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionCircle, styles.actionDislike]}
-                    onPress={triggerSwipeLeft}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.actionIconText, styles.actionDislikeText]}>✖</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionCircle, styles.actionSuperLike]}
-                    onPress={triggerSwipeRight}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionIconText}>★</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionCircle, styles.actionLike]}
-                    onPress={triggerSwipeRight}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionIconText}>♥</Text>
-                  </TouchableOpacity>
+                  {swipeIndex < MOCK_MATCHES.length && (
+                    <>
+                      <TouchableOpacity
+                        style={[styles.actionCircle, styles.actionDislike]}
+                        onPress={triggerSwipeLeft}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.actionIconText, styles.actionDislikeText]}>✖</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.actionCircle, styles.actionSuperLike]}
+                        onPress={triggerSwipeRight}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.actionIconText}>★</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.actionCircle, styles.actionLike]}
+                        onPress={triggerSwipeRight}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.actionIconText}>♥</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               )}
             </View>

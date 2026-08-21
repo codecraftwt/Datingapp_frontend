@@ -15,6 +15,7 @@ import {
   RefreshControl,
   PermissionsAndroid,
 } from 'react-native';
+import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
@@ -353,7 +354,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           PermissionsAndroid.PERMISSIONS.CAMERA,
           {
             title: 'Camera Permission Required',
-            message: 'Spark Dating App needs access to your camera so you can take a profile photo.',
+            message: 'Dating App needs access to your camera so you can take a profile photo.',
             buttonNeutral: 'Ask Me Later',
             buttonNegative: 'Cancel',
             buttonPositive: 'OK',
@@ -366,7 +367,64 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         );
       } catch (err) {
         console.warn('Camera permission request error:', err);
-        return true; // Fallback to let launchCamera handle native prompt
+        return true;
+      }
+    }
+    return true;
+  };
+
+  const requestAndroidGalleryPermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        if (Platform.Version >= 33) {
+          if (PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES) {
+            const hasImagesPermission = await PermissionsAndroid.check(
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
+            );
+            if (hasImagesPermission) return true;
+
+            const granted = await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+              {
+                title: 'Storage Permission Required 🖼️',
+                message: 'Dating App needs access to your photos so you can upload a profile picture.',
+                buttonNeutral: 'Ask Me Later',
+                buttonNegative: 'Cancel',
+                buttonPositive: 'OK',
+              }
+            );
+            return (
+              granted === PermissionsAndroid.RESULTS.GRANTED ||
+              granted === true ||
+              granted === 'granted'
+            );
+          }
+          return true;
+        } else {
+          const hasStoragePermission = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
+          );
+          if (hasStoragePermission) return true;
+
+          const granted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+            {
+              title: 'Storage Permission Required 🖼️',
+              message: 'Dating App needs access to your photos so you can upload a profile picture.',
+              buttonNeutral: 'Ask Me Later',
+              buttonNegative: 'Cancel',
+              buttonPositive: 'OK',
+            }
+          );
+          return (
+            granted === PermissionsAndroid.RESULTS.GRANTED ||
+            granted === true ||
+            granted === 'granted'
+          );
+        }
+      } catch (err) {
+        console.warn('Gallery permission request error:', err);
+        return true;
       }
     }
     return true;
@@ -374,31 +432,21 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
   const openCameraPicker = async () => {
     try {
-      const hasPermission = await requestAndroidCameraPermission();
-      if (!hasPermission) {
-        console.log('Camera permission check returned false, attempting launchCamera fallback...');
-      }
-    } catch (e) {
-      console.log('Camera permission check exception:', e);
-    }
-
-    launchCamera(
-      {
+      await requestAndroidCameraPermission();
+      const options = {
         mediaType: 'photo',
         quality: 0.8,
-        maxWidth: 1024,
-        maxHeight: 1024,
         saveToPhotos: false,
         cameraType: 'front',
-      },
-      (response) => {
-        if (response.didCancel) return;
+      };
+      launchCamera(options, (response) => {
+        if (!response || response.didCancel) return;
         if (response.errorCode) {
           console.warn('Camera launch response error:', response.errorCode, response.errorMessage);
           if (response.errorCode === 'permission') {
             Alert.alert(
               'Camera Permission Needed 📷',
-              'Please grant camera permission in your phone settings (Settings > Apps > Dating App > Permissions > Camera) to take photos.'
+              'Please grant camera permission in your phone settings to take photos.'
             );
           } else {
             Alert.alert('Camera Error', response.errorMessage || 'Unable to open device camera.');
@@ -408,29 +456,57 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         if (response.assets && response.assets.length > 0) {
           processSelectedPhotoAsset(response.assets[0]);
         }
-      }
-    );
+      });
+    } catch (e) {
+      console.error('Exception in openCameraPicker:', e);
+      Alert.alert('Camera Error', e?.message || 'Could not launch camera.');
+    }
   };
 
-  const openGalleryPicker = () => {
-    launchImageLibrary(
-      {
+  const openGalleryPicker = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        try {
+          if (Platform.Version >= 33) {
+            if (PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES) {
+              await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES);
+            }
+          } else {
+            await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
+          }
+        } catch (permErr) {
+          console.log('Gallery permission request note:', permErr);
+        }
+      }
+
+      const options = {
         mediaType: 'photo',
         quality: 0.8,
-        maxWidth: 1024,
-        maxHeight: 1024,
-      },
-      (response) => {
-        if (response.didCancel) return;
+        includeBase64: false,
+      };
+
+      launchImageLibrary(options, (response) => {
+        if (!response || response.didCancel) return;
         if (response.errorCode) {
-          Alert.alert('Gallery Error', response.errorMessage || 'Failed to pick photo from gallery.');
+          console.warn('Gallery launch response error:', response.errorCode, response.errorMessage);
+          if (response.errorCode === 'permission') {
+            Alert.alert(
+              'Photo Permission Needed 🖼️',
+              'Please grant photo storage permission in your phone settings to choose photos from gallery.'
+            );
+          } else {
+            Alert.alert('Gallery Error', response.errorMessage || 'Failed to pick photo from gallery.');
+          }
           return;
         }
         if (response.assets && response.assets.length > 0) {
           processSelectedPhotoAsset(response.assets[0]);
         }
-      }
-    );
+      });
+    } catch (e) {
+      console.error('Exception in openGalleryPicker:', e);
+      Alert.alert('Gallery Error', e?.message || 'Could not open photo gallery.');
+    }
   };
 
   const handleChangeProfilePhoto = () => {
@@ -1089,7 +1165,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         <View style={styles.passwordModalOverlay}>
           <View style={styles.reportedModalCard}>
             <View style={styles.passwordModalHeader}>
-              <Text style={styles.passwordModalTitle}>🚩 Reported Users</Text>
+              <Text style={styles.passwordModalTitle}> Reported Users</Text>
               <TouchableOpacity
                 onPress={() => setIsReportedUsersModalOpen(false)}
                 style={styles.passwordCloseBtn}
@@ -1118,10 +1194,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                     rep.status === 'resolved'
                       ? '#4CAF50'
                       : rep.status === 'reviewed'
-                      ? '#2196F3'
-                      : rep.status === 'dismissed'
-                      ? '#9E9E9E'
-                      : '#FF9800';
+                        ? '#2196F3'
+                        : rep.status === 'dismissed'
+                          ? '#9E9E9E'
+                          : '#FF9800';
 
                   return (
                     <View key={rep._id} style={styles.reportedCardItem}>
