@@ -124,6 +124,10 @@ export const LoginScreen = ({ onNavigate }) => {
 
       if (res?.status === 'DEVICE_LIMIT_REACHED') {
         setAlreadyLoggedInError(true);
+        Alert.alert(
+          'Device Limit Reached',
+          res?.message || 'Device limit reached. User is already logged in, please Logout from all devices.'
+        );
         return;
       }
 
@@ -142,13 +146,15 @@ export const LoginScreen = ({ onNavigate }) => {
         err?.data?.status === 'DEVICE_LIMIT_REACHED' ||
         err?.message?.includes('active on another device') ||
         err?.message?.includes('already logged in') ||
-        err?.data?.message?.includes('already logged in');
+        err?.message?.includes('Device limit reached') ||
+        err?.data?.message?.includes('already logged in') ||
+        err?.data?.message?.includes('Device limit reached');
 
       if (isDeviceLimit) {
         setAlreadyLoggedInError(true);
         Alert.alert(
           'Device Limit Reached',
-          'User is already logged in, please Logout from all devices.'
+          err?.data?.message || err?.message || 'Device limit reached. User is already logged in, please Logout from all devices.'
         );
         return;
       }
@@ -189,7 +195,7 @@ export const LoginScreen = ({ onNavigate }) => {
             {alreadyLoggedInError && (
               <View style={styles.alreadyLoggedInContainer}>
                 <Text style={styles.alreadyLoggedInText}>
-                  User is already logged in please Logout from all devices.
+                  Device limit reached. User is already logged in, please Logout from all devices.
                 </Text>
                 <TouchableOpacity
                   style={styles.logoutAllInlineBtn}

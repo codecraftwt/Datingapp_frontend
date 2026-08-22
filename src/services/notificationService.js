@@ -304,7 +304,7 @@ export const registerFcmToken = async () => {
  * Setup FCM & Notifee Listeners for Foreground, Background, and Quit states
  * @param {Function} onNotificationClick - Optional callback when user taps a notification
  */
-export const setupNotificationListeners = (onNotificationClick) => {
+export const setupNotificationListeners = (onNotificationClick, onNotificationReceived) => {
   try {
     // Listen for Notifee notification press events
     const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
@@ -330,6 +330,14 @@ export const setupNotificationListeners = (onNotificationClick) => {
         body,
         data: remoteMessage.data || {},
       });
+
+      if (onNotificationReceived && typeof onNotificationReceived === 'function') {
+        try {
+          onNotificationReceived(remoteMessage.data || {}, remoteMessage);
+        } catch (cbErr) {
+          console.warn('[FCM] Error in onNotificationReceived callback:', cbErr);
+        }
+      }
     });
 
     // 2. Token Refresh Listener
