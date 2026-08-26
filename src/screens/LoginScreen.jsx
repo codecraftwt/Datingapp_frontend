@@ -27,6 +27,13 @@ export const LoginScreen = ({ onNavigate }) => {
   const [loading, setLoading] = useState(false);
   const [alreadyLoggedInError, setAlreadyLoggedInError] = useState(false);
 
+  // OTP Verification States
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [pendingLoginRes, setPendingLoginRes] = useState(null);
+
   const processSuccessfulLogin = async (res) => {
     const rawUser = res.user || res.data?.user || res;
     const token = res.token || res.data?.token;
@@ -135,10 +142,30 @@ export const LoginScreen = ({ onNavigate }) => {
       const token = res.token || res.data?.token;
 
       if (rawUser && token) {
-        await processSuccessfulLogin(res);
+        setAuthToken(token);
+
+        const needsOtpVerification = res.requireMobileVerification === true;
+
+        if (needsOtpVerification) {
+          console.log('[LoginScreen] First time login! Opening OTP verification modal...');
+          setPendingLoginRes(res);
+          setOtpCode('');
+          setShowOtpModal(true);
+
+          if (Platform.OS === 'android') {
+            ToastAndroid.show(`Verification OTP sent to ${rawUser.email || email.trim()}`, ToastAndroid.SHORT);
+          }
+          return;
+        } else {
+          console.log('[LoginScreen] Returning verified user. Bypassing OTP screen and logging in directly...');
+          await processSuccessfulLogin(res);
+          return;
+        }
       } else {
         Alert.alert('Login Failed', res.message || 'Invalid email or password.');
       }
+
+
     } catch (err) {
       console.log('Login error:', err);
       const isDeviceLimit =
@@ -166,6 +193,72 @@ export const LoginScreen = ({ onNavigate }) => {
       Alert.alert('Login Failed', msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleVerifyOtpSubmit = async () => {
+    if (!otpCode.trim()) {
+      Alert.alert('Validation Error', 'Please enter the 6-digit OTP code.');
+      return;
+    }
+
+    try {
+      setOtpLoading(true);
+      const verifyRes = await apiClient.verifyMobileOtp({
+        otp: otpCode.trim(),
+      });
+
+      if (verifyRes && verifyRes.success) {
+        setShowOtpModal(false);
+        const verifiedUser = verifyRes.user || {
+          ...(pendingLoginRes?.user || pendingLoginRes),
+          isMobileVerified: true,
+          isFirstLogin: false,
+        };
+        const updatedRes = {
+          ...pendingLoginRes,
+          user: verifiedUser,
+          isMobileVerified: true,
+          isFirstLogin: false,
+        };
+
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Verification Successful! 🎉', ToastAndroid.SHORT);
+        } else {
+          Alert.alert('Verified 🎉', 'Mobile verification successful!');
+        }
+
+        await processSuccessfulLogin(updatedRes);
+      } else {
+        Alert.alert('Verification Failed', verifyRes?.message || 'Invalid OTP code. Please try again.');
+      }
+    } catch (err) {
+      console.log('OTP Verification error:', err);
+      const msg = err.data?.message || err.message || 'Failed to verify OTP code. Please try again.';
+      Alert.alert('Verification Error', msg);
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleResendOtpCall = async () => {
+    try {
+      setResendLoading(true);
+      const res = await apiClient.sendMobileOtp();
+      const userEmail = pendingLoginRes?.user?.email || email.trim();
+      const msg = res?.message || `A new OTP has been sent to ${userEmail}`;
+
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(msg, ToastAndroid.LONG);
+      } else {
+        Alert.alert('OTP Sent ✉️', msg);
+      }
+    } catch (err) {
+      console.log('Resend OTP error:', err);
+      const msg = err.data?.message || err.message || 'Failed to resend OTP. Please try again.';
+      Alert.alert('Resend Failed', msg);
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -259,10 +352,79 @@ export const LoginScreen = ({ onNavigate }) => {
             </TouchableOpacity>
           </View>
         </ScrollView>
+
+        {/* First-Time Mobile & Email OTP Verification Modal */}
+        <Modal
+          visible={showOtpModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowOtpModal(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.modalOverlay}
+          >
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.otpCard}>
+                <View style={styles.otpIconBadge}>
+                  <Text style={{ fontSize: 32 }}>✉️</Text>
+                </View>
+                <Text style={styles.otpModalTitle}>Verify Verification OTP</Text>
+                <Text style={styles.otpModalSubtitle}>
+                  A 6-digit verification code has been sent to your registered email address:{'\n'}
+                  <Text style={{ fontWeight: '700', color: '#FE3C72' }}>
+                    {pendingLoginRes?.user?.email || email.trim()}
+                  </Text>
+                </Text>
+
+                <CustomInput
+                  label="6-Digit Verification Code"
+                  placeholder="Enter 6-digit OTP (e.g. 123456)"
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  value={otpCode}
+                  onChangeText={setOtpCode}
+                />
+
+                <CustomButton
+                  title="VERIFY OTP"
+                  variant="primary"
+                  loading={otpLoading}
+                  onPress={handleVerifyOtpSubmit}
+                  style={{ marginTop: 12, width: '100%' }}
+                />
+
+                <View style={styles.otpModalActions}>
+                  <TouchableOpacity
+                    onPress={handleResendOtpCall}
+                    disabled={resendLoading}
+                    style={styles.resendBtn}
+                  >
+                    <Text style={styles.resendBtnText}>
+                      {resendLoading ? 'Sending OTP...' : 'Resend OTP'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setShowOtpModal(false)}
+                    style={styles.cancelBtn}
+                  >
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </Modal>
       </KeyboardAvoidingView>
     </SimulatedGradientBackground>
   );
 };
+
 
 const styles = StyleSheet.create({
   keyboardView: {
@@ -380,6 +542,84 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textDecorationLine: 'underline',
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 20,
+    paddingVertical: 30,
+  },
+  otpCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#1E1E2E',
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+  },
+  otpIconBadge: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(254, 60, 114, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FE3C72',
+  },
+  otpModalTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  otpModalSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.75)',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+  },
+  otpModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 16,
+    paddingHorizontal: 8,
+  },
+  resendBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  resendBtnText: {
+    color: '#FE3C72',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  cancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  cancelBtnText: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
 });
 
 export default LoginScreen;
+

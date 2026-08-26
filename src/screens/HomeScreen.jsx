@@ -356,8 +356,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       fetchMatchesList();
       fetchLikes();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id, currentUser?._id, userProfile?.id, userProfile?._id]);
+
+  useEffect(() => {
+    const badgeSyncInterval = setInterval(() => {
+      try { fetchUnreadLikesCount(); } catch (e) {}
+      try { fetchMessages(); } catch (e) {}
+    }, 4000);
+    return () => clearInterval(badgeSyncInterval);
+  }, []);
 
   const refetch = fetchQuestionnaires;
   const refetchMessages = fetchMessages;
@@ -389,6 +396,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   console.log('Filtered Swipe Cards (MOCK_MATCHES):', JSON.stringify(MOCK_MATCHES.map(u => ({ id: u.id, name: u.name }))));
 
   const [activeTab, setActiveTab] = useState('swipe'); // swipe, likes, chat, profile
+  const [unreadChatPushCount, setUnreadChatPushCount] = useState(0);
 
   // Android / Emulator Hardware Back Button Handler for HomeScreen Tabs, Modals, and Active Chat
   useEffect(() => {
@@ -434,6 +442,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     } else if (activeTab === 'chat') {
       fetchMatchesList();
       fetchMessages();
+      setUnreadChatPushCount(0);
       if (typeof apiClient.markMatchesAsRead === 'function') {
         apiClient.markMatchesAsRead().catch(() => {});
       }
@@ -622,8 +631,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     let pollInterval;
     const partnerId = (activeChat?.id || activeChat?._id || activeChat?.userId)?.toString();
     if (partnerId) {
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+      }
       pollInterval = setInterval(() => {
         fetchChatMessages();
+        if (socketRef.current && socketRef.current.connected) {
+          socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+        }
       }, 3000);
     }
     return () => {
@@ -989,27 +1004,48 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const initialOnlineMap = {};
       const initialLastSeenMap = {};
       questionnairesData.users.forEach((u) => {
-        if (u.isOnline) {
-          initialOnlineMap[u.id.toString()] = true;
-        }
-        if (u.lastSeen) {
-          initialLastSeenMap[u.id.toString()] = u.lastSeen;
+        const uId = (u.id || u._id || u.userId)?.toString();
+        if (uId) {
+          if (u.isOnline !== undefined) initialOnlineMap[uId] = !!u.isOnline;
+          if (u.lastSeen) initialLastSeenMap[uId] = u.lastSeen;
         }
       });
-      setOnlineUsersMap((prev) => ({ ...initialOnlineMap, ...prev }));
-      setLastSeenMap((prev) => ({ ...initialLastSeenMap, ...prev }));
+      setOnlineUsersMap((prev) => ({ ...prev, ...initialOnlineMap }));
+      setLastSeenMap((prev) => ({ ...prev, ...initialLastSeenMap }));
     }
   }, [questionnairesData]);
 
   useEffect(() => {
-    if (likesData?.users) {
+    if (likesData?.users && Array.isArray(likesData.users)) {
       setLikesList(likesData.users);
+      const likesOnlineMap = {};
+      const likesLastSeenMap = {};
+      likesData.users.forEach((u) => {
+        const uId = (u.id || u._id || u.userId)?.toString();
+        if (uId) {
+          if (u.isOnline !== undefined) likesOnlineMap[uId] = !!u.isOnline;
+          if (u.lastSeen) likesLastSeenMap[uId] = u.lastSeen;
+        }
+      });
+      setOnlineUsersMap((prev) => ({ ...prev, ...likesOnlineMap }));
+      setLastSeenMap((prev) => ({ ...prev, ...likesLastSeenMap }));
     }
   }, [likesData]);
 
   useEffect(() => {
-    if (matchesData?.matches) {
-      setMatchedUserIds(matchesData.matches.map((m) => m.id));
+    if (matchesData?.matches && Array.isArray(matchesData.matches)) {
+      setMatchedUserIds(matchesData.matches.map((m) => m.id || m._id));
+      const matchOnlineMap = {};
+      const matchLastSeenMap = {};
+      matchesData.matches.forEach((u) => {
+        const uId = (u.id || u._id || u.userId)?.toString();
+        if (uId) {
+          if (u.isOnline !== undefined) matchOnlineMap[uId] = !!u.isOnline;
+          if (u.lastSeen) matchLastSeenMap[uId] = u.lastSeen;
+        }
+      });
+      setOnlineUsersMap((prev) => ({ ...prev, ...matchOnlineMap }));
+      setLastSeenMap((prev) => ({ ...prev, ...matchLastSeenMap }));
     }
   }, [matchesData]);
 
@@ -1212,14 +1248,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: Infinity,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        timeout: 20000,
+        reconnectionDelay: 500,
+        reconnectionDelayMax: 3000,
+        timeout: 30000,
+        pingTimeout: 30000,
+        pingInterval: 25000,
+        autoConnect: true,
       });
 
       socketRef.current.on('connect', () => {
-        console.log('Socket.IO connected successfully, emitting join with:', currentId);
+        console.log('🟢 [FRONTEND SOCKET CONNECT] Connected to:', socketUrl, '| Emitting join & ping_presence for currentId:', currentId);
         socketRef.current.emit('join', currentId);
+        socketRef.current.emit('ping_presence', currentId);
 
         // Flush offline queue on reconnection
         const currentQueue = offlineQueueRef.current;
@@ -1229,6 +1269,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             socketRef.current.emit('send_message', item.payload);
           });
         }
+      });
+
+      socketRef.current.on('connect_error', (err) => {
+        console.warn('⚠️ [FRONTEND SOCKET CONNECT_ERROR] Connection error to', socketUrl, ':', err.message);
       });
 
       socketRef.current.on('online_users_list', ({ onlineUserIds }) => {
@@ -1276,12 +1320,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('message_delivered', ({ messageId, receiverId }) => {
         console.log(`Socket.IO message_delivered: ${messageId}`);
+        const rIdStr = receiverId?.toString();
         setChats((prevChats) =>
           prevChats.map((c) => {
-            if (c.id === receiverId) {
+            const cIdStr = (c.id || c._id || c.userId)?.toString();
+            if (!rIdStr || cIdStr === rIdStr) {
               return {
                 ...c,
-                messages: c.messages.map((m) =>
+                messages: (c.messages || []).map((m) =>
                   m.id === messageId ? { ...m, status: 'delivered' } : m
                 ),
               };
@@ -1290,10 +1336,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           })
         );
         setActiveChat((prevActive) => {
-          if (prevActive && prevActive.id === receiverId) {
+          if (!prevActive) return prevActive;
+          const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+          if (!rIdStr || activeIdStr === rIdStr) {
             return {
               ...prevActive,
-              messages: prevActive.messages.map((m) =>
+              messages: (prevActive.messages || []).map((m) =>
                 m.id === messageId ? { ...m, status: 'delivered' } : m
               ),
             };
@@ -1415,9 +1463,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
 
         try {
-          if (refetchChatMessages && typeof refetchChatMessages === 'function') {
-            refetchChatMessages();
-          }
+          fetchMessages();
         } catch (e) {}
 
         // If user is currently viewing active chat conversation with sender, emit mark_seen back immediately
@@ -1430,7 +1476,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             });
           }
         } else {
-          // If user is not currently in active chat, show pop-up banner notification
+          // If user is not currently in active chat, increment instant bottom tab chat badge & show pop-up banner notification
+          setUnreadChatPushCount((prev) => prev + 1);
           const senderDisplayName = msg.senderName || 'Someone';
           let bodyText = msg.text || '💬 Sent a message';
           if (msg.messageType === 'image') bodyText = '📷 Sent a photo';
@@ -1507,10 +1554,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           setChats((prevChats) =>
             prevChats.map((c) => {
-              if (c.id === otherId) {
+              const cIdStr = (c.id || c._id || c.userId)?.toString();
+              if (cIdStr === otherId) {
                 return {
                   ...c,
-                  messages: c.messages.map((m) =>
+                  messages: (c.messages || []).map((m) =>
                     m.id === msg.tempId ? actualMsg : m
                   ),
                 };
@@ -1519,10 +1567,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             })
           );
           setActiveChat((prevActive) => {
-            if (prevActive && prevActive.id === otherId) {
+            if (!prevActive) return prevActive;
+            const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+            if (activeIdStr === otherId) {
               return {
                 ...prevActive,
-                messages: prevActive.messages.map((m) =>
+                messages: (prevActive.messages || []).map((m) =>
                   m.id === msg.tempId ? actualMsg : m
                 ),
               };
@@ -1876,8 +1926,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             console.log('[AppState] Socket disconnected. Reconnecting...');
             socketRef.current.connect();
           } else {
-            console.log('[AppState] App in foreground. Re-emitting join for user:', currentId);
+            console.log('[AppState] App in foreground. Re-emitting join and ping_presence for user:', currentId);
             socketRef.current.emit('join', currentId);
+            socketRef.current.emit('ping_presence', currentId);
           }
         }
         if (activeChat && socketRef.current) {
@@ -1930,6 +1981,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             socketRef.current.connect();
           } else {
             socketRef.current.emit('join', currentId);
+            socketRef.current.emit('ping_presence', currentId);
           }
         }
       }
@@ -1972,6 +2024,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           if (isChatNotif) {
             console.log('[HomeScreen] Real-time Push Notification: Updating Chat tab badge & active conversation messages instantly!');
+            setUnreadChatPushCount((prev) => prev + 1);
+            try { fetchMessages(); } catch (e) {}
+            try { fetchMatchesList(); } catch (e) {}
             
             const senderIdStr = (data?.senderId || data?.userId)?.toString();
             const bodyMessageText = remoteMessage?.notification?.body || data?.body || data?.text || 'Sent a message';
@@ -2422,22 +2477,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       createdAt: new Date().toISOString(),
     };
 
+    const isIdMatch = (obj, targetId) => {
+      if (!obj || !targetId) return false;
+      const targetStr = targetId.toString();
+      const objIdStr = (obj.id || obj._id || obj.userId)?.toString();
+      return objIdStr === targetStr;
+    };
+
     setChats((prevChats) =>
       prevChats.map((c) => {
-        if (c.id === receiverId) {
+        if (isIdMatch(c, receiverId)) {
           return {
             ...c,
-            messages: [...c.messages, localMsg],
+            messages: [...(c.messages || []), localMsg],
           };
         }
         return c;
       })
     );
     setActiveChat((prevActive) => {
-      if (prevActive && prevActive.id === receiverId) {
+      if (isIdMatch(prevActive, receiverId)) {
         return {
           ...prevActive,
-          messages: [...prevActive.messages, localMsg],
+          messages: [...(prevActive.messages || []), localMsg],
         };
       }
       return prevActive;
@@ -2447,33 +2509,70 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setTypedMessage('');
     }
 
+    let hasConfirmed = false;
+    const handleServerConfirmation = (serverMsg) => {
+      if (!serverMsg || hasConfirmed) return;
+      hasConfirmed = true;
+      const actualMsg = {
+        id: serverMsg._id || serverMsg.id,
+        sender: 'you',
+        text: serverMsg.text,
+        messageType: serverMsg.messageType || 'text',
+        mediaUrl: serverMsg.mediaUrl,
+        fileName: serverMsg.fileName,
+        fileSize: serverMsg.fileSize,
+        stickerId: serverMsg.stickerId,
+        status: serverMsg.status || 'sent',
+        createdAt: serverMsg.createdAt || new Date().toISOString(),
+      };
+      setChats((prevChats) =>
+        prevChats.map((c) => {
+          if (isIdMatch(c, receiverId)) {
+            return {
+              ...c,
+              messages: (c.messages || []).map((m) => (m.id === tempId ? actualMsg : m)),
+            };
+          }
+          return c;
+        })
+      );
+      setActiveChat((prevActive) => {
+        if (isIdMatch(prevActive, receiverId)) {
+          return {
+            ...prevActive,
+            messages: (prevActive.messages || []).map((m) => (m.id === tempId ? actualMsg : m)),
+          };
+        }
+        return prevActive;
+      });
+      setOfflineQueue((prev) => prev.filter((item) => item.tempId !== tempId));
+    };
+
     if (socketRef.current && socketRef.current.connected) {
-      socketRef.current.emit('send_message', payload);
+      socketRef.current.emit('send_message', payload, (res) => {
+        if (res && res.status === 'ok' && res.data) {
+          handleServerConfirmation(res.data);
+        }
+      });
+
+      // 2.5s Fallback timer if socket confirmation lags or drops
+      setTimeout(() => {
+        if (!hasConfirmed) {
+          console.log('Socket confirmation delayed, triggering REST API sync fallback for tempId:', tempId);
+          apiClient.sendMessage(payload).then((res) => {
+            if (res?.data?._id) {
+              handleServerConfirmation(res.data);
+            }
+          }).catch((err) => {
+            console.error('REST API sendMessage fallback error:', err);
+          });
+        }
+      }, 2500);
     } else {
-      console.log('Sending message via REST API Fallback (Serverless / Vercel):', payload);
+      console.log('Socket offline: Sending message via REST API Fallback:', payload);
       apiClient.sendMessage(payload).then((res) => {
         if (res?.data?._id) {
-          const serverMsg = res.data;
-          setChats((prevChats) =>
-            prevChats.map((c) => {
-              if (c.id === receiverId) {
-                return {
-                  ...c,
-                  messages: c.messages.map((m) => (m.id === tempId ? { ...m, id: serverMsg._id, status: serverMsg.status || 'sent' } : m)),
-                };
-              }
-              return c;
-            })
-          );
-          setActiveChat((prevActive) => {
-            if (prevActive && prevActive.id === receiverId) {
-              return {
-                ...prevActive,
-                messages: prevActive.messages.map((m) => (m.id === tempId ? { ...m, id: serverMsg._id, status: serverMsg.status || 'sent' } : m)),
-              };
-            }
-            return prevActive;
-          });
+          handleServerConfirmation(res.data);
         }
       }).catch((err) => {
         console.error('REST API sendMessage error:', err);
@@ -3542,7 +3641,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     >
                       {(() => {
                         const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
-                        const isPartnerOnline = !!(partnerId && onlineUsersMap[partnerId]);
+                        const isPartnerOnline = partnerId && onlineUsersMap[partnerId] !== undefined
+                          ? !!onlineUsersMap[partnerId]
+                          : !!(activeChat.isOnline || activeChat.user?.isOnline);
                         return (
                           <>
                             <View style={styles.avatarWrapper}>
@@ -3556,7 +3657,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               <Text style={styles.chatHeaderStatusText}>
                                 {isPartnerOnline
                                   ? 'Online'
-                                  : formatLastSeen(lastSeenMap[partnerId] || activeChat.lastSeen)}
+                                  : formatLastSeen((partnerId && lastSeenMap[partnerId]) || activeChat.lastSeen)}
                               </Text>
                             </View>
                           </>
@@ -4050,9 +4151,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           >
                             <View style={styles.avatarWrapper}>
                               <Image source={{ uri: getImageUrl(chat.image) }} style={styles.chatRowAvatar} />
-                              {!!((chat.id || chat._id || chat.userId) && onlineUsersMap[(chat.id || chat._id || chat.userId).toString()]) && (
-                                <View style={styles.onlineDotOverlay} />
-                              )}
+                              {(() => {
+                                const cId = (chat.id || chat._id || chat.userId)?.toString();
+                                const isOnline = cId && onlineUsersMap[cId] !== undefined ? !!onlineUsersMap[cId] : !!(chat.isOnline || chat.user?.isOnline);
+                                return isOnline ? <View style={styles.onlineDotOverlay} /> : null;
+                              })()}
                             </View>
                             <View style={styles.chatRowInfo}>
                               <Text style={[styles.chatRowName, unreadCount > 0 && styles.chatRowNameUnread]}>
@@ -4170,8 +4273,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             <View style={{ position: 'relative' }}>
               <Text style={styles.navigationIcon}>❤️</Text>
               {unreadLikesCount > 0 && (
-                <View style={styles.navLikesBadge}>
-                  <Text style={styles.navLikesBadgeText}>
+                <View style={styles.navBadgeContainer}>
+                  <Text style={styles.navBadgeText}>
                     {unreadLikesCount > 99 ? '99+' : unreadLikesCount}
                   </Text>
                 </View>
@@ -4199,20 +4302,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               return rId === currentId && sId !== currentId && msg.status !== 'seen';
             }).length;
 
-            const totalUnreadChatCount = Math.max(chatsUnread, rawUnread);
+            const totalUnreadChatCount = Math.max(chatsUnread, rawUnread) + unreadChatPushCount;
 
             return (
               <TouchableOpacity
                 style={[styles.navigationTab, activeTab === 'chat' && styles.navigationTabActive]}
                 onPress={() => {
                   setActiveTab('chat');
+                  setUnreadChatPushCount(0);
                 }}
               >
                 <View style={{ position: 'relative' }}>
                   <Text style={styles.navigationIcon}>💬</Text>
                   {totalUnreadChatCount > 0 && (
-                    <View style={styles.navChatBadge}>
-                      <Text style={styles.navChatBadgeText}>
+                    <View style={styles.navBadgeContainer}>
+                      <Text style={styles.navBadgeText}>
                         {totalUnreadChatCount > 99 ? '99+' : totalUnreadChatCount}
                       </Text>
                     </View>
@@ -5438,6 +5542,28 @@ const styles = StyleSheet.create({
   navigationLabelActive: {
     color: '#FE3C72',
     fontWeight: '800',
+  },
+  navBadgeContainer: {
+    position: 'absolute',
+    top: -5,
+    right: -10,
+    backgroundColor: '#FF3B30',
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#0F1115',
+    elevation: 5,
+    zIndex: 10,
+  },
+  navBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    textAlign: 'center',
   },
 
   // Swipe Tab Styles

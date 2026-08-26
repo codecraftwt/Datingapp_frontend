@@ -8,6 +8,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ToastAndroid,
 } from 'react-native';
 import { apiClient } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
@@ -18,8 +19,10 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [step, setStep] = useState(1); // 1 = Request OTP Code, 2 = Enter Code & Reset Password
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [step, setStep] = useState(1); // 1 = Request OTP, 2 = Verify OTP, 3 = Reset Password
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
 
   const handleRequestOtp = async () => {
     if (!email.trim()) {
@@ -31,17 +34,15 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
       setLoading(true);
       const res = await apiClient.forgotPassword({ email: email.trim().toLowerCase() });
       
-      const otpCodeMsg = res.code ? ` (Development Code: ${res.code})` : '';
+      setCode('');
       Alert.alert(
-        'Code Sent',
-        (res.message || 'If an account exists with this email, a reset code has been sent.') + otpCodeMsg,
+        'Code Sent ✉️',
+        res.message || `Password reset code sent to ${email.trim()}`,
         [
           {
             text: 'OK',
             onPress: () => {
-              if (res.code) {
-                setCode(res.code.toString());
-              }
+              setCode('');
               setStep(2);
             },
           },
@@ -56,14 +57,78 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
     }
   };
 
+  const handleResendOtp = async () => {
+    if (!email.trim()) {
+      Alert.alert('Required Field', 'Please enter your registered email address.');
+      return;
+    }
+
+    try {
+      setResendLoading(true);
+      const res = await apiClient.forgotPassword({ email: email.trim().toLowerCase() });
+      
+      setCode('');
+
+      const successMessage = res.message || `Password reset code resent to ${email.trim()}`;
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(successMessage, ToastAndroid.SHORT);
+      } else {
+        Alert.alert('OTP Resent ✉️', successMessage);
+      }
+    } catch (err) {
+      console.log('Resend OTP error:', err);
+      const msg = err.data?.message || err.message || 'Failed to resend OTP code. Please try again.';
+      Alert.alert('Resend Failed', msg);
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!code.trim()) {
+      Alert.alert('Required Field', 'Please enter the 6-digit verification code sent to your email.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const res = await apiClient.verifyResetOtp({
+        email: email.trim().toLowerCase(),
+        code: code.trim(),
+      });
+
+      Alert.alert(
+        'OTP Verified 🎉',
+        res.message || 'Verification code confirmed. You can now set your new password.',
+        [
+          {
+            text: 'Continue',
+            onPress: () => setStep(3),
+          },
+        ]
+      );
+    } catch (err) {
+      console.log('Verify OTP error:', err);
+      const msg = err.data?.message || err.message || 'Invalid or expired verification code.';
+      Alert.alert('Verification Failed', msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleResetPassword = async () => {
-    if (!code.trim() || !newPassword.trim()) {
-      Alert.alert('Required Fields', 'Please enter the reset code and your new password.');
+    if (!newPassword.trim()) {
+      Alert.alert('Required Field', 'Please enter your new password.');
       return;
     }
 
     if (newPassword.length < 8) {
       Alert.alert('Weak Password', 'New password must be at least 8 characters long.');
+      return;
+    }
+
+    if (confirmPassword && newPassword !== confirmPassword) {
+      Alert.alert('Password Mismatch', 'New password and confirm password do not match.');
       return;
     }
 
@@ -76,8 +141,8 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
       });
 
       Alert.alert(
-        'Password Reset Successful',
-        res.message || 'Your password has been updated successfully.',
+        'Password Reset Successful 🎉',
+        res.message || 'Your password has been updated successfully. Please log in.',
         [{ text: 'Log In', onPress: () => onNavigate && onNavigate('LOGIN') }]
       );
     } catch (err) {
@@ -104,8 +169,12 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => {
-                if (onGoBack && onGoBack()) return;
-                if (onNavigate) onNavigate('LOGIN');
+                if (step > 1) {
+                  setStep(step - 1);
+                } else {
+                  if (onGoBack && onGoBack()) return;
+                  if (onNavigate) onNavigate('LOGIN');
+                }
               }}
               activeOpacity={0.7}
             >
@@ -121,13 +190,15 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
             <Text style={styles.title}>Reset Password</Text>
             <Text style={styles.subtitle}>
               {step === 1
-                ? "Enter your email to receive a password reset code"
-                : 'Enter your reset code and choose a new password'}
+                ? 'Enter your email to receive a 6-digit password reset code'
+                : step === 2
+                ? `Enter the 6-digit code sent to ${email.trim()}`
+                : 'Choose a strong new password for your account'}
             </Text>
           </View>
 
           <View style={styles.card}>
-            {step === 1 ? (
+            {step === 1 && (
               <>
                 <CustomInput
                   label="Email Address"
@@ -147,10 +218,12 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
                   style={styles.actionBtn}
                 />
               </>
-            ) : (
+            )}
+
+            {step === 2 && (
               <>
                 <CustomInput
-                  label="Email Address"
+                  label="Registered Email"
                   iconType="email"
                   placeholder="Enter your email"
                   keyboardType="email-address"
@@ -160,38 +233,60 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
                 />
 
                 <CustomInput
-                  label="Reset Code"
+                  label="6-Digit Reset Code"
                   iconType="user"
-                  placeholder="Enter 6-digit code"
+                  placeholder="Enter 6-digit code (e.g. 123456)"
                   keyboardType="number-pad"
+                  maxLength={6}
                   value={code}
                   onChangeText={setCode}
                 />
 
+                <CustomButton
+                  title="VERIFY CODE"
+                  variant="primary"
+                  loading={loading}
+                  onPress={handleVerifyOtp}
+                  style={styles.actionBtn}
+                />
+
+                <CustomButton
+                  title="RESEND OTP"
+                  variant="outline"
+                  loading={resendLoading}
+                  onPress={handleResendOtp}
+                  style={styles.resendActionBtn}
+                />
+              </>
+            )}
+
+            {step === 3 && (
+              <>
                 <CustomInput
-                  label="New Password (min 8 chars)"
+                  label="New Password"
                   iconType="password"
-                  placeholder="Enter new password"
+                  placeholder="Enter new password (min 8 chars)"
                   secureTextEntry
                   value={newPassword}
                   onChangeText={setNewPassword}
                 />
 
+                <CustomInput
+                  label="Confirm New Password"
+                  iconType="password"
+                  placeholder="Confirm new password"
+                  secureTextEntry
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                />
+
                 <CustomButton
-                  title="UPDATE PASSWORD"
+                  title="RESET PASSWORD"
                   variant="primary"
                   loading={loading}
                   onPress={handleResetPassword}
                   style={styles.actionBtn}
                 />
-
-                <TouchableOpacity
-                  style={styles.resendButton}
-                  onPress={() => setStep(1)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.resendText}>Didn't receive code? Resend</Text>
-                </TouchableOpacity>
               </>
             )}
           </View>
@@ -281,6 +376,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   card: {
+    width: '100%',
+    maxWidth: 440,
+    alignSelf: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderRadius: 24,
     padding: 22,
@@ -290,6 +388,11 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     marginTop: 12,
+  },
+  resendActionBtn: {
+    marginTop: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   resendButton: {
     alignItems: 'center',

@@ -9,11 +9,9 @@ export const resetResolvedUrl = () => {
 };
 
 const resolveWorkingBaseUrl = async () => {
-  if (activeResolvedUrl && activeResolvedUrl !== LIVE_URL) return activeResolvedUrl;
+  if (activeResolvedUrl) return activeResolvedUrl;
   if (isResolving) return getBaseUrl();
   isResolving = true;
-
-  let fallbackUrl = null;
 
   for (const candidate of CANDIDATE_URLS) {
     try {
@@ -22,33 +20,30 @@ const resolveWorkingBaseUrl = async () => {
       const res = await fetch(`${candidate}/`, { method: 'GET', signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok || res.status < 500) {
-        const bodyText = await res.text().catch(() => '');
-        let healthData = {};
-        try { healthData = JSON.parse(bodyText); } catch (e) {}
-
-        if (healthData.database === 'Connected' || !healthData.database) {
-          console.log(`[apiClient] Connected to healthy backend server at: ${candidate}`);
-          activeResolvedUrl = candidate;
-          setBaseUrl(candidate);
-          isResolving = false;
-          return candidate;
-        } else {
-          if (!fallbackUrl) fallbackUrl = candidate;
-        }
+        activeResolvedUrl = candidate;
+        setBaseUrl(candidate);
+        isResolving = false;
+        console.log(`[apiClient] Auto-resolved working backend URL: ${candidate}`);
+        return candidate;
       }
     } catch (err) {
       // ignore and try next candidate URL
     }
   }
 
-  const finalUrl = fallbackUrl || getBaseUrl();
-  activeResolvedUrl = finalUrl;
-  setBaseUrl(finalUrl);
+  activeResolvedUrl = getBaseUrl();
   isResolving = false;
-  return finalUrl;
+  return activeResolvedUrl;
 };
 
 let authTokenInMemory = null;
+
+// Eagerly pre-load auth token from AsyncStorage into memory
+AsyncStorage.getItem('token').then((token) => {
+  if (token && token !== 'null' && token !== 'undefined') {
+    authTokenInMemory = token;
+  }
+}).catch(() => {});
 
 export const setAuthToken = (token) => {
   authTokenInMemory = token;
@@ -83,29 +78,39 @@ const request = async (url, options = {}, isRetry = false) => {
       delete headers['content-type'];
     }
 
-    let currentBase = activeResolvedUrl || (await resolveWorkingBaseUrl());
+    let currentBase = activeResolvedUrl || getBaseUrl();
 
     let response;
     try {
+      const controller = new AbortController();
+      const reqTimeout = setTimeout(() => controller.abort(), options.timeout || 15000);
+
       response = await fetch(`${currentBase}${url}`, {
         ...options,
         headers,
+        signal: options.signal || controller.signal,
       });
+      clearTimeout(reqTimeout);
     } catch (networkErr) {
-      console.warn(`[apiClient] Network request failed on ${currentBase}${url}. Retrying with auto-resolution...`);
+      if (networkErr.name === 'AbortError') {
+        console.warn(`[apiClient] Request to ${currentBase}${url} timed out (15s). Retrying...`);
+      } else {
+        console.warn(`[apiClient] Network request failed on ${currentBase}${url}. Retrying with auto-resolution...`);
+      }
       activeResolvedUrl = null;
       currentBase = await resolveWorkingBaseUrl();
       try {
+        const retryController = new AbortController();
+        const retryTimeout = setTimeout(() => retryController.abort(), 15000);
         response = await fetch(`${currentBase}${url}`, {
           ...options,
           headers,
+          signal: options.signal || retryController.signal,
         });
+        clearTimeout(retryTimeout);
       } catch (retryErr) {
-        console.warn(`[apiClient] Retry on ${currentBase} failed. Falling back to LIVE_URL...`);
-        response = await fetch(`${LIVE_URL}${url}`, {
-          ...options,
-          headers,
-        });
+        console.warn(`[apiClient] Connection retry on ${currentBase}${url} failed:`, retryErr.message);
+        throw retryErr;
       }
     }
 
@@ -220,6 +225,12 @@ export const apiClient = {
       body: JSON.stringify(body),
     });
   },
+  verifyResetOtp: async (body) => {
+    return await request('/api/auth/verify-reset-otp', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
   resetPassword: async (body) => {
     return await request('/api/auth/reset-password', {
       method: 'POST',
@@ -239,6 +250,17 @@ export const apiClient = {
   deleteAccount: async () => {
     return await request('/api/auth/delete-account', {
       method: 'DELETE',
+    });
+  },
+  sendMobileOtp: async () => {
+    return await request('/api/auth/send-mobile-otp', {
+      method: 'POST',
+    });
+  },
+  verifyMobileOtp: async (body) => {
+    return await request('/api/auth/verify-mobile-otp', {
+      method: 'POST',
+      body: JSON.stringify(body),
     });
   },
 
