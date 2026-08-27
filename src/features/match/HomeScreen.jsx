@@ -1613,13 +1613,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       } else if ((nextAppState === 'background' || nextAppState === 'inactive') && currentId) {
         if (socketRef.current) {
-          console.log('[AppState] App in background/inactive. Emitting going_offline and disconnecting for user:', currentId);
+          console.log('[AppState] App in background/inactive. Emitting going_offline and disconnecting synchronously for user:', currentId);
           try { socketRef.current.emit('going_offline', currentId); } catch (e) {}
-          setTimeout(() => {
-            try {
-              if (socketRef.current) socketRef.current.disconnect();
-            } catch (e) {}
-          }, 100);
+          try { socketRef.current.disconnect(); } catch (e) {}
         }
       }
     };
