@@ -9,10 +9,11 @@ import {
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const { width } = Dimensions.get('window');
 
-export const WarningModal = ({ visible, warning, onAcknowledge, onClose, loading }) => {
+export const WarningModal = ({ visible, warning, onAcknowledge, onClose, loading, isMandatory = false }) => {
   if (!visible || !warning) return null;
 
   const getSeverityColor = (sev) => {
@@ -36,24 +37,24 @@ export const WarningModal = ({ visible, warning, onAcknowledge, onClose, loading
       transparent
       visible={visible}
       animationType="fade"
-      onRequestClose={onClose || (() => {})}
+      onRequestClose={isMandatory ? () => {} : (onClose || (() => {}))}
     >
       <View style={styles.overlay}>
         <View style={styles.modalCard}>
-          {/* Top Right Close Button */}
-          {onClose && (
+          {/* Top Right Close Button (Hidden if mandatory acknowledgment is active) */}
+          {onClose && !isMandatory && (
             <TouchableOpacity
               style={styles.closeBtn}
               onPress={onClose}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
-              <Text style={styles.closeBtnText}>✕</Text>
+              <Ionicons name="close" size={20} color="rgba(255,255,255,0.7)" />
             </TouchableOpacity>
           )}
 
           {/* Header Warning Badge */}
           <View style={[styles.headerBadge, { backgroundColor: `${severityColor}15` }]}>
-            <Text style={styles.warningEmoji}>⚠️</Text>
+            <Ionicons name="warning" size={36} color={severityColor} />
           </View>
 
           <Text style={styles.title}>Official Warning Issued</Text>

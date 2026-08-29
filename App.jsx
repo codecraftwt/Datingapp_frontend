@@ -300,6 +300,7 @@ function MainApp() {
             onNavigate={navigateTo}
             onGoBack={goBack}
             onFinish={handleFinishQuestionnaire}
+            onLogout={handleLogout}
           />
         );
       case 'HOME':

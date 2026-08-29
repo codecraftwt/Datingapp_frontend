@@ -34,6 +34,7 @@ import {
 } from 'react-native-webrtc';
 
 import { CustomButton } from '../components/CustomButton';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Profile } from './Profile';
 import { SearchScreen } from './SearchScreen';
 import { PreviewModal } from '../components/PreviewModal';
@@ -613,6 +614,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setActiveWarningData(null);
     } finally {
       setWarningAckLoading(false);
+    }
+  };
+
+  const handleTabPress = (tabName) => {
+    if (activeWarningData && !activeWarningData.isAcknowledged) {
+      setShowAdminWarningModal(true);
+      return;
+    }
+    setActiveTab(tabName);
+    if (tabName !== 'chat') {
+      setActiveChat(null);
     }
   };
 
@@ -4300,10 +4312,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               onLogout={onLogout}
               onRemoveProfile={onRemoveProfile}
               onGoBack={() => {
-                setActiveTab('swipe');
+                handleTabPress('swipe');
                 return true;
               }}
-              onBack={() => setActiveTab('swipe')}
+              onBack={() => handleTabPress('swipe')}
             />
           )}
         </View>
@@ -4312,12 +4324,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         <View style={[styles.navigationBar, { paddingBottom: safeBottomPadding, height: 56 + safeBottomPadding }]}>
           <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'swipe' && styles.navigationTabActive]}
-            onPress={() => {
-              setActiveTab('swipe');
-              setActiveChat(null);
-            }}
+            onPress={() => handleTabPress('swipe')}
           >
-            <Text style={styles.navigationIcon}>🔥</Text>
+            <Ionicons
+              name={activeTab === 'swipe' ? "flame" : "flame-outline"}
+              size={24}
+              color={activeTab === 'swipe' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+              style={{ marginBottom: 2 }}
+            />
             <Text style={[styles.navigationLabel, activeTab === 'swipe' && styles.navigationLabelActive]}>
               Swipe
             </Text>
@@ -4325,12 +4339,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'search' && styles.navigationTabActive]}
-            onPress={() => {
-              setActiveTab('search');
-              setActiveChat(null);
-            }}
+            onPress={() => handleTabPress('search')}
           >
-            <Text style={styles.navigationIcon}>🔍</Text>
+            <Ionicons
+              name={activeTab === 'search' ? "search" : "search-outline"}
+              size={24}
+              color={activeTab === 'search' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+              style={{ marginBottom: 2 }}
+            />
             <Text style={[styles.navigationLabel, activeTab === 'search' && styles.navigationLabelActive]}>
               Search
             </Text>
@@ -4338,13 +4354,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'likes' && styles.navigationTabActive]}
-            onPress={() => {
-              setActiveTab('likes');
-              setActiveChat(null);
-            }}
+            onPress={() => handleTabPress('likes')}
           >
             <View style={{ position: 'relative' }}>
-              <Text style={styles.navigationIcon}>❤️</Text>
+              <Ionicons
+                name={activeTab === 'likes' ? "heart" : "heart-outline"}
+                size={24}
+                color={activeTab === 'likes' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+                style={{ marginBottom: 2 }}
+              />
               {unreadLikesCount > 0 && (
                 <View style={styles.navBadgeContainer}>
                   <Text style={styles.navBadgeText}>
@@ -4371,7 +4389,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             const rawUnread = (allMessages || []).filter((msg) => {
               if (!msg || !currentId) return false;
               const rId = (msg.receiverId || msg.receiver)?._id?.toString() || (msg.receiverId || msg.receiver)?.toString();
-              const sId = (msg.senderId || msg.sender)?._id?.toString() || (msg.senderId || msg.sender)?.toString();
+              const sId = (msg.senderId || msg.sender)?._id?.toString() || (msg.senderId || msg.sender)?._id?.toString();
               return rId === currentId && sId !== currentId && msg.status !== 'seen';
             }).length;
 
@@ -4381,12 +4399,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               <TouchableOpacity
                 style={[styles.navigationTab, activeTab === 'chat' && styles.navigationTabActive]}
                 onPress={() => {
-                  setActiveTab('chat');
+                  handleTabPress('chat');
                   setUnreadChatPushCount(0);
                 }}
               >
                 <View style={{ position: 'relative' }}>
-                  <Text style={styles.navigationIcon}>💬</Text>
+                  <Ionicons
+                    name={activeTab === 'chat' ? "chatbubbles" : "chatbubbles-outline"}
+                    size={24}
+                    color={activeTab === 'chat' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+                    style={{ marginBottom: 2 }}
+                  />
                   {totalUnreadChatCount > 0 && (
                     <View style={styles.navBadgeContainer}>
                       <Text style={styles.navBadgeText}>
@@ -4404,12 +4427,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'profile' && styles.navigationTabActive]}
-            onPress={() => {
-              setActiveTab('profile');
-              setActiveChat(null);
-            }}
+            onPress={() => handleTabPress('profile')}
           >
-            <Text style={styles.navigationIcon}>👤</Text>
+            <Ionicons
+              name={activeTab === 'profile' ? "person" : "person-outline"}
+              size={24}
+              color={activeTab === 'profile' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+              style={{ marginBottom: 2 }}
+            />
             <Text style={[styles.navigationLabel, activeTab === 'profile' && styles.navigationLabelActive]}>
               Profile
             </Text>
@@ -5507,13 +5532,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </Modal>
         )}
 
-        {/* Admin Warning Modal Popup */}
+        {/* Admin Warning Modal Popup - Non-Dismissible Mandatory App Lock */}
         <WarningModal
           visible={showAdminWarningModal}
           warning={activeWarningData}
           onAcknowledge={handleAcknowledgeWarningCall}
-          onClose={() => setShowAdminWarningModal(false)}
+          onClose={activeWarningData && !activeWarningData.isAcknowledged ? null : () => setShowAdminWarningModal(false)}
           loading={warningAckLoading}
+          isMandatory={!!(activeWarningData && !activeWarningData.isAcknowledged)}
         />
       </View>
     </View>

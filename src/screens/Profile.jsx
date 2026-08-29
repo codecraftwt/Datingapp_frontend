@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
 import { QuestionnaireScreen } from './QuestionnaireScreen';
@@ -731,7 +732,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         />
       }
     >
-      <View style={[styles.topBarHeader, { paddingTop: Math.max(insets.top, Platform.OS === 'ios' ? 10 : 5) }]}>
+      <View style={styles.topBarHeader}>
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => {
@@ -740,7 +741,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           }}
           activeOpacity={0.7}
         >
-          <Text style={styles.backBtnText}>← Back</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="arrow-back" size={18} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.backBtnText}>Back</Text>
+          </View>
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>My Profile</Text>
         <View style={{ width: 60 }} />
@@ -755,7 +759,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       {/* Story / Status Photo Gallery Header Bar - Only if user has uploaded photos */}
       {hasUserUploadedPhoto && (
         <View style={styles.storySection}>
-          <Text style={styles.sectionHeaderTitle}>📸 Status & Photo Gallery</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+            <Ionicons name="camera-outline" size={18} color="#FE3C72" style={{ marginRight: 6 }} />
+            <Text style={styles.sectionHeaderTitle}>Status & Photo Gallery</Text>
+          </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.storyScrollView}>
             {photosList.map((url, idx) => {
               const isVid = isVideoUrl(url);
@@ -768,7 +775,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                   activeOpacity={0.8}
                 >
                   <Image source={{ uri: thumb }} style={styles.storyThumb} />
-                  <Text style={styles.storyBadge}>{isVid ? '🎬 Video' : `Photo #${idx + 1}`}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name={isVid ? "videocam-outline" : "camera-outline"} size={10} color="#FFF" style={{ marginRight: 2 }} />
+                    <Text style={styles.storyBadge}>{isVid ? 'Video' : `Photo #${idx + 1}`}</Text>
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -786,7 +796,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={handleChangeProfilePhoto} activeOpacity={0.8} style={styles.emptyAvatarCircle}>
-                <Text style={styles.emptyAvatarIcon}>👤</Text>
+                <Ionicons name="person" size={28} color="rgba(255,255,255,0.4)" style={{ marginBottom: 2 }} />
                 <Text style={styles.emptyAvatarLabel}>Add Photo</Text>
               </TouchableOpacity>
             )}
@@ -802,7 +812,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             onPress={handleChangeProfilePhoto}
             activeOpacity={0.8}
           >
-            <Text style={styles.cameraBadgeIcon}>📷</Text>
+            <Ionicons name="camera" size={14} color="#FFF" />
           </TouchableOpacity>
         </View>
 
@@ -812,9 +822,24 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         </Text>
 
         {displayData.gender && <Text style={styles.genderSub}>{displayData.gender}</Text>}
-        {displayData.email && <Text style={styles.contactSub}>✉️ {displayData.email}</Text>}
-        {displayData.mobile && <Text style={styles.contactSub}>📱 {displayData.mobile}</Text>}
-        {bdayFormatted && <Text style={styles.contactSub}>🎂 {bdayFormatted}</Text>}
+        {displayData.email && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+            <Ionicons name="mail-outline" size={13} color="rgba(255,255,255,0.6)" style={{ marginRight: 5 }} />
+            <Text style={styles.contactSub}>{displayData.email}</Text>
+          </View>
+        )}
+        {displayData.mobile && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+            <Ionicons name="call-outline" size={13} color="rgba(255,255,255,0.6)" style={{ marginRight: 5 }} />
+            <Text style={styles.contactSub}>{displayData.mobile}</Text>
+          </View>
+        )}
+        {bdayFormatted && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+            <Ionicons name="calendar-outline" size={13} color="rgba(255,255,255,0.6)" style={{ marginRight: 5 }} />
+            <Text style={styles.contactSub}>{bdayFormatted}</Text>
+          </View>
+        )}
 
         {displayData.bio && displayData.bio.trim().length > 0 ? (
           <Text style={styles.bioText}>"{displayData.bio.trim()}"</Text>
@@ -823,16 +848,25 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         {/* Quick Action Chips for Profile Photo & Gallery Preview */}
         <View style={styles.photoActionRow}>
           <TouchableOpacity style={styles.changePhotoChip} onPress={handleChangeProfilePhoto} activeOpacity={0.8}>
-            <Text style={styles.changePhotoChipText}>📷 {hasMainProfilePhoto ? 'Change Photo' : 'Upload Photo'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="camera-outline" size={13} color="#FFF" style={{ marginRight: 4 }} />
+              <Text style={styles.changePhotoChipText}>{hasMainProfilePhoto ? 'Change Photo' : 'Upload Photo'}</Text>
+            </View>
           </TouchableOpacity>
           {photosList.length > 0 && (
             <TouchableOpacity style={styles.previewPhotoChip} onPress={() => setActiveStoryIndex(0)} activeOpacity={0.8}>
-              <Text style={styles.previewPhotoChipText}>Preview </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="eye-outline" size={13} color="#FFF" style={{ marginRight: 4 }} />
+                <Text style={styles.previewPhotoChipText}>Preview</Text>
+              </View>
             </TouchableOpacity>
           )}
           {hasMainProfilePhoto && (
             <TouchableOpacity style={styles.removePhotoChip} onPress={handleRemoveProfilePhoto} activeOpacity={0.8}>
-              <Text style={styles.removePhotoChipText}>🗑️ Remove</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="trash-outline" size={13} color="#FF3B30" style={{ marginRight: 4 }} />
+                <Text style={styles.removePhotoChipText}>Remove</Text>
+              </View>
             </TouchableOpacity>
           )}
         </View>
@@ -842,14 +876,20 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress={() => openGalleryModal(6)}
           activeOpacity={0.8}
         >
-          <Text style={styles.editBtnText}>✏️ Edit Full Profile & Gallery</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="create-outline" size={16} color="#FFF" style={{ marginRight: 6 }} />
+            <Text style={styles.editBtnText}>Edit Full Profile & Gallery</Text>
+          </View>
         </TouchableOpacity>
       </View>
 
       {/* Subscriptions & Premium Plans Card */}
       <View style={styles.card}>
         <View style={styles.subHeaderRow}>
-          <Text style={styles.sectionTitle}>💎 Premium Subscriptions</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="diamond" size={18} color="#FFD700" style={{ marginRight: 6 }} />
+            <Text style={styles.sectionTitle}>Premium Subscriptions</Text>
+          </View>
           {activePlan !== 'free' && (
             <View style={styles.activePlanBadge}>
               <Text style={styles.activePlanText}>ACTIVE</Text>
@@ -906,79 +946,118 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         <View style={styles.badgeWrap}>
           {displayData.interestedIn && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>👀 Interested In:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="eye-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Interested In:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.interestedIn}</Text>
             </View>
           )}
           {displayData.lookingFor && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>💬 Looking For:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="heart-circle-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Looking For:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.lookingFor}</Text>
             </View>
           )}
           {displayData.orientation && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>🌈 Orientation:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="sparkles-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Orientation:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.orientation}</Text>
             </View>
           )}
           {displayData.drinkHabit && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>🍷 Drink Habit:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="wine-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Drink Habit:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.drinkHabit}</Text>
             </View>
           )}
           {displayData.smokeHabit && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>🚬 Smoke Habit:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="flame-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Smoke Habit:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.smokeHabit}</Text>
             </View>
           )}
           {displayData.exercise && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>🏋️ Workout:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="barbell-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Workout:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.exercise}</Text>
             </View>
           )}
           {displayData.pets && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>🐕 Pets:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="paw-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Pets:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.pets}</Text>
             </View>
           )}
           {displayData.educationLevel && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>🎓 Education:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="school-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Education:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.educationLevel}</Text>
             </View>
           )}
           {displayData.height && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>📏 Height:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="resize-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Height:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.height}</Text>
             </View>
           )}
           {displayData.weight && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>⚖️ Weight:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="fitness-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Weight:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.weight}</Text>
             </View>
           )}
           {displayData.job && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>💼 Job:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="briefcase-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Job:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.job}</Text>
             </View>
           )}
           {displayData.college && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>🏛️ College:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="school-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>College:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.college}</Text>
             </View>
           )}
           {displayData.zodiac && (
             <View style={styles.badge}>
-              <Text style={styles.badgeLabel}>⭐ Zodiac:</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="moon-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+                <Text style={styles.badgeLabel}>Zodiac:</Text>
+              </View>
               <Text style={styles.badgeVal}>{displayData.zodiac}</Text>
             </View>
           )}
@@ -1008,7 +1087,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress={() => openGalleryModal(1)}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>🔄</Text>
+          <Ionicons name="refresh-circle-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
           <Text style={styles.actionText}>Retake Questionnaire</Text>
         </TouchableOpacity>
 
@@ -1017,7 +1096,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress={() => setIsPasswordModalOpen(true)}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>🔑</Text>
+          <Ionicons name="key-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
           <Text style={styles.actionText}>Reset / Change Password</Text>
         </TouchableOpacity>
 
@@ -1026,7 +1105,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress={handleFetchAndShowHiddenMedia}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>🙈</Text>
+          <Ionicons name="eye-off-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
           <Text style={styles.actionText}>Show Hidden Photos / Videos</Text>
         </TouchableOpacity>
 
@@ -1035,7 +1114,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress={handleFetchAndShowReportedUsers}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>🚩</Text>
+          <Ionicons name="flag-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
           <Text style={styles.actionText}>Reported Users</Text>
         </TouchableOpacity>
 
@@ -1064,7 +1143,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           }}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>🔔</Text>
+          <Ionicons name="notifications-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
           <Text style={styles.actionText}>Sync Push Notifications</Text>
         </TouchableOpacity>
 
@@ -1073,7 +1152,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress={onLogout}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>🚪</Text>
+          <Ionicons name="log-out-outline" size={22} color="#FF3B30" style={{ marginRight: 10 }} />
           <Text style={[styles.actionText, styles.logoutText]}>Log Out</Text>
         </TouchableOpacity>
 
@@ -1082,7 +1161,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress={handleDeleteAccount}
           activeOpacity={0.7}
         >
-          <Text style={styles.actionIcon}>🗑️</Text>
+          <Ionicons name="trash-bin-outline" size={22} color="#FF3B30" style={{ marginRight: 10 }} />
           <Text style={[styles.actionText, styles.deleteAccountText]}>Delete Account</Text>
         </TouchableOpacity>
       </View>
@@ -1108,7 +1187,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                 onPress={() => setIsPasswordModalOpen(false)}
                 style={styles.passwordCloseBtn}
               >
-                <Text style={styles.passwordCloseText}>✕</Text>
+                <Ionicons name="close" size={20} color="#FFF" />
               </TouchableOpacity>
             </View>
 
@@ -1323,15 +1402,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#0F0F1A',
   },
   content: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 8,
     paddingBottom: 40,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
   },
   topBarHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
-    paddingTop: Platform.OS === 'ios' ? 10 : 5,
+    marginBottom: 14,
+    paddingTop: 4,
   },
   backBtn: {
     flexDirection: 'row',

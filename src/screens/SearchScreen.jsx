@@ -18,6 +18,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl } from '../api/config';
 import { PreviewModal } from '../components/PreviewModal';
@@ -418,21 +419,18 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 20 : 0) }]}>
+    <View style={styles.container}>
       {/* Search Header Bar */}
       <View style={styles.searchHeader}>
         <TouchableOpacity
           style={styles.headerBackBtn}
-          onPress={() => {
-            if (onGoBack && onGoBack()) return;
-            if (onBack) onBack();
-          }}
+          onPress={() => onBack && onBack()}
           activeOpacity={0.7}
         >
-          <Text style={styles.headerBackBtnText}>←</Text>
+          <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
         </TouchableOpacity>
         <View style={styles.inputContainer}>
-          <Text style={styles.searchIcon}>🔍</Text>
+          <Ionicons name="search" size={18} color="#8E8E93" style={{ marginRight: 6 }} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search profession, job, college..."
@@ -444,14 +442,14 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
           />
           {searchKeyword.length > 0 && (
             <TouchableOpacity onPress={() => setSearchKeyword('')} style={styles.clearBtn}>
-              <Text style={styles.clearBtnText}>✕</Text>
+              <Ionicons name="close-circle" size={18} color="#8E8E93" />
             </TouchableOpacity>
           )}
         </View>
 
         {/* Filter Modal Toggle Button */}
         <TouchableOpacity style={styles.filterToggleBtn} onPress={() => setShowFilterModal(true)}>
-          <Text style={styles.filterToggleIcon}>⚙️</Text>
+          <Ionicons name="options-outline" size={20} color="#FE3C72" />
         </TouchableOpacity>
       </View>
 
@@ -491,10 +489,13 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
             onPress={() => setShowDistanceModal(true)}
             activeOpacity={0.8}
           >
-            <Text style={[styles.quickFilterChipText, distanceKm !== 50 && styles.quickFilterChipTextActive]}>
-              📍 {distanceKm} km
-            </Text>
-            <Text style={styles.quickFilterChevron}>▼</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="location-outline" size={14} color={distanceKm !== 50 ? "#FE3C72" : "rgba(255,255,255,0.7)"} style={{ marginRight: 4 }} />
+              <Text style={[styles.quickFilterChipText, distanceKm !== 50 && styles.quickFilterChipTextActive]}>
+                {distanceKm} km
+              </Text>
+              <Ionicons name="chevron-down" size={12} color="rgba(255,255,255,0.6)" style={{ marginLeft: 4 }} />
+            </View>
           </TouchableOpacity>
 
           {/* Languages Quick Filter */}
@@ -506,10 +507,13 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
             }}
             activeOpacity={0.8}
           >
-            <Text style={[styles.quickFilterChipText, selectedLanguages.length > 0 && styles.quickFilterChipTextActive]} numberOfLines={1}>
-              {selectedLanguages.length > 0 ? `🗣️ ${selectedLanguages.length} Lang` : '🗣️ Languages'}
-            </Text>
-            <Text style={styles.quickFilterChevron}>▼</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="language-outline" size={14} color={selectedLanguages.length > 0 ? "#FE3C72" : "rgba(255,255,255,0.7)"} style={{ marginRight: 4 }} />
+              <Text style={[styles.quickFilterChipText, selectedLanguages.length > 0 && styles.quickFilterChipTextActive]} numberOfLines={1}>
+                {selectedLanguages.length > 0 ? `${selectedLanguages.length} Lang` : 'Languages'}
+              </Text>
+              <Ionicons name="chevron-down" size={12} color="rgba(255,255,255,0.6)" style={{ marginLeft: 4 }} />
+            </View>
           </TouchableOpacity>
 
           {/* All Filters Toggle Button */}
@@ -518,14 +522,20 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
             onPress={() => setShowFilterModal(true)}
             activeOpacity={0.8}
           >
-            <Text style={styles.quickFilterChipTextMore}>⚙️ All Filters</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="options-outline" size={14} color="#FE3C72" style={{ marginRight: 4 }} />
+              <Text style={styles.quickFilterChipTextMore}>All Filters</Text>
+            </View>
           </TouchableOpacity>
         </ScrollView>
       </View>
 
       {/* Language Quick Dropdown Bar */}
       <View style={styles.profFilterContainerRow}>
-        <Text style={styles.profFilterLabel}>🗣️ Language:</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Ionicons name="language-outline" size={14} color="rgba(255,255,255,0.8)" style={{ marginRight: 4 }} />
+          <Text style={styles.profFilterLabel}>Language:</Text>
+        </View>
         <TouchableOpacity
           style={styles.profFilterDropdownBtn}
           onPress={() => {
@@ -537,7 +547,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
           <Text style={styles.profFilterDropdownText} numberOfLines={1}>
             {selectedLanguages.length > 0 ? selectedLanguages.join(', ') : 'All Languages'}
           </Text>
-          <Text style={styles.profFilterChevron}>▼</Text>
+          <Ionicons name="chevron-down" size={12} color="rgba(255,255,255,0.6)" />
         </TouchableOpacity>
 
         {selectedLanguages.length > 0 && (
@@ -549,7 +559,10 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
             }}
             activeOpacity={0.7}
           >
-            <Text style={styles.profFilterClearText}>✕ Clear</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="close-circle-outline" size={14} color="#FE3C72" style={{ marginRight: 2 }} />
+              <Text style={styles.profFilterClearText}>Clear</Text>
+            </View>
           </TouchableOpacity>
         )}
       </View>
@@ -566,8 +579,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   executeSearch(1, true, 'All');
                 }}
               >
-                <Text style={styles.pillTextActive}>💼 {selectedProfession}</Text>
-                <Text style={styles.pillClearIcon}>✕</Text>
+                <Ionicons name="briefcase-outline" size={12} color="#FE3C72" style={{ marginRight: 3 }} />
+                <Text style={styles.pillTextActive}>{selectedProfession}</Text>
+                <Ionicons name="close" size={12} color="#FFF" style={{ marginLeft: 3 }} />
               </TouchableOpacity>
             )}
 
@@ -580,8 +594,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   executeSearch(1, true);
                 }}
               >
-                <Text style={styles.pillTextActive}>🎂 {ageMin}-{ageMax} yrs</Text>
-                <Text style={styles.pillClearIcon}>✕</Text>
+                <Ionicons name="calendar-outline" size={12} color="#FE3C72" style={{ marginRight: 3 }} />
+                <Text style={styles.pillTextActive}>{ageMin}-{ageMax} yrs</Text>
+                <Ionicons name="close" size={12} color="#FFF" style={{ marginLeft: 3 }} />
               </TouchableOpacity>
             )}
 
@@ -593,8 +608,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   executeSearch(1, true);
                 }}
               >
-                <Text style={styles.pillTextActive}>📍 {distanceKm} km</Text>
-                <Text style={styles.pillClearIcon}>✕</Text>
+                <Ionicons name="location-outline" size={12} color="#FE3C72" style={{ marginRight: 3 }} />
+                <Text style={styles.pillTextActive}>{distanceKm} km</Text>
+                <Ionicons name="close" size={12} color="#FFF" style={{ marginLeft: 3 }} />
               </TouchableOpacity>
             )}
 
@@ -606,8 +622,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   executeSearch(1, true);
                 }}
               >
-                <Text style={styles.pillTextActive}>🗣️ {selectedLanguages.join(', ')}</Text>
-                <Text style={styles.pillClearIcon}>✕</Text>
+                <Ionicons name="language-outline" size={12} color="#FE3C72" style={{ marginRight: 3 }} />
+                <Text style={styles.pillTextActive}>{selectedLanguages.join(', ')}</Text>
+                <Ionicons name="close" size={12} color="#FFF" style={{ marginLeft: 3 }} />
               </TouchableOpacity>
             )}
 
@@ -619,8 +636,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   executeSearch(1, true);
                 }}
               >
-                <Text style={styles.pillTextActive}>🎯 {selectedInterests.length} Interests</Text>
-                <Text style={styles.pillClearIcon}>✕</Text>
+                <Ionicons name="sparkles-outline" size={12} color="#FE3C72" style={{ marginRight: 3 }} />
+                <Text style={styles.pillTextActive}>{selectedInterests.length} Interests</Text>
+                <Ionicons name="close" size={12} color="#FFF" style={{ marginLeft: 3 }} />
               </TouchableOpacity>
             )}
 
@@ -632,8 +650,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   executeSearch(1, true);
                 }}
               >
-                <Text style={styles.pillTextActive}>🔍 "{searchKeyword}"</Text>
-                <Text style={styles.pillClearIcon}>✕</Text>
+                <Ionicons name="search-outline" size={12} color="#FE3C72" style={{ marginRight: 3 }} />
+                <Text style={styles.pillTextActive}>"{searchKeyword}"</Text>
+                <Ionicons name="close" size={12} color="#FFF" style={{ marginLeft: 3 }} />
               </TouchableOpacity>
             )}
 
@@ -676,7 +695,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
           contentContainerStyle={{ paddingHorizontal: 15, paddingBottom: 30 }}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>🔍</Text>
+              <Ionicons name="search-outline" size={48} color="#8E8E93" style={{ marginBottom: 10 }} />
               <Text style={styles.emptyTitle}>No Profiles Found</Text>
               <Text style={styles.emptySubtitle}>Try broadening your age, distance, or interest filters.</Text>
             </View>
@@ -712,11 +731,17 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   </View>
 
                   {item.job ? (
-                    <Text style={styles.cardJob}>💼 {item.job}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                      <Ionicons name="briefcase-outline" size={13} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
+                      <Text style={styles.cardJob}>{item.job}</Text>
+                    </View>
                   ) : null}
 
                   {item.college ? (
-                    <Text style={styles.cardCollege}>🎓 {item.college}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                      <Ionicons name="school-outline" size={13} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
+                      <Text style={styles.cardCollege}>{item.college}</Text>
+                    </View>
                   ) : null}
                 </View>
 
@@ -738,13 +763,19 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               <View style={styles.cardFooterRow}>
                 {item.calculatedDistanceKm !== null && item.calculatedDistanceKm !== undefined && (
                   <View style={styles.distanceBadge}>
-                    <Text style={styles.distanceBadgeText}>📍 {item.calculatedDistanceKm} km away</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="location-outline" size={12} color="#FFF" style={{ marginRight: 3 }} />
+                      <Text style={styles.distanceBadgeText}>{item.calculatedDistanceKm} km away</Text>
+                    </View>
                   </View>
                 )}
 
                 {item.languages && item.languages.length > 0 && (
                   <View style={styles.langBadge}>
-                    <Text style={styles.langBadgeText}>🗣️ {item.languages.slice(0, 2).join(', ')}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="language-outline" size={12} color="#FFF" style={{ marginRight: 3 }} />
+                      <Text style={styles.langBadgeText}>{item.languages.slice(0, 2).join(', ')}</Text>
+                    </View>
                   </View>
                 )}
               </View>
@@ -754,7 +785,10 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 <View style={styles.interestsRow}>
                   {item.commonInterests.slice(0, 4).map((interest, idx) => (
                     <View key={idx} style={styles.commonInterestChip}>
-                      <Text style={styles.commonInterestText}>✓ {interest}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="checkmark" size={11} color="#FE3C72" style={{ marginRight: 2 }} />
+                        <Text style={styles.commonInterestText}>{interest}</Text>
+                      </View>
                     </View>
                   ))}
                 </View>
@@ -763,9 +797,17 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               {/* Action Status Pill Badge */}
               {status && (
                 <View style={[styles.cardStatusBadge, status === 'matched' ? styles.statusBadgeMatched : status === 'passed' ? styles.statusBadgePassed : styles.statusBadgeLiked]}>
-                  <Text style={styles.cardStatusBadgeText}>
-                    {status === 'matched' ? '🎉 Matched!' : status === 'passed' ? '✖ Passed' : status === 'superliked' ? '⭐ Super Liked' : '❤️ Liked'}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons
+                      name={status === 'matched' ? "sparkles" : status === 'passed' ? "close" : status === 'superliked' ? "star" : "heart"}
+                      size={13}
+                      color="#FFF"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.cardStatusBadgeText}>
+                      {status === 'matched' ? 'Matched!' : status === 'passed' ? 'Passed' : status === 'superliked' ? 'Super Liked' : 'Liked'}
+                    </Text>
+                  </View>
                 </View>
               )}
             </TouchableOpacity>
@@ -1381,7 +1423,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 style={styles.expandedBackBtn}
                 onPress={() => setSelectedProfileModal(null)}
               >
-                <Text style={styles.expandedBackIcon}>←</Text>
+                <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
               </TouchableOpacity>
               <Text style={styles.expandedNavTitle} numberOfLines={1}>
                 {selectedProfileModal.firstName || selectedProfileModal.name}'s Profile
@@ -1390,7 +1432,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 style={styles.expandedReportBtn}
                 onPress={() => handleReportProfile(selectedProfileModal)}
               >
-                <Text style={styles.expandedReportIcon}>⋮</Text>
+                <Ionicons name="ellipsis-vertical" size={20} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
 
@@ -1437,9 +1479,12 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
 
                 {/* Match Percentage Floating Badge */}
                 <View style={styles.expandedMatchBadge}>
-                  <Text style={styles.expandedMatchBadgeText}>
-                    ✨ {selectedProfileModal.matchPercentage || 85}% Match
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="sparkles" size={13} color="#FFD700" style={{ marginRight: 4 }} />
+                    <Text style={styles.expandedMatchBadgeText}>
+                      {selectedProfileModal.matchPercentage || 85}% Match
+                    </Text>
+                  </View>
                 </View>
               </View>
 
@@ -1453,14 +1498,15 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                     <Text style={styles.expandedAgeText}>, {selectedProfileModal.age}</Text>
                   )}
                   {selectedProfileModal.isVerified && (
-                    <Text style={styles.verifiedCheckIcon}> ✔</Text>
+                    <Ionicons name="checkmark-circle" size={18} color="#0084FF" style={{ marginLeft: 4 }} />
                   )}
                 </View>
 
                 {/* Location / Distance */}
                 <View style={styles.expandedMetaRow}>
+                  <Ionicons name="location-outline" size={14} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
                   <Text style={styles.expandedDistanceText}>
-                    📍 {selectedProfileModal.calculatedDistanceKm
+                    {selectedProfileModal.calculatedDistanceKm
                       ? `${selectedProfileModal.calculatedDistanceKm} km away`
                       : (selectedProfileModal.distanceText || selectedProfileModal.distance || 'Near you')}
                   </Text>
@@ -1469,16 +1515,18 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 {/* Work & College */}
                 {(selectedProfileModal.job || selectedProfileModal.profession) ? (
                   <View style={styles.expandedMetaRow}>
+                    <Ionicons name="briefcase-outline" size={14} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
                     <Text style={styles.expandedJobText}>
-                      💼 {selectedProfileModal.job || selectedProfileModal.profession}
+                      {selectedProfileModal.job || selectedProfileModal.profession}
                     </Text>
                   </View>
                 ) : null}
 
                 {selectedProfileModal.college ? (
                   <View style={styles.expandedMetaRow}>
+                    <Ionicons name="school-outline" size={14} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
                     <Text style={styles.expandedCollegeText}>
-                      🎓 {selectedProfileModal.college}
+                      {selectedProfileModal.college}
                     </Text>
                   </View>
                 ) : null}
@@ -1508,20 +1556,26 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                             isCommon && styles.expandedChipHighlight,
                           ]}
                         >
-                          <Text
-                            style={[
-                              styles.expandedChipText,
-                              isCommon && styles.expandedChipTextHighlight,
-                            ]}
-                          >
-                            {isCommon ? `★ ${interest}` : interest}
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            {isCommon && <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 3 }} />}
+                            <Text
+                              style={[
+                                styles.expandedChipText,
+                                isCommon && styles.expandedChipTextHighlight,
+                              ]}
+                            >
+                              {interest}
+                            </Text>
+                          </View>
                         </View>
                       );
                     })}
                     {(selectedProfileModal.languages || []).map((lang, idx) => (
                       <View key={`lang-${idx}`} style={styles.expandedChipSubtle}>
-                        <Text style={styles.expandedChipSubtleText}>🗣️ {lang}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="language-outline" size={12} color="rgba(255,255,255,0.7)" style={{ marginRight: 3 }} />
+                          <Text style={styles.expandedChipSubtleText}>{lang}</Text>
+                        </View>
                       </View>
                     ))}
                   </View>
@@ -1534,43 +1588,43 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 <View style={styles.lifestyleGrid}>
                   {selectedProfileModal.gender && (
                     <View style={styles.lifestyleItem}>
-                      <Text style={styles.lifestyleIcon}>👤</Text>
+                      <Ionicons name="person-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
                       <Text style={styles.lifestyleLabel}>{selectedProfileModal.gender}</Text>
                     </View>
                   )}
                   {selectedProfileModal.drinkHabit && (
                     <View style={styles.lifestyleItem}>
-                      <Text style={styles.lifestyleIcon}>🍷</Text>
+                      <Ionicons name="wine-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
                       <Text style={styles.lifestyleLabel}>{selectedProfileModal.drinkHabit}</Text>
                     </View>
                   )}
                   {selectedProfileModal.smokeHabit && (
                     <View style={styles.lifestyleItem}>
-                      <Text style={styles.lifestyleIcon}>🚬</Text>
+                      <Ionicons name="flame-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
                       <Text style={styles.lifestyleLabel}>{selectedProfileModal.smokeHabit}</Text>
                     </View>
                   )}
                   {selectedProfileModal.exercise && (
                     <View style={styles.lifestyleItem}>
-                      <Text style={styles.lifestyleIcon}>🏋️</Text>
+                      <Ionicons name="barbell-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
                       <Text style={styles.lifestyleLabel}>{selectedProfileModal.exercise}</Text>
                     </View>
                   )}
                   {selectedProfileModal.pets && (
                     <View style={styles.lifestyleItem}>
-                      <Text style={styles.lifestyleIcon}>🐶</Text>
+                      <Ionicons name="paw-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
                       <Text style={styles.lifestyleLabel}>{selectedProfileModal.pets}</Text>
                     </View>
                   )}
                   {selectedProfileModal.zodiac && (
                     <View style={styles.lifestyleItem}>
-                      <Text style={styles.lifestyleIcon}>♌</Text>
+                      <Ionicons name="moon-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
                       <Text style={styles.lifestyleLabel}>{selectedProfileModal.zodiac}</Text>
                     </View>
                   )}
                   {selectedProfileModal.lookingFor && (
                     <View style={styles.lifestyleItemFull}>
-                      <Text style={styles.lifestyleIcon}>💍</Text>
+                      <Ionicons name="heart-circle-outline" size={18} color="#FE3C72" style={{ marginRight: 6 }} />
                       <Text style={styles.lifestyleLabel}>Looking for: {selectedProfileModal.lookingFor}</Text>
                     </View>
                   )}
@@ -1588,7 +1642,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 onPress={() => handlePassProfile(selectedProfileModal)}
                 activeOpacity={0.8}
               >
-                <Text style={styles.expandedActionIconPass}>✖</Text>
+                <Ionicons name="close" size={24} color="#FF3B30" />
                 <Text style={styles.expandedActionLabelPass}>Pass</Text>
               </TouchableOpacity>
 
@@ -1598,7 +1652,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 onPress={() => handleLikeProfile(selectedProfileModal, 'superlike')}
                 activeOpacity={0.8}
               >
-                <Text style={styles.expandedActionIconSuper}>★</Text>
+                <Ionicons name="star" size={22} color="#0084FF" />
                 <Text style={styles.expandedActionLabelSuper}>Superlike</Text>
               </TouchableOpacity>
 
@@ -1608,7 +1662,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 onPress={() => handleLikeProfile(selectedProfileModal, 'like')}
                 activeOpacity={0.8}
               >
-                <Text style={styles.expandedActionIconLike}>♥</Text>
+                <Ionicons name="heart" size={24} color="#34C759" />
                 <Text style={styles.expandedActionLabelLike}>Like</Text>
               </TouchableOpacity>
             </View>
@@ -1669,7 +1723,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
           onClose={() => setPreviewMediaModal((prev) => ({ ...prev, visible: false }))}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

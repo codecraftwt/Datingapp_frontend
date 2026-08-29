@@ -23,6 +23,7 @@ import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
 import { PreviewModal } from '../components/PreviewModal';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import Video from 'react-native-video';
 
 const INTEREST_OPTIONS = [
@@ -90,7 +91,7 @@ const WEIGHT_OPTIONS = [
   "85 kg (187 lbs)",
 ];
 
-export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialData, isEditMode, initialStep, onCloseModal }) => {
+export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialData, isEditMode, initialStep, onCloseModal, onLogout }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const cardWidth = Math.min(windowWidth - 32, 600);
   // Calculate photo grid slot size dynamically based on card width
@@ -98,6 +99,27 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const slotHeight = Math.floor(slotWidth * 1.25);
 
   const [step, setStep] = useState(initialStep || (isEditMode ? 4 : 1));
+
+  const handleLogoutPress = () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out of your account? You will need to log back in to complete your profile questionnaire.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            if (onLogout) {
+              await onLogout();
+            } else if (onNavigate) {
+              onNavigate('LOGIN');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   useEffect(() => {
     if (initialStep) {
@@ -795,31 +817,56 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           keyboardShouldPersistTaps="handled"
         >
           <View style={[styles.containerWrapper, { maxWidth: cardWidth }]}>
-            {/* Top Bar with Back Arrow */}
+            {/* Top Bar with Step Back / Log Out */}
             <View style={styles.editModeHeader}>
-              <TouchableOpacity
-                onPress={() => {
-                  if (isEditMode || onCloseModal) {
+              {isEditMode || onCloseModal ? (
+                <TouchableOpacity
+                  onPress={() => {
                     if (onCloseModal) onCloseModal();
                     else if (onGoBack && onGoBack()) return;
                     else if (onNavigate) onNavigate('HOME');
-                  } else if (step > 1) {
-                    setStep((prev) => prev - 1);
-                  } else {
-                    if (onGoBack && onGoBack()) return;
-                    if (onNavigate) onNavigate('LOGIN');
-                  }
-                }}
-                style={styles.closeBtn}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.closeBtnText}>
-                  {isEditMode || onCloseModal ? '← Back to Profile' : step > 1 ? `← Step ${step - 1}` : '← Back'}
-                </Text>
-              </TouchableOpacity>
+                  }}
+                  style={styles.closeBtn}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="arrow-back" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.closeBtnText}>Back to Profile</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : step > 1 ? (
+                <TouchableOpacity
+                  onPress={() => setStep((prev) => prev - 1)}
+                  style={styles.closeBtn}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="arrow-back" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={styles.closeBtnText}>Step {step - 1}</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ width: 75 }} />
+              )}
+
               <Text style={styles.editModeTitle}>
                 {isEditMode ? 'Edit Questionnaire' : 'Profile Questionnaire'}
               </Text>
+
+              {!isEditMode && !onCloseModal ? (
+                <TouchableOpacity
+                  onPress={handleLogoutPress}
+                  style={styles.logoutHeaderBtn}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="log-out-outline" size={16} color="#FF3B30" style={{ marginRight: 4 }} />
+                    <Text style={styles.logoutHeaderBtnText}>Log Out</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ width: 75 }} />
+              )}
             </View>
 
             {/* Progress & Step Navigation Bar */}
@@ -2057,6 +2104,21 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
     letterSpacing: 0.8,
+  },
+  logoutHeaderBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 59, 48, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 59, 48, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutHeaderBtnText: {
+    color: '#FF3B30',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 

@@ -15,6 +15,7 @@ import {
   Linking,
 } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Country, State, City } from 'country-state-city';
 import { apiClient } from '../api/apiClient';
 import { openDeviceLocationSettings, getCurrentDeviceLocation } from '../services/locationService';
@@ -331,13 +332,21 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
               disabled={fetchingGPS}
               activeOpacity={0.8}
             >
-              <Text style={styles.gpsButtonText}>
-                {fetchingGPS
-                  ? '⏳ Fetching Current GPS Location...'
-                  : tempLocation
-                    ? `✅ Live Location Captured (${tempLocation.latitude.toFixed(4)}, ${tempLocation.longitude.toFixed(4)})`
-                    : '📍 Fetch Current Live Location'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons
+                  name={fetchingGPS ? "time-outline" : tempLocation ? "checkmark-circle" : "location-outline"}
+                  size={16}
+                  color="#FFF"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.gpsButtonText}>
+                  {fetchingGPS
+                    ? 'Fetching Current GPS Location...'
+                    : tempLocation
+                      ? `Live Location Captured (${tempLocation.latitude.toFixed(4)}, ${tempLocation.longitude.toFixed(4)})`
+                      : 'Fetch Current Live Location'}
+                </Text>
+              </View>
             </TouchableOpacity>
 
             {tempLocation && (
@@ -349,7 +358,10 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
                 }}
                 activeOpacity={0.7}
               >
-                <Text style={styles.removeGpsText}>✕ Remove Temporary Address</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="close-circle-outline" size={15} color="#FF3B30" style={{ marginRight: 4 }} />
+                  <Text style={styles.removeGpsText}>Remove Temporary Address</Text>
+                </View>
               </TouchableOpacity>
             )}
 
@@ -360,7 +372,7 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
               activeOpacity={0.8}
             >
               <View style={[styles.checkboxSquare, sameAsPermanent && styles.checkboxSquareChecked]}>
-                {sameAsPermanent && <Text style={styles.checkmarkIcon}>✓</Text>}
+                {sameAsPermanent && <Ionicons name="checkmark" size={14} color="#FFF" />}
               </View>
               <Text style={styles.sameAddressCheckboxLabel}>
                 Keep permanent address as current address.
@@ -369,9 +381,12 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
 
             {sameAsPermanent ? (
               <View style={styles.autoAddressBanner}>
-                <Text style={styles.autoAddressBannerText}>
-                  ✅ Permanent address will be saved identical to your Current Live Location!
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="checkmark-circle" size={16} color="#34C759" style={{ marginRight: 6 }} />
+                  <Text style={styles.autoAddressBannerText}>
+                    Permanent address will be saved identical to your Current Live Location!
+                  </Text>
+                </View>
               </View>
             ) : (
               <>
@@ -384,7 +399,10 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
 
                 {/* Permanent Address Inputs (Mandatory) */}
                 <View style={styles.sectionDivider}>
-                  <Text style={styles.sectionTitle}>📍 Permanent Address (Mandatory)</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="pin-outline" size={18} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.sectionTitle}>Permanent Address (Mandatory)</Text>
+                  </View>
                 </View>
 
                 {/* Country Selector */}
@@ -398,9 +416,9 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
                   activeOpacity={0.8}
                 >
                   <Text style={styles.pickerButtonText}>
-                    {selectedCountry ? `🌐 ${selectedCountry.name}` : 'Select Country'}
+                    {selectedCountry ? selectedCountry.name : 'Select Country'}
                   </Text>
-                  <Text style={styles.pickerChevron}>▼</Text>
+                  <Ionicons name="chevron-down" size={16} color="rgba(255, 255, 255, 0.6)" />
                 </TouchableOpacity>
 
                 {/* State Selector */}
@@ -418,9 +436,9 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
                   activeOpacity={0.8}
                 >
                   <Text style={styles.pickerButtonText}>
-                    {selectedState ? `🏛️ ${selectedState.name}` : 'Select State'}
+                    {selectedState ? selectedState.name : 'Select State'}
                   </Text>
-                  <Text style={styles.pickerChevron}>▼</Text>
+                  <Ionicons name="chevron-down" size={16} color="rgba(255, 255, 255, 0.6)" />
                 </TouchableOpacity>
 
                 {/* District Input */}
@@ -447,9 +465,9 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
                   activeOpacity={0.8}
                 >
                   <Text style={styles.pickerButtonText}>
-                    {selectedCity ? `🏙️ ${selectedCity.name}` : 'Select City / Taluka'}
+                    {selectedCity ? selectedCity.name : 'Select City / Taluka'}
                   </Text>
-                  <Text style={styles.pickerChevron}>▼</Text>
+                  <Ionicons name="chevron-down" size={16} color="rgba(255, 255, 255, 0.6)" />
                 </TouchableOpacity>
               </>
             )}
@@ -493,12 +511,12 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
                   Select {modalType === 'country' ? 'Country' : modalType === 'state' ? 'State' : 'City / Taluka'}
                 </Text>
                 <TouchableOpacity onPress={() => setModalType(null)} style={styles.closeBtn}>
-                  <Text style={styles.closeBtnText}>✕</Text>
+                  <Ionicons name="close" size={22} color="#FFF" />
                 </TouchableOpacity>
               </View>
 
               <View style={styles.searchBarWrapper}>
-                <Text style={styles.searchBarIcon}>🔍</Text>
+                <Ionicons name="search" size={18} color="rgba(255,255,255,0.5)" style={{ marginRight: 8 }} />
                 <TextInput
                   style={styles.searchInputField}
                   placeholder={`Type keywords to filter ${modalType === 'country' ? 'country' : modalType === 'state' ? 'state' : 'city'}...`}

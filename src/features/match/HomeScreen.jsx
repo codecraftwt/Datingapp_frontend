@@ -32,6 +32,8 @@ import {
 } from 'react-native-webrtc';
 
 import { CustomButton } from '../components/CustomButton';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Profile } from './Profile';
 import { ChatScreen } from './ChatScreen';
 import { BlockReportModal } from '../components/BlockReportModal';
@@ -3038,7 +3040,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               setActiveChat(null);
             }}
           >
-            <Text style={styles.navigationIcon}>🔥</Text>
+            <Ionicons
+              name={activeTab === 'swipe' ? "flame" : "flame-outline"}
+              size={24}
+              color={activeTab === 'swipe' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+              style={{ marginBottom: 2 }}
+            />
             <Text style={[styles.navigationLabel, activeTab === 'swipe' && styles.navigationLabelActive]}>
               Swipe
             </Text>
@@ -3053,7 +3060,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             }}
           >
             <View style={{ position: 'relative' }}>
-              <Text style={styles.navigationIcon}>❤️</Text>
+              <Ionicons
+                name={activeTab === 'likes' ? "heart" : "heart-outline"}
+                size={24}
+                color={activeTab === 'likes' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+                style={{ marginBottom: 2 }}
+              />
               {unreadLikesCount > 0 && (
                 <View style={styles.navBadgeContainer}>
                   <Text style={styles.navBadgeText}>
@@ -3095,7 +3107,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 }}
               >
                 <View style={{ position: 'relative' }}>
-                  <Text style={styles.navigationIcon}>💬</Text>
+                  <Ionicons
+                    name={activeTab === 'chat' ? "chatbubbles" : "chatbubbles-outline"}
+                    size={24}
+                    color={activeTab === 'chat' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+                    style={{ marginBottom: 2 }}
+                  />
                   {totalUnreadChatCount > 0 && (
                     <View style={styles.navBadgeContainer}>
                       <Text style={styles.navBadgeText}>
@@ -3118,7 +3135,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               setActiveChat(null);
             }}
           >
-            <Text style={styles.navigationIcon}>👤</Text>
+            <Ionicons
+              name={activeTab === 'profile' ? "person" : "person-outline"}
+              size={24}
+              color={activeTab === 'profile' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+              style={{ marginBottom: 2 }}
+            />
             <Text style={[styles.navigationLabel, activeTab === 'profile' && styles.navigationLabelActive]}>
               Profile
             </Text>

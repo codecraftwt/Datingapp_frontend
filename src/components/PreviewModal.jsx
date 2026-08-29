@@ -254,22 +254,13 @@ export const PreviewModal = ({
         <SafeAreaView style={[styles.topHeaderContainer, { opacity: isPaused ? 0 : 1 }]} pointerEvents="box-none">
           {/* Segmented Progress Bar */}
           <View style={styles.progressRow}>
-            {photos.map((_, idx) => {
-              let fillWidth = '0%';
-              if (idx < currentIndex) {
-                fillWidth = '100%';
-              } else if (idx === currentIndex) {
-                fillWidth = `${Math.min(progress * 100, 100)}%`;
-              }
-              return (
-                <View key={idx} style={styles.progressSegmentBg}>
-                  <View style={[styles.progressSegmentFill, { width: fillWidth }]} />
-                </View>
-              );
-            })}
+            {photos.map((_, idx) => (
+              <View key={idx} style={styles.progressSegmentBg}>
+                <View style={[styles.progressSegmentFill, { width: idx < currentIndex ? '100%' : idx === currentIndex ? '100%' : '0%' }]} />
+              </View>
+            ))}
           </View>
 
-          {/* User Info Bar */}
           <View style={styles.userInfoRow} pointerEvents="box-none">
             <View style={styles.userProfileGroup}>
               <View style={styles.statusAvatarRing}>
@@ -277,41 +268,37 @@ export const PreviewModal = ({
               </View>
               <View style={styles.userTextCol}>
                 <Text style={styles.userNameText}>{userName}</Text>
-                <Text style={styles.statusTimeText}>
-                  {isCurrentVideo ? '📹 Video' : '📸 Photo'} {currentIndex + 1} of {photos.length} • Just now
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name={isCurrentVideo ? "videocam-outline" : "camera-outline"} size={13} color="rgba(255, 255, 255, 0.7)" style={{ marginRight: 4 }} />
+                  <Text style={styles.statusTimeText}>
+                    {currentIndex + 1} of {photos.length} • Just now
+                  </Text>
+                </View>
               </View>
             </View>
 
             <View style={styles.headerRightControls}>
               {showHideOptionsBtn && (
-                <TouchableOpacity
-                  style={styles.threeDotsBtn}
-                  onPress={() => {
-                    setIsPaused(true);
-                    setMenuVisible(true);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.threeDotsText}>⋮</Text>
+                <TouchableOpacity style={styles.threeDotsBtn} onPress={() => { setIsPaused(true); setMenuVisible(true); }}>
+                  <Ionicons name="ellipsis-vertical" size={20} color="#FFFFFF" />
                 </TouchableOpacity>
               )}
-
-              <TouchableOpacity style={styles.closeButton} onPress={onClose} activeOpacity={0.7}>
-                <Text style={styles.closeButtonText}>✕</Text>
+              <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+                <Ionicons name="close" size={22} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
           </View>
         </SafeAreaView>
 
-        {/* Bottom Caption Banner - Fades out on Long Press like WhatsApp Status */}
         <View style={[styles.bottomCaptionContainer, { opacity: isPaused ? 0 : 1 }]} pointerEvents="none">
-          <Text style={styles.captionText}>
-            {currentIndex === 0 ? '⭐ Main Profile Picture' : `${isCurrentVideo ? '📹 Video' : '📸 Profile Photo'} #${currentIndex + 1}`}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {currentIndex === 0 && <Ionicons name="star" size={14} color="#FFD700" style={{ marginRight: 5 }} />}
+            <Text style={styles.captionText}>
+              {currentIndex === 0 ? 'Main Profile Picture' : `${isCurrentVideo ? 'Video' : 'Profile Photo'} #${currentIndex + 1}`}
+            </Text>
+          </View>
         </View>
 
-        {/* Three Dots Options Menu Modal (Only visible when managing own profile media) */}
         {showHideOptionsBtn && (
           <Modal
             visible={menuVisible}
