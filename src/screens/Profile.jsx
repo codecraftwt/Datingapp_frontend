@@ -816,10 +816,20 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.nameText}>
-          {displayData.firstName || displayData.name || 'Your Name'}
-          {userAge ? `, ${userAge}` : ''}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
+          <Text style={styles.nameText}>
+            {displayData.firstName || displayData.name || 'Your Name'}
+            {userAge ? `, ${userAge}` : ''}
+          </Text>
+          {!!(displayData.email || displayData.isVerified || displayData.isEmailVerified) && (
+            <Ionicons
+              name="checkmark-circle"
+              size={20}
+              color="#0084FF"
+              style={{ marginLeft: 6 }}
+            />
+          )}
+        </View>
 
         {displayData.gender && <Text style={styles.genderSub}>{displayData.gender}</Text>}
         {displayData.email && (
