@@ -285,6 +285,17 @@ export const apiClient = {
       method: 'GET',
     });
   },
+  getActiveWarning: async () => {
+    return await request('/api/profile/active-warning', {
+      method: 'GET',
+    });
+  },
+  acknowledgeWarning: async (warningId) => {
+    return await request('/api/profile/acknowledge-warning', {
+      method: 'POST',
+      body: JSON.stringify({ warningId }),
+    });
+  },
   updateLocation: async (locationData) => {
     return await request('/api/profile/location', {
       method: 'PUT',

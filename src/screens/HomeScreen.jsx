@@ -62,6 +62,7 @@ import io from 'socket.io-client';
 import { createSound } from 'react-native-nitro-sound';
 import soundService from '../services/soundService';
 import { registerFcmToken } from '../services/notificationService';
+import { WarningModal } from '../components/WarningModal';
 
 const MOCK_STICKERS = [
   { id: 'heart', char: '❤️', label: 'Heart' },
@@ -581,7 +582,45 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [selectedReportReason, setSelectedReportReason] = useState('Inappropriate Photos or Content');
   const [reportDetails, setReportDetails] = useState('');
   const [alsoBlockOnReport, setAlsoBlockOnReport] = useState(false);
-  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  // Admin Warning Modal States
+  const [activeWarningData, setActiveWarningData] = useState(null);
+  const [showAdminWarningModal, setShowAdminWarningModal] = useState(false);
+  const [warningAckLoading, setWarningAckLoading] = useState(false);
+
+  const checkActiveWarning = async () => {
+    try {
+      const res = await apiClient.getActiveWarning();
+      if (res && res.success && res.hasWarning && res.warning) {
+        setActiveWarningData(res.warning);
+      } else {
+        setActiveWarningData(null);
+      }
+    } catch (err) {
+      console.log('[HomeScreen] Active warning check notice:', err);
+    }
+  };
+
+  const handleAcknowledgeWarningCall = async () => {
+    try {
+      setWarningAckLoading(true);
+      const warningId = activeWarningData?._id;
+      await apiClient.acknowledgeWarning(warningId);
+      setShowAdminWarningModal(false);
+      setActiveWarningData(null);
+    } catch (err) {
+      console.log('[HomeScreen] Error acknowledging warning:', err);
+      setShowAdminWarningModal(false);
+      setActiveWarningData(null);
+    } finally {
+      setWarningAckLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser && (currentUser.id || currentUser._id)) {
+      checkActiveWarning();
+    }
+  }, [currentUser, activeTab]);
 
   // Voice Notes States & Refs
   const [isRecording, setIsRecording] = useState(false);
@@ -1805,6 +1844,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         setCallSession(null);
       });
 
+      socketRef.current.on('user_warning', (warnData) => {
+        console.log('[Socket] Live user_warning received:', warnData);
+        if (warnData) {
+          setActiveWarningData(warnData);
+          setShowAdminWarningModal(true);
+        }
+      });
+
       socketRef.current.on('webrtc_ice_candidate', async ({ senderId, candidate }) => {
         console.log('Socket.IO ice candidate received from:', senderId);
         if (peerConnectionRef.current && candidate) {
@@ -1920,6 +1967,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         try { fetchLikes(); } catch (e) {}
         try { fetchMessages(); } catch (e) {}
         try { fetchMatchesList(); } catch (e) {}
+        try { checkActiveWarning(); } catch (e) {}
 
         if (socketRef.current) {
           if (!socketRef.current.connected) {
@@ -3298,6 +3346,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Top Warning Banner (Displays at top of HomeScreen when reported user receives warning) */}
+        {activeWarningData && !activeWarningData.isAcknowledged && (
+          <View style={styles.topWarningBanner}>
+            <TouchableOpacity
+              style={styles.topWarningBannerContent}
+              onPress={() => setShowAdminWarningModal(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.topWarningEmoji}>⚠️</Text>
+              <View style={styles.topWarningTextWrapper}>
+                <Text style={styles.topWarningTitle}>Account Guideline Warning</Text>
+                <Text style={styles.topWarningSub} numberOfLines={1}>
+                  {activeWarningData.category || 'Policy violation flagged'} • Tap ⓘ info to expand notice
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Information (i) icon button that expands the full warning modal */}
+            <TouchableOpacity
+              style={styles.topWarningInfoBtn}
+              onPress={() => setShowAdminWarningModal(true)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Text style={styles.topWarningInfoIcon}>ⓘ</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Tab Content Area */}
         <View style={styles.contentArea}>
@@ -5429,6 +5506,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             </View>
           </Modal>
         )}
+
+        {/* Admin Warning Modal Popup */}
+        <WarningModal
+          visible={showAdminWarningModal}
+          warning={activeWarningData}
+          onAcknowledge={handleAcknowledgeWarningCall}
+          onClose={() => setShowAdminWarningModal(false)}
+          loading={warningAckLoading}
+        />
       </View>
     </View>
   );
@@ -8696,5 +8782,60 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+  },
+  topWarningBanner: {
+    backgroundColor: '#FFF1F2',
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#FECDD3',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    elevation: 4,
+    shadowColor: '#E11D48',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    zIndex: 99,
+  },
+  topWarningBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  topWarningEmoji: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  topWarningTextWrapper: {
+    flex: 1,
+  },
+  topWarningTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#E11D48',
+    letterSpacing: 0.2,
+  },
+  topWarningSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#9F1239',
+    marginTop: 1,
+  },
+  topWarningInfoBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E11D48',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+  },
+  topWarningInfoIcon: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
   },
 });
