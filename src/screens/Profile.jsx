@@ -821,7 +821,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             {displayData.firstName || displayData.name || 'Your Name'}
             {userAge ? `, ${userAge}` : ''}
           </Text>
-          {!!(displayData.email || displayData.isVerified || displayData.isEmailVerified) && (
+          {!!displayData.isEmailVerified && (
             <Ionicons
               name="checkmark-circle"
               size={20}

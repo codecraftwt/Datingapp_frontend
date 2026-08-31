@@ -26,6 +26,25 @@ import { PreviewModal } from '../components/PreviewModal';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
 
+const extractPhotoUri = (photoItem) => {
+  if (!photoItem) return '';
+  if (typeof photoItem === 'string') return photoItem;
+  if (typeof photoItem === 'object') {
+    return photoItem.url || photoItem.uri || photoItem.path || photoItem.secure_url || photoItem.mediaUrl || '';
+  }
+  return String(photoItem);
+};
+
+const safeString = (val, fallback = '') => {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (typeof val === 'object') {
+    return val.url || val.uri || val.path || val.secure_url || val.mediaUrl || val.name || val.label || val.title || val.text || fallback;
+  }
+  return String(val);
+};
+
 export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
   const insets = useSafeAreaInsets();
   // Search Bar State
@@ -125,26 +144,29 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
 
   const openMediaPreview = (profile, initialIdx = 0) => {
     if (!profile) return;
-    const photosList = [
+    const rawPhotosList = [
       profile.profileImage,
       ...(profile.profileImages || []),
       ...(profile.photos || []),
       ...(profile.videos || []),
       ...(profile.media || []),
-    ].filter(Boolean);
+    ];
+
+    const photosList = rawPhotosList.map(extractPhotoUri).filter(Boolean);
 
     const uniquePhotos = Array.from(new Set(photosList));
+    const avatar = extractPhotoUri(profile.profileImage);
     const finalPhotos =
       uniquePhotos.length > 0
         ? uniquePhotos
-        : [profile.profileImage || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
+        : [avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
 
     setPreviewMediaModal({
       visible: true,
       photos: finalPhotos,
       initialIndex: initialIdx < finalPhotos.length ? initialIdx : 0,
-      userName: profile.firstName || profile.name || 'Suggested Match',
-      userAvatar: profile.profileImage || finalPhotos[0],
+      userName: safeString(profile.firstName || profile.name, 'Suggested Match'),
+      userAvatar: avatar || finalPhotos[0],
     });
   };
 
@@ -257,10 +279,12 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
       }
     } catch (err) {
       console.error('Search API Error:', err);
-      if (err?.status === 401 || err?.data?.message?.includes('authorization denied') || err?.data?.message?.includes('invalid or expired')) {
+      const errMsg = (err && err.data && err.data.message) || (err && err.message) || '';
+      const errStatus = err && err.status;
+      if (errStatus === 401 || errMsg.includes('authorization denied') || errMsg.includes('invalid or expired')) {
         Alert.alert('Session Expired', 'Your login session has expired or is invalid. Please log in again to continue.');
       } else {
-        Alert.alert('Search Error', err?.data?.message || err?.message || 'Unable to execute search.');
+        Alert.alert('Search Error', errMsg || 'Unable to execute search.');
       }
     } finally {
       setIsLoading(false);
@@ -328,7 +352,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
         ? await apiClient.superLikeUser({ targetUserId: targetId })
         : await apiClient.likeUser({ targetUserId: targetId });
 
-      const isMatch = res?.isMatch || res?.matched || res?.status === 'match';
+      const isMatch = res && (res.isMatch || res.matched || res.status === 'match');
 
       if (isMatch) {
         setActionStatusMap((prev) => ({ ...prev, [targetId]: 'matched' }));
@@ -686,7 +710,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
       ) : (
         <FlatList
           data={results}
-          keyExtractor={(item) => item._id.toString()}
+          keyExtractor={(item, index) => ((item && (item._id || item.id)) || index).toString()}
           onRefresh={() => {
             setIsRefreshing(true);
             executeSearch(1, true);
@@ -701,7 +725,12 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
             </View>
           }
           renderItem={({ item }) => {
-            const status = actionStatusMap[item._id || item.id];
+            if (!item) return null;
+            const itemId = item._id || item.id;
+            const status = actionStatusMap[itemId];
+            const profileImgUri = extractPhotoUri(
+              item.profileImage || (item.profileImages && item.profileImages[0])
+            );
             return (
               <TouchableOpacity
                 style={[styles.profileCard, status === 'passed' && { opacity: 0.6 }]}
@@ -709,110 +738,119 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 onPress={() => {
                   setSelectedProfileModal(item);
                   setActivePhotoIndex(0);
-                  if (onSelectProfile) onSelectProfile(item);
+                  if (typeof onSelectProfile === 'function') {
+                    try {
+                      onSelectProfile(item);
+                    } catch (e) {
+                      console.log('Error in onSelectProfile callback:', e);
+                    }
+                  }
                 }}
               >
                 {/* Profile Image & Badges */}
                 <View style={styles.cardHeaderImageRow}>
                   <Image
                     source={{
-                      uri: item.profileImage
-                        ? getImageUrl(item.profileImage)
-                        : (item.profileImages && item.profileImages[0]
-                            ? getImageUrl(item.profileImages[0])
-                            : '')
+                      uri: profileImgUri
+                        ? getImageUrl(profileImgUri)
+                        : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'
                     }}
                     style={styles.cardAvatar}
                   />
-                <View style={styles.cardHeaderMeta}>
-                  <View style={styles.nameRow}>
-                    <Text style={styles.cardName}>{item.firstName || item.name}</Text>
-                    {item.age && <Text style={styles.cardAge}>, {item.age}</Text>}
+                  <View style={styles.cardHeaderMeta}>
+                    <View style={styles.nameRow}>
+                      <Text style={styles.cardName}>{safeString(item.firstName || item.name)}</Text>
+                      {item.age ? <Text style={styles.cardAge}>, {safeString(item.age)}</Text> : null}
+                      {!!item.isEmailVerified && (
+                        <Ionicons name="checkmark-circle" size={16} color="#0084FF" style={{ marginLeft: 4 }} />
+                      )}
+                    </View>
+
+                    {item.job ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                        <Ionicons name="briefcase-outline" size={13} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
+                        <Text style={styles.cardJob}>{safeString(item.job)}</Text>
+                      </View>
+                    ) : null}
+
+                    {item.college ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                        <Ionicons name="school-outline" size={13} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
+                        <Text style={styles.cardCollege}>{safeString(item.college)}</Text>
+                      </View>
+                    ) : null}
                   </View>
 
-                  {item.job ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                      <Ionicons name="briefcase-outline" size={13} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
-                      <Text style={styles.cardJob}>{item.job}</Text>
-                    </View>
-                  ) : null}
-
-                  {item.college ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                      <Ionicons name="school-outline" size={13} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
-                      <Text style={styles.cardCollege}>{item.college}</Text>
-                    </View>
-                  ) : null}
+                  {/* Match Percentage Badge */}
+                  <View style={styles.matchScoreBadge}>
+                    <Text style={styles.matchScoreText}>{safeString(item.matchPercentage || 85)}%</Text>
+                    <Text style={styles.matchScoreLabel}>Match</Text>
+                  </View>
                 </View>
 
-                {/* Match Percentage Badge */}
-                <View style={styles.matchScoreBadge}>
-                  <Text style={styles.matchScoreText}>{item.matchPercentage}%</Text>
-                  <Text style={styles.matchScoreLabel}>Match</Text>
-                </View>
-              </View>
+                {/* Bio snippet */}
+                {item.bio ? (
+                  <Text style={styles.cardBio} numberOfLines={2}>
+                    {safeString(item.bio)}
+                  </Text>
+                ) : null}
 
-              {/* Bio snippet */}
-              {item.bio ? (
-                <Text style={styles.cardBio} numberOfLines={2}>
-                  {item.bio}
-                </Text>
-              ) : null}
-
-              {/* Badges Footer Row */}
-              <View style={styles.cardFooterRow}>
-                {item.calculatedDistanceKm !== null && item.calculatedDistanceKm !== undefined && (
-                  <View style={styles.distanceBadge}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="location-outline" size={12} color="#FFF" style={{ marginRight: 3 }} />
-                      <Text style={styles.distanceBadgeText}>{item.calculatedDistanceKm} km away</Text>
-                    </View>
-                  </View>
-                )}
-
-                {item.languages && item.languages.length > 0 && (
-                  <View style={styles.langBadge}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="language-outline" size={12} color="#FFF" style={{ marginRight: 3 }} />
-                      <Text style={styles.langBadgeText}>{item.languages.slice(0, 2).join(', ')}</Text>
-                    </View>
-                  </View>
-                )}
-              </View>
-
-              {/* Common Interests Chips */}
-              {item.commonInterests && item.commonInterests.length > 0 && (
-                <View style={styles.interestsRow}>
-                  {item.commonInterests.slice(0, 4).map((interest, idx) => (
-                    <View key={idx} style={styles.commonInterestChip}>
+                {/* Badges Footer Row */}
+                <View style={styles.cardFooterRow}>
+                  {item.calculatedDistanceKm !== null && item.calculatedDistanceKm !== undefined && (
+                    <View style={styles.distanceBadge}>
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Ionicons name="checkmark" size={11} color="#FE3C72" style={{ marginRight: 2 }} />
-                        <Text style={styles.commonInterestText}>{interest}</Text>
+                        <Ionicons name="location-outline" size={12} color="#FFF" style={{ marginRight: 3 }} />
+                        <Text style={styles.distanceBadgeText}>{safeString(item.calculatedDistanceKm)} km away</Text>
                       </View>
                     </View>
-                  ))}
-                </View>
-              )}
+                  )}
 
-              {/* Action Status Pill Badge */}
-              {status && (
-                <View style={[styles.cardStatusBadge, status === 'matched' ? styles.statusBadgeMatched : status === 'passed' ? styles.statusBadgePassed : styles.statusBadgeLiked]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons
-                      name={status === 'matched' ? "sparkles" : status === 'passed' ? "close" : status === 'superliked' ? "star" : "heart"}
-                      size={13}
-                      color="#FFF"
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text style={styles.cardStatusBadgeText}>
-                      {status === 'matched' ? 'Matched!' : status === 'passed' ? 'Passed' : status === 'superliked' ? 'Super Liked' : 'Liked'}
-                    </Text>
-                  </View>
+                  {item.languages && item.languages.length > 0 && (
+                    <View style={styles.langBadge}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="language-outline" size={12} color="#FFF" style={{ marginRight: 3 }} />
+                        <Text style={styles.langBadgeText}>
+                          {(item.languages || []).slice(0, 2).map((l) => safeString(l)).join(', ')}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
                 </View>
-              )}
-            </TouchableOpacity>
-          );
-        }}
+
+                {/* Common Interests Chips */}
+                {item.commonInterests && item.commonInterests.length > 0 && (
+                  <View style={styles.interestsRow}>
+                    {item.commonInterests.slice(0, 4).map((interest, idx) => (
+                      <View key={idx} style={styles.commonInterestChip}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="checkmark" size={11} color="#FE3C72" style={{ marginRight: 2 }} />
+                          <Text style={styles.commonInterestText}>{safeString(interest)}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Action Status Pill Badge */}
+                {status && (
+                  <View style={[styles.cardStatusBadge, status === 'matched' ? styles.statusBadgeMatched : status === 'passed' ? styles.statusBadgePassed : styles.statusBadgeLiked]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons
+                        name={status === 'matched' ? "sparkles" : status === 'passed' ? "close" : status === 'superliked' ? "star" : "heart"}
+                        size={13}
+                        color="#FFF"
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={styles.cardStatusBadgeText}>
+                        {status === 'matched' ? 'Matched!' : status === 'passed' ? 'Passed' : status === 'superliked' ? 'Super Liked' : 'Liked'}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          }}
           onEndReached={() => {
             if (page < totalPages && !isLoading) {
               executeSearch(page + 1);
@@ -823,7 +861,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
       )}
 
       {/* Filter Modal Overlay */}
-      <Modal visible={showFilterModal} animationType="slide" transparent={false}>
+      <Modal visible={showFilterModal} animationType="slide" transparent={false} onRequestClose={() => setShowFilterModal(false)}>
         <SafeAreaView style={styles.modalSafeArea}>
           {/* Modal Header */}
           <View style={styles.modalHeader}>
@@ -1414,7 +1452,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
       </Modal>
 
       {/* Expanded Profile Detail Modal */}
-      <Modal visible={!!selectedProfileModal} animationType="slide" transparent={false}>
+      <Modal visible={!!selectedProfileModal} animationType="slide" transparent={false} onRequestClose={() => setSelectedProfileModal(null)}>
         {selectedProfileModal && (
           <SafeAreaView style={styles.expandedModalSafeArea}>
             {/* Top Navigation Bar */}
@@ -1426,7 +1464,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
               </TouchableOpacity>
               <Text style={styles.expandedNavTitle} numberOfLines={1}>
-                {selectedProfileModal.firstName || selectedProfileModal.name}'s Profile
+                {safeString(selectedProfileModal.firstName || selectedProfileModal.name)}'s Profile
               </Text>
               <TouchableOpacity
                 style={styles.expandedReportBtn}
@@ -1440,13 +1478,14 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               {/* Photo Carousel Header */}
               <View style={styles.photoCarouselContainer}>
                 {(() => {
-                  const photos = [
+                  const rawPhotos = [
                     selectedProfileModal.profileImage,
                     ...(selectedProfileModal.profileImages || []),
                     ...(selectedProfileModal.photos || []),
                     ...(selectedProfileModal.videos || []),
                     ...(selectedProfileModal.media || []),
-                  ].filter(Boolean);
+                  ];
+                  const photos = rawPhotos.map(extractPhotoUri).filter(Boolean);
                   const uniquePhotos = Array.from(new Set(photos));
                   const displayPhotos = uniquePhotos.length > 0 ? uniquePhotos : ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
                   const activePhoto = displayPhotos[activePhotoIndex % displayPhotos.length];
@@ -1457,7 +1496,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                         activeOpacity={0.9}
                         onPress={() => openMediaPreview(selectedProfileModal, activePhotoIndex)}
                       >
-                        <Image source={{ uri: getImageUrl(activePhoto) }} style={styles.carouselImage} />
+                        <Image source={{ uri: getImageUrl(extractPhotoUri(activePhoto)) }} style={styles.carouselImage} />
                       </TouchableOpacity>
                       {displayPhotos.length > 1 && (
                         <View style={styles.photoIndicatorRow}>
@@ -1482,7 +1521,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Ionicons name="sparkles" size={13} color="#FFD700" style={{ marginRight: 4 }} />
                     <Text style={styles.expandedMatchBadgeText}>
-                      {selectedProfileModal.matchPercentage || 85}% Match
+                      {safeString(selectedProfileModal.matchPercentage || 85)}% Match
                     </Text>
                   </View>
                 </View>
@@ -1492,12 +1531,12 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               <View style={styles.expandedInfoSection}>
                 <View style={styles.expandedNameRow}>
                   <Text style={styles.expandedNameText}>
-                    {selectedProfileModal.firstName || selectedProfileModal.name}
+                    {safeString(selectedProfileModal.firstName || selectedProfileModal.name)}
                   </Text>
-                  {selectedProfileModal.age && (
-                    <Text style={styles.expandedAgeText}>, {selectedProfileModal.age}</Text>
-                  )}
-                  {selectedProfileModal.isVerified && (
+                  {selectedProfileModal.age ? (
+                    <Text style={styles.expandedAgeText}>, {safeString(selectedProfileModal.age)}</Text>
+                  ) : null}
+                  {!!selectedProfileModal.isEmailVerified && (
                     <Ionicons name="checkmark-circle" size={18} color="#0084FF" style={{ marginLeft: 4 }} />
                   )}
                 </View>
@@ -1506,9 +1545,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 <View style={styles.expandedMetaRow}>
                   <Ionicons name="location-outline" size={14} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
                   <Text style={styles.expandedDistanceText}>
-                    {selectedProfileModal.calculatedDistanceKm
+                    {selectedProfileModal.calculatedDistanceKm !== undefined && selectedProfileModal.calculatedDistanceKm !== null
                       ? `${selectedProfileModal.calculatedDistanceKm} km away`
-                      : (selectedProfileModal.distanceText || selectedProfileModal.distance || 'Near you')}
+                      : safeString(selectedProfileModal.distanceText || selectedProfileModal.distance, 'Near you')}
                   </Text>
                 </View>
 
@@ -1517,7 +1556,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   <View style={styles.expandedMetaRow}>
                     <Ionicons name="briefcase-outline" size={14} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
                     <Text style={styles.expandedJobText}>
-                      {selectedProfileModal.job || selectedProfileModal.profession}
+                      {safeString(selectedProfileModal.job || selectedProfileModal.profession)}
                     </Text>
                   </View>
                 ) : null}
@@ -1526,7 +1565,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   <View style={styles.expandedMetaRow}>
                     <Ionicons name="school-outline" size={14} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
                     <Text style={styles.expandedCollegeText}>
-                      {selectedProfileModal.college}
+                      {safeString(selectedProfileModal.college)}
                     </Text>
                   </View>
                 ) : null}
@@ -1536,7 +1575,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               {selectedProfileModal.bio ? (
                 <View style={styles.expandedSectionBox}>
                   <Text style={styles.expandedSectionHeader}>About Me</Text>
-                  <Text style={styles.expandedBioText}>{selectedProfileModal.bio}</Text>
+                  <Text style={styles.expandedBioText}>{safeString(selectedProfileModal.bio)}</Text>
                 </View>
               ) : null}
 
@@ -1547,7 +1586,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   <Text style={styles.expandedSectionHeader}>Interests & Languages</Text>
                   <View style={styles.expandedChipsWrap}>
                     {(selectedProfileModal.interests || []).map((interest, idx) => {
-                      const isCommon = (selectedProfileModal.commonInterests || []).includes(interest);
+                      const interestStr = safeString(interest);
+                      const commonList = (selectedProfileModal.commonInterests || []).map((c) => safeString(c));
+                      const isCommon = commonList.includes(interestStr);
                       return (
                         <View
                           key={`int-${idx}`}
@@ -1564,7 +1605,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                                 isCommon && styles.expandedChipTextHighlight,
                               ]}
                             >
-                              {interest}
+                              {interestStr}
                             </Text>
                           </View>
                         </View>
@@ -1574,7 +1615,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                       <View key={`lang-${idx}`} style={styles.expandedChipSubtle}>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <Ionicons name="language-outline" size={12} color="rgba(255,255,255,0.7)" style={{ marginRight: 3 }} />
-                          <Text style={styles.expandedChipSubtleText}>{lang}</Text>
+                          <Text style={styles.expandedChipSubtleText}>{safeString(lang)}</Text>
                         </View>
                       </View>
                     ))}
@@ -1586,48 +1627,48 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               <View style={styles.expandedSectionBox}>
                 <Text style={styles.expandedSectionHeader}>Lifestyle & Basics</Text>
                 <View style={styles.lifestyleGrid}>
-                  {selectedProfileModal.gender && (
+                  {selectedProfileModal.gender ? (
                     <View style={styles.lifestyleItem}>
                       <Ionicons name="person-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.gender}</Text>
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.gender)}</Text>
                     </View>
-                  )}
-                  {selectedProfileModal.drinkHabit && (
+                  ) : null}
+                  {selectedProfileModal.drinkHabit ? (
                     <View style={styles.lifestyleItem}>
                       <Ionicons name="wine-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.drinkHabit}</Text>
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.drinkHabit)}</Text>
                     </View>
-                  )}
-                  {selectedProfileModal.smokeHabit && (
+                  ) : null}
+                  {selectedProfileModal.smokeHabit ? (
                     <View style={styles.lifestyleItem}>
                       <Ionicons name="flame-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.smokeHabit}</Text>
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.smokeHabit)}</Text>
                     </View>
-                  )}
-                  {selectedProfileModal.exercise && (
+                  ) : null}
+                  {selectedProfileModal.exercise ? (
                     <View style={styles.lifestyleItem}>
                       <Ionicons name="barbell-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.exercise}</Text>
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.exercise)}</Text>
                     </View>
-                  )}
-                  {selectedProfileModal.pets && (
+                  ) : null}
+                  {selectedProfileModal.pets ? (
                     <View style={styles.lifestyleItem}>
                       <Ionicons name="paw-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.pets}</Text>
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.pets)}</Text>
                     </View>
-                  )}
-                  {selectedProfileModal.zodiac && (
+                  ) : null}
+                  {selectedProfileModal.zodiac ? (
                     <View style={styles.lifestyleItem}>
                       <Ionicons name="moon-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>{selectedProfileModal.zodiac}</Text>
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.zodiac)}</Text>
                     </View>
-                  )}
-                  {selectedProfileModal.lookingFor && (
+                  ) : null}
+                  {selectedProfileModal.lookingFor ? (
                     <View style={styles.lifestyleItemFull}>
                       <Ionicons name="heart-circle-outline" size={18} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>Looking for: {selectedProfileModal.lookingFor}</Text>
+                      <Text style={styles.lifestyleLabel}>Looking for: {safeString(selectedProfileModal.lookingFor)}</Text>
                     </View>
-                  )}
+                  ) : null}
                 </View>
               </View>
 
@@ -1671,7 +1712,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
       </Modal>
 
       {/* Match Celebration Dialog */}
-      <Modal visible={!!matchedCelebrationUser} animationType="fade" transparent={true}>
+      <Modal visible={!!matchedCelebrationUser} animationType="fade" transparent={true} onRequestClose={() => setMatchedCelebrationUser(null)}>
         {matchedCelebrationUser && (
           <View style={styles.matchDialogOverlay}>
             <View style={styles.matchDialogContainer}>

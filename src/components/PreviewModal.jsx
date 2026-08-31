@@ -13,6 +13,7 @@ import {
   Alert,
 } from 'react-native';
 import Video from 'react-native-video';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl as checkIsVideoUrl } from '../api/config';
 
 export const PreviewModal = ({
@@ -197,16 +198,24 @@ export const PreviewModal = ({
 
   const formatImageUri = (url) => {
     if (!url) return '';
+    if (typeof url === 'object') {
+      const extracted = url.url || url.uri || url.path || url.secure_url || url.mediaUrl || '';
+      return getImageUrl(extracted);
+    }
     return getImageUrl(url);
   };
 
   if (!visible || photos.length === 0) return null;
 
   const currentMediaUri = formatImageUri(rawPhoto);
-  const avatarUri = getVideoThumbnailUrl(userAvatar || rawPhoto);
+  const avatarUri = getVideoThumbnailUrl(
+    typeof userAvatar === 'object'
+      ? (userAvatar.url || userAvatar.uri || userAvatar.path || '')
+      : (userAvatar || rawPhoto)
+  );
 
   return (
-    <Modal visible={visible} animationType="fade" transparent statusBarTranslucent>
+    <Modal visible={visible} animationType="fade" transparent statusBarTranslucent onRequestClose={onClose}>
       <View style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" />
 

@@ -3421,6 +3421,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             {MOCK_MATCHES[swipeIndex + 1].name}
                             {getCandidateAge(MOCK_MATCHES[swipeIndex + 1]) ? `, ${getCandidateAge(MOCK_MATCHES[swipeIndex + 1])}` : ''}
                           </Text>
+                          {!!(MOCK_MATCHES[swipeIndex + 1] && MOCK_MATCHES[swipeIndex + 1].isEmailVerified) && (
+                            <Ionicons name="checkmark-circle" size={18} color="#0084FF" style={{ marginLeft: 4, marginRight: 4 }} />
+                          )}
                           {!!(MOCK_MATCHES[swipeIndex + 1] && (MOCK_MATCHES[swipeIndex + 1].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex + 1].id || MOCK_MATCHES[swipeIndex + 1]._id || MOCK_MATCHES[swipeIndex + 1].userId)?.toString()])) && (
                             <View style={styles.swipeOnlineBadge}>
                               <View style={styles.swipeOnlineDot} />
@@ -3471,6 +3474,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           {MOCK_MATCHES[swipeIndex].name}
                           {getCandidateAge(MOCK_MATCHES[swipeIndex]) ? `, ${getCandidateAge(MOCK_MATCHES[swipeIndex])}` : ''}
                         </Text>
+                        {!!(MOCK_MATCHES[swipeIndex] && MOCK_MATCHES[swipeIndex].isEmailVerified) && (
+                          <Ionicons name="checkmark-circle" size={18} color="#0084FF" style={{ marginLeft: 4, marginRight: 4 }} />
+                        )}
                         {!!(MOCK_MATCHES[swipeIndex] && (MOCK_MATCHES[swipeIndex].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()])) && (
                           <View style={styles.swipeOnlineBadge}>
                             <View style={styles.swipeOnlineDot} />
@@ -4507,6 +4513,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     <Text style={styles.matchNameTextLarge}>
                       {MOCK_MATCHES[swipeIndex].name}, {MOCK_MATCHES[swipeIndex].age}
                     </Text>
+                    {!!(MOCK_MATCHES[swipeIndex] && MOCK_MATCHES[swipeIndex].isEmailVerified) && (
+                      <Ionicons name="checkmark-circle" size={20} color="#0084FF" style={{ marginLeft: 6, marginRight: 4 }} />
+                    )}
                     {!!(MOCK_MATCHES[swipeIndex] && (MOCK_MATCHES[swipeIndex].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()])) && (
                       <View style={styles.swipeOnlineBadge}>
                         <View style={styles.swipeOnlineDot} />
@@ -4739,6 +4748,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       {selectedLikesProfile.firstName || selectedLikesProfile.name}
                       {selectedLikesProfile.age ? `, ${selectedLikesProfile.age}` : ''}
                     </Text>
+                    {!!(selectedLikesProfile && selectedLikesProfile.isEmailVerified) && (
+                      <Ionicons name="checkmark-circle" size={20} color="#0084FF" style={{ marginLeft: 6, marginRight: 4 }} />
+                    )}
                     {!!(selectedLikesProfile && (selectedLikesProfile.isOnline || onlineUsersMap[(selectedLikesProfile.id || selectedLikesProfile._id || selectedLikesProfile.userId)?.toString()])) && (
                       <View style={styles.swipeOnlineBadge}>
                         <View style={styles.swipeOnlineDot} />

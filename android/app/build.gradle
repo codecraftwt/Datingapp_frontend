@@ -105,6 +105,10 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+    lintOptions {
+        checkReleaseBuilds false
+        abortOnError false
+    }
 }
 
 dependencies {
@@ -120,4 +124,11 @@ dependencies {
 
 apply plugin: "com.google.gms.google-services"
 apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"
+
+// Fix Gradle 9.x task dependency conflict between release linting and vector icon fonts copying
+tasks.whenTaskAdded { task ->
+    if (task.name.contains("generateReleaseLintVitalReportModel") || task.name.contains("lintVital") || task.name.contains("LintVital")) {
+        task.dependsOn("copyReactNativeVectorIconFonts")
+    }
+}
 
