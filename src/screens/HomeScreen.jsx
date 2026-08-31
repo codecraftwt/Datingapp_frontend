@@ -267,6 +267,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [viewMediaModal, setViewMediaModal] = useState({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const chatScrollViewRef = useRef(null);
+  const isSendingMessageRef = useRef(false);
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
@@ -1440,6 +1441,58 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         });
       });
 
+      socketRef.current.on('message_sent', (msgData) => {
+        if (!msgData) return;
+        console.log('Socket.IO message_sent received:', msgData);
+        const tempId = msgData.tempId;
+        const actualMsg = {
+          id: (msgData._id || msgData.id).toString(),
+          sender: 'you',
+          text: msgData.text || '',
+          time: new Date(msgData.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          messageType: msgData.messageType || 'text',
+          mediaUrl: msgData.mediaUrl,
+          fileName: msgData.fileName,
+          fileSize: msgData.fileSize,
+          stickerId: msgData.stickerId,
+          status: msgData.status || 'sent',
+          createdAt: msgData.createdAt || new Date().toISOString(),
+        };
+        const rIdStr = (msgData.receiverId || msgData.receiver)?.toString();
+
+        setChats((prevChats) =>
+          prevChats.map((c) => {
+            const cIdStr = (c.id || c._id || c.userId)?.toString();
+            if (cIdStr === rIdStr) {
+              const msgs = c.messages || [];
+              const exists = msgs.some((m) => m.id === actualMsg.id || (tempId && m.id === tempId));
+              return {
+                ...c,
+                messages: exists
+                  ? msgs.map((m) => (m.id === tempId || m.id === actualMsg.id ? actualMsg : m))
+                  : [...msgs, actualMsg],
+              };
+            }
+            return c;
+          })
+        );
+        setActiveChat((prevActive) => {
+          if (!prevActive) return prevActive;
+          const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+          if (activeIdStr === rIdStr) {
+            const msgs = prevActive.messages || [];
+            const exists = msgs.some((m) => m.id === actualMsg.id || (tempId && m.id === tempId));
+            return {
+              ...prevActive,
+              messages: exists
+                ? msgs.map((m) => (m.id === tempId || m.id === actualMsg.id ? actualMsg : m))
+                : [...msgs, actualMsg],
+            };
+          }
+          return prevActive;
+        });
+      });
+
       socketRef.current.on('receive_message', (msg) => {
         console.log('Socket.IO received message:', msg);
 
@@ -1467,7 +1520,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           const activeId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
           if (activeId === senderIdStr) {
             const existingMsgs = prevActive.messages || [];
-            if (existingMsgs.some((m) => (m.id || m._id)?.toString() === formattedMsg.id)) {
+            const isDup = existingMsgs.some(
+              (m) =>
+                (m.id || m._id)?.toString() === formattedMsg.id ||
+                (m.text === formattedMsg.text && m.sender === 'them' && Math.abs(new Date(m.createdAt || Date.now()) - new Date(formattedMsg.createdAt)) < 5000)
+            );
+            if (isDup) {
               return prevActive;
             }
             return {
@@ -1896,12 +1954,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         setCallSession(null);
       });
 
-      socketRef.current.on('disconnect', () => {
-        console.log('Socket.IO disconnected');
+      const appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
+        console.log('[HomeScreen AppState] State changed to:', nextAppState);
+        if (nextAppState === 'active') {
+          if (socketRef.current) {
+            if (!socketRef.current.connected) {
+              socketRef.current.connect();
+            } else {
+              socketRef.current.emit('ping_presence', currentId);
+            }
+          }
+        } else if (nextAppState === 'background' || nextAppState === 'inactive') {
+          if (socketRef.current && socketRef.current.connected) {
+            socketRef.current.emit('going_offline', currentId);
+          }
+        }
       });
 
       return () => {
+        appStateSubscription.remove();
         if (socketRef.current) {
+          try {
+            socketRef.current.emit('going_offline', currentId);
+          } catch (e) {}
           socketRef.current.disconnect();
         }
       };
@@ -1946,8 +2021,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         apiClient.getChatMessages(partnerId).catch(() => {});
       }
 
-      // Periodically refresh partner's online status every 5 seconds while chatting
-      intervalId = setInterval(checkStatus, 5000);
+      // Periodically refresh partner's online status every 3.5 seconds while chatting
+      intervalId = setInterval(checkStatus, 3500);
     }
 
     return () => {
@@ -2445,10 +2520,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleSendMessage = async (customPayload = null) => {
-    if (!activeChat || !currentUser) return;
+    if (!activeChat || !currentUser || isSendingMessageRef.current) return;
 
     const currentId = currentUser.id || currentUser._id;
     const receiverId = activeChat.id;
+
+    // Set sending lock to prevent rapid double-tap duplicate triggers
+    isSendingMessageRef.current = true;
+    setTimeout(() => {
+      isSendingMessageRef.current = false;
+    }, 600);
 
     // Reset typing status on send
     if (isCurrentlyTypingRef.current) {
@@ -2504,7 +2585,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       return;
     }
 
-    const tempId = 'temp-' + Date.now() + Math.random();
+    const currentText = typedMessage;
+    if (!customPayload) {
+      if (!currentText.trim()) return;
+      setTypedMessage('');
+    }
+
+    const tempId = 'temp-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
 
     let payload = {
       senderId: currentId,
@@ -2515,13 +2602,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (customPayload) {
       payload = { ...payload, ...customPayload };
     } else {
-      if (!typedMessage.trim()) return;
-      payload.text = typedMessage.trim();
+      payload.text = currentText.trim();
       payload.messageType = 'text';
     }
 
     const localMsg = {
       id: tempId,
+      tempId: tempId,
       sender: 'you',
       text: payload.text,
       messageType: payload.messageType || 'text',
@@ -2543,9 +2630,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setChats((prevChats) =>
       prevChats.map((c) => {
         if (isIdMatch(c, receiverId)) {
+          const msgs = c.messages || [];
+          const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
           return {
             ...c,
-            messages: [...(c.messages || []), localMsg],
+            messages: exists ? msgs : [...msgs, localMsg],
           };
         }
         return c;
@@ -2553,24 +2642,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     );
     setActiveChat((prevActive) => {
       if (isIdMatch(prevActive, receiverId)) {
+        const msgs = prevActive.messages || [];
+        const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
         return {
           ...prevActive,
-          messages: [...(prevActive.messages || []), localMsg],
+          messages: exists ? msgs : [...msgs, localMsg],
         };
       }
       return prevActive;
     });
-
-    if (!customPayload) {
-      setTypedMessage('');
-    }
 
     let hasConfirmed = false;
     const handleServerConfirmation = (serverMsg) => {
       if (!serverMsg || hasConfirmed) return;
       hasConfirmed = true;
       const actualMsg = {
-        id: serverMsg._id || serverMsg.id,
+        id: (serverMsg._id || serverMsg.id).toString(),
+        tempId: tempId,
         sender: 'you',
         text: serverMsg.text,
         messageType: serverMsg.messageType || 'text',
@@ -2584,9 +2672,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setChats((prevChats) =>
         prevChats.map((c) => {
           if (isIdMatch(c, receiverId)) {
+            const msgs = c.messages || [];
+            const hasTemp = msgs.some((m) => m.id === tempId || m.tempId === tempId);
             return {
               ...c,
-              messages: (c.messages || []).map((m) => (m.id === tempId ? actualMsg : m)),
+              messages: hasTemp
+                ? msgs.map((m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m))
+                : msgs.some((m) => m.id === actualMsg.id) ? msgs : [...msgs, actualMsg],
             };
           }
           return c;
@@ -2594,9 +2686,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       );
       setActiveChat((prevActive) => {
         if (isIdMatch(prevActive, receiverId)) {
+          const msgs = prevActive.messages || [];
+          const hasTemp = msgs.some((m) => m.id === tempId || m.tempId === tempId);
           return {
             ...prevActive,
-            messages: (prevActive.messages || []).map((m) => (m.id === tempId ? actualMsg : m)),
+            messages: hasTemp
+              ? msgs.map((m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m))
+              : msgs.some((m) => m.id === actualMsg.id) ? msgs : [...msgs, actualMsg],
           };
         }
         return prevActive;
@@ -2611,23 +2707,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       });
 
-      // 2.5s Fallback timer if socket confirmation lags or drops
+      // 5.0s Fallback timer if socket is disconnected / lagging
       setTimeout(() => {
-        if (!hasConfirmed) {
-          console.log('Socket confirmation delayed, triggering REST API sync fallback for tempId:', tempId);
+        if (!hasConfirmed && (!socketRef.current || !socketRef.current.connected)) {
+          console.log('Socket disconnected, triggering REST API sync fallback for tempId:', tempId);
           apiClient.sendMessage(payload).then((res) => {
-            if (res?.data?._id) {
+            if (res?.data?._id || res?.data?.id) {
               handleServerConfirmation(res.data);
             }
           }).catch((err) => {
             console.error('REST API sendMessage fallback error:', err);
           });
         }
-      }, 2500);
+      }, 5000);
     } else {
       console.log('Socket offline: Sending message via REST API Fallback:', payload);
       apiClient.sendMessage(payload).then((res) => {
-        if (res?.data?._id) {
+        if (res?.data?._id || res?.data?.id) {
           handleServerConfirmation(res.data);
         }
       }).catch((err) => {
@@ -3424,7 +3520,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           {!!(MOCK_MATCHES[swipeIndex + 1] && MOCK_MATCHES[swipeIndex + 1].isEmailVerified) && (
                             <Ionicons name="checkmark-circle" size={18} color="#0084FF" style={{ marginLeft: 4, marginRight: 4 }} />
                           )}
-                          {!!(MOCK_MATCHES[swipeIndex + 1] && (MOCK_MATCHES[swipeIndex + 1].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex + 1].id || MOCK_MATCHES[swipeIndex + 1]._id || MOCK_MATCHES[swipeIndex + 1].userId)?.toString()])) && (
+                          {!!(MOCK_MATCHES[swipeIndex + 1] && onlineUsersMap[(MOCK_MATCHES[swipeIndex + 1].id || MOCK_MATCHES[swipeIndex + 1]._id || MOCK_MATCHES[swipeIndex + 1].userId)?.toString()]) && (
                             <View style={styles.swipeOnlineBadge}>
                               <View style={styles.swipeOnlineDot} />
                               <Text style={styles.swipeOnlineText}>Online</Text>
@@ -3477,7 +3573,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         {!!(MOCK_MATCHES[swipeIndex] && MOCK_MATCHES[swipeIndex].isEmailVerified) && (
                           <Ionicons name="checkmark-circle" size={18} color="#0084FF" style={{ marginLeft: 4, marginRight: 4 }} />
                         )}
-                        {!!(MOCK_MATCHES[swipeIndex] && (MOCK_MATCHES[swipeIndex].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()])) && (
+                        {!!(MOCK_MATCHES[swipeIndex] && onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()]) && (
                           <View style={styles.swipeOnlineBadge}>
                             <View style={styles.swipeOnlineDot} />
                             <Text style={styles.swipeOnlineText}>Online</Text>
@@ -3732,9 +3828,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     >
                       {(() => {
                         const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
-                        const isPartnerOnline = partnerId && onlineUsersMap[partnerId] !== undefined
-                          ? !!onlineUsersMap[partnerId]
-                          : !!(activeChat.isOnline || activeChat.user?.isOnline);
+                        const isPartnerOnline = !!(partnerId && onlineUsersMap[partnerId]);
                         return (
                           <>
                             <View style={styles.avatarWrapper}>
@@ -4516,7 +4610,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     {!!(MOCK_MATCHES[swipeIndex] && MOCK_MATCHES[swipeIndex].isEmailVerified) && (
                       <Ionicons name="checkmark-circle" size={20} color="#0084FF" style={{ marginLeft: 6, marginRight: 4 }} />
                     )}
-                    {!!(MOCK_MATCHES[swipeIndex] && (MOCK_MATCHES[swipeIndex].isOnline || onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()])) && (
+                    {!!(MOCK_MATCHES[swipeIndex] && onlineUsersMap[(MOCK_MATCHES[swipeIndex].id || MOCK_MATCHES[swipeIndex]._id || MOCK_MATCHES[swipeIndex].userId)?.toString()]) && (
                       <View style={styles.swipeOnlineBadge}>
                         <View style={styles.swipeOnlineDot} />
                         <Text style={styles.swipeOnlineText}>Online</Text>
@@ -4751,7 +4845,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     {!!(selectedLikesProfile && selectedLikesProfile.isEmailVerified) && (
                       <Ionicons name="checkmark-circle" size={20} color="#0084FF" style={{ marginLeft: 6, marginRight: 4 }} />
                     )}
-                    {!!(selectedLikesProfile && (selectedLikesProfile.isOnline || onlineUsersMap[(selectedLikesProfile.id || selectedLikesProfile._id || selectedLikesProfile.userId)?.toString()])) && (
+                    {!!(selectedLikesProfile && onlineUsersMap[(selectedLikesProfile.id || selectedLikesProfile._id || selectedLikesProfile.userId)?.toString()]) && (
                       <View style={styles.swipeOnlineBadge}>
                         <View style={styles.swipeOnlineDot} />
                         <Text style={styles.swipeOnlineText}>Online</Text>
