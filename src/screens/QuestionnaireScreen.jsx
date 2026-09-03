@@ -240,8 +240,8 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       const photosArray = Array.isArray(initialData.photos)
         ? initialData.photos
         : Array.isArray(initialData.media)
-        ? initialData.media
-        : [];
+          ? initialData.media
+          : [];
 
       for (let i = 1; i < 9; i++) {
         const item = photosArray[i];
@@ -300,14 +300,21 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const isVideoUrl = (url) => {
     if (!url || typeof url !== 'string') return false;
     const lower = url.toLowerCase();
-    return (
+    if (
       lower.endsWith('.mp4') ||
       lower.endsWith('.mov') ||
       lower.endsWith('.webm') ||
       lower.endsWith('.3gp') ||
-      lower.includes('/video/upload/') ||
-      lower.includes('video')
-    );
+      lower.endsWith('.mkv') ||
+      lower.endsWith('.avi') ||
+      lower.includes('/video/upload/')
+    ) {
+      return true;
+    }
+    if (lower.startsWith('data:video/') || lower.includes('mime=video') || lower.includes('type=video')) {
+      return true;
+    }
+    return false;
   };
 
   const processSelectedAsset = async (slotIndex, asset) => {
@@ -399,23 +406,26 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     }
   };
 
-  const requestAndroidCameraPermission = async () => {
+  const requestAndroidCameraPermission = async (includeAudio = false) => {
     if (Platform.OS === 'android') {
       try {
-        const isGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
-        if (isGranted) return true;
+        const cameraGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+        let audioGranted = true;
+        if (includeAudio) {
+          audioGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        }
 
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.CAMERA,
-          {
-            title: 'Camera Permission Required',
-            message: 'Spark Dating App needs camera access so you can capture photos or videos for your profile.',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
-          }
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED || granted === true || granted === 'granted';
+        if (cameraGranted && audioGranted) return true;
+
+        const permissionsToRequest = [PermissionsAndroid.PERMISSIONS.CAMERA];
+        if (includeAudio && !audioGranted) {
+          permissionsToRequest.push(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        }
+
+        const grantedResults = await PermissionsAndroid.requestMultiple(permissionsToRequest);
+        const camOk = grantedResults['android.permission.CAMERA'] === PermissionsAndroid.RESULTS.GRANTED || cameraGranted;
+        const audOk = !includeAudio || grantedResults['android.permission.RECORD_AUDIO'] === PermissionsAndroid.RESULTS.GRANTED || audioGranted;
+        return camOk && audOk;
       } catch (err) {
         console.warn('Camera permission request error:', err);
         return true;
@@ -426,22 +436,26 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
   const openCameraForSlot = async (slotIndex) => {
     const isMainProfileSlot = slotIndex === 0;
-    const hasPermission = await requestAndroidCameraPermission();
+    const hasPermission = await requestAndroidCameraPermission(false);
     if (!hasPermission) {
       console.log('[QuestionnaireScreen] Camera permission check returned false, attempting launchCamera fallback...');
     }
 
-    const cameraOptions = isMainProfileSlot
-      ? { mediaType: 'photo', quality: 0.7, maxWidth: 1080, maxHeight: 1080, cameraType: 'front' }
-      : { mediaType: 'mixed', videoQuality: 'low', quality: 0.7, durationLimit: 15, maxWidth: 1080, maxHeight: 1080 };
+    const cameraOptions = {
+      mediaType: 'photo',
+      quality: 0.7,
+      maxWidth: 1080,
+      maxHeight: 1080,
+      cameraType: isMainProfileSlot ? 'front' : 'back',
+    };
 
     launchCamera(cameraOptions, (response) => {
-      if (response.didCancel) return;
+      if (!response || response.didCancel) return;
       if (response.errorCode) {
         if (response.errorCode === 'permission') {
           Alert.alert(
             'Camera Permission Needed 📷',
-            'Please grant camera permission in your phone settings (Settings > Apps > Dating App > Permissions > Camera) to capture photos.'
+            'Please grant camera permission in your phone settings to capture photos.'
           );
         } else {
           Alert.alert('Camera Error', response.errorMessage || 'Unable to open camera.');
@@ -455,9 +469,13 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   };
 
   const openVideoCameraForSlot = async (slotIndex) => {
-    const hasPermission = await requestAndroidCameraPermission();
+    if (slotIndex === 0) {
+      Alert.alert('Main Profile Picture', 'Slot #1 must be a photo.');
+      return;
+    }
+    const hasPermission = await requestAndroidCameraPermission(true);
     if (!hasPermission) {
-      console.log('[QuestionnaireScreen] Camera permission check returned false, attempting launchCamera fallback...');
+      console.log('[QuestionnaireScreen] Video camera permission check returned false, attempting launchCamera fallback...');
     }
 
     launchCamera(
@@ -468,12 +486,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         cameraType: 'front',
       },
       (response) => {
-        if (response.didCancel) return;
+        if (!response || response.didCancel) return;
         if (response.errorCode) {
           if (response.errorCode === 'permission') {
             Alert.alert(
               'Camera Permission Needed 📹',
-              'Please grant camera permission in your phone settings (Settings > Apps > Dating App > Permissions > Camera) to record video.'
+              'Please grant camera and audio permissions in your phone settings to record video.'
             );
           } else {
             Alert.alert('Camera Error', response.errorMessage || 'Unable to open video camera.');
@@ -487,30 +505,27 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     );
   };
 
-  const requestAndroidGalleryPermission = async () => {
+  const requestAndroidGalleryPermission = async (needVideo = false) => {
     if (Platform.OS === 'android') {
       try {
         if (Platform.Version >= 33) {
           const hasImagesPermission = await PermissionsAndroid.check(
             PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
           );
-          if (hasImagesPermission) return true;
+          const hasVideosPermission = needVideo
+            ? await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO)
+            : true;
 
-          const granted = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-            {
-              title: 'Storage Permission Required 🖼️',
-              message: 'Dating App needs access to your media so you can upload profile photos.',
-              buttonNeutral: 'Ask Me Later',
-              buttonNegative: 'Cancel',
-              buttonPositive: 'OK',
-            }
-          );
-          return (
-            granted === PermissionsAndroid.RESULTS.GRANTED ||
-            granted === true ||
-            granted === 'granted'
-          );
+          if (hasImagesPermission && hasVideosPermission) return true;
+
+          const reqs = [PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES];
+          if (needVideo) reqs.push(PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO);
+
+          const granted = await PermissionsAndroid.requestMultiple(reqs);
+          const imgOk = granted['android.permission.READ_MEDIA_IMAGES'] === PermissionsAndroid.RESULTS.GRANTED || hasImagesPermission;
+          const vidOk = !needVideo || granted['android.permission.READ_MEDIA_VIDEO'] === PermissionsAndroid.RESULTS.GRANTED || hasVideosPermission;
+
+          return imgOk && vidOk;
         } else {
           const hasStoragePermission = await PermissionsAndroid.check(
             PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
@@ -541,17 +556,25 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     return true;
   };
 
-  const openGalleryForSlot = async (slotIndex) => {
+  const openGalleryForSlot = async (slotIndex, mediaType = 'mixed') => {
     try {
+      const isMainProfileSlot = slotIndex === 0;
+      const effectiveType = isMainProfileSlot ? 'photo' : mediaType;
+      const needVideoPerm = effectiveType === 'video' || effectiveType === 'mixed';
+
       try {
-        await requestAndroidGalleryPermission();
+        await requestAndroidGalleryPermission(needVideoPerm);
       } catch (permErr) {
         console.log('Questionnaire gallery permission check warning:', permErr);
       }
-      const isMainProfileSlot = slotIndex === 0;
-      const pickerOptions = isMainProfileSlot
-        ? { mediaType: 'photo', quality: 0.7, maxWidth: 1080, maxHeight: 1080 }
-        : { mediaType: 'mixed', videoQuality: 'low', quality: 0.7, durationLimit: 15, maxWidth: 1080, maxHeight: 1080 };
+
+      const pickerOptions = {
+        mediaType: effectiveType,
+        quality: 0.7,
+        maxWidth: 1080,
+        maxHeight: 1080,
+        selectionLimit: 1,
+      };
 
       launchImageLibrary(pickerOptions, (response) => {
         if (!response || response.didCancel) return;
@@ -560,7 +583,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           if (response.errorCode === 'permission') {
             Alert.alert(
               'Permission Needed 🖼️',
-              'Please grant media storage permission in your phone settings to select photos.'
+              'Please grant media storage permission in your phone settings to select photos or videos.'
             );
           } else {
             Alert.alert('Media Error', response.errorMessage || 'Failed to pick photo or video');
@@ -590,7 +613,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       });
       options.push({
         text: hasExistingItem ? '🖼️ Replace Photo (Gallery)' : '🖼️ Choose Photo from Gallery',
-        onPress: () => openGalleryForSlot(slotIndex),
+        onPress: () => openGalleryForSlot(slotIndex, 'photo'),
       });
     } else {
       options.push({
@@ -602,8 +625,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         onPress: () => openVideoCameraForSlot(slotIndex),
       });
       options.push({
-        text: hasExistingItem ? '🖼️ Replace from Gallery' : '🖼️ Choose Photo / Video from Gallery',
-        onPress: () => openGalleryForSlot(slotIndex),
+        text: hasExistingItem ? '🖼️ Replace Photo from Gallery' : '🖼️ Choose Photo from Gallery',
+        onPress: () => openGalleryForSlot(slotIndex, 'photo'),
+      });
+      options.push({
+        text: hasExistingItem ? '🎬 Replace Video from Gallery' : '🎬 Choose Video from Gallery',
+        onPress: () => openGalleryForSlot(slotIndex, 'video'),
       });
     }
 
@@ -1458,7 +1485,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                               </View>
                             )}
                           </View>
-                          <Text style={styles.storyBadge}>{isVid ? '🎬 Video' : `Photo #${idx + 1}`}</Text>
+                          <Text style={styles.storyBadge}>{isVid ? '🎬 Video' : `Photo${idx + 1}`}</Text>
                         </TouchableOpacity>
                       );
                     })}
@@ -1483,6 +1510,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                                   paused={true}
                                   muted={true}
                                   resizeMode="cover"
+                                  onError={(e) => {
+                                    console.warn(`[QuestionnaireScreen] Video render error for slot #${index + 1}:`, e);
+                                  }}
                                 />
                               ) : (
                                 <Image source={{ uri: thumbUri }} style={styles.slotImage} />

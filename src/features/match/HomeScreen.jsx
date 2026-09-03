@@ -88,7 +88,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const getImageUrl = (url) => {
   if (!url || typeof url !== 'string' || url.trim() === '') {
-    return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=600';
+    return '';
   }
   return formatConfigUrl(url);
 };
@@ -987,9 +987,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       });
 
-      socketRef.current.on('message_delivered', ({ messageId, receiverId }) => {
-        console.log(`Socket.IO message_delivered: ${messageId}`);
-        setChats((prevChats) =>
       socketRef.current.on('message_delivered', ({ messageId, tempId, receiverId, status }) => {
         console.log('Socket.IO message_delivered event received:', messageId, status);
         const newStatus = status || 'delivered';
@@ -1898,30 +1895,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     };
 
     if (socketRef.current && socketRef.current.connected) {
+      console.log('⚡ [PURE SOCKET EVENT] Emitting send_message socket event:', payload);
       socketRef.current.emit('send_message', payload, (res) => {
         if (res && res.status === 'ok' && res.data) {
           handleServerConfirmation(res.data);
         }
       });
-
-      // 2.5s Fallback timer if socket confirmation lags or drops
-      setTimeout(() => {
-        if (!hasConfirmed) {
-          console.log('Socket confirmation delayed, triggering REST API sync fallback for tempId:', tempId);
-          apiClient.sendMessage(payload).then((res) => {
-            if (res?.data?._id) {
-              handleServerConfirmation(res.data);
-            }
-          }).catch((err) => {
-            console.error('REST API sendMessage fallback error:', err);
-          });
-        }
-      }, 2500);
     } else {
       console.log('Socket offline: Sending message via REST API Fallback:', payload);
       apiClient.sendMessage(payload).then((res) => {
-        if (res?.data?._id) {
-          handleServerConfirmation(res.data);
+        const sMsg = res?.data || res;
+        if (sMsg?._id || sMsg?.id) {
+          handleServerConfirmation(sMsg);
         }
       }).catch((err) => {
         console.error('REST API sendMessage error:', err);
@@ -2419,18 +2404,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const startRecording = async () => {
     try {
       if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-          {
-            title: 'Microphone Permission 🎤',
-            message: 'Dating App needs microphone access to record voice notes.',
-            buttonPositive: 'OK',
-            buttonNegative: 'Cancel',
+        const hasMicPerm = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (!hasMicPerm) {
+          const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+          if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+            Alert.alert('Permission Denied', 'Microphone permission is required to record voice notes.');
+            return;
           }
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Permission Denied', 'Microphone permission is required to record voice notes.');
-          return;
         }
       }
 
@@ -2473,7 +2453,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       let recordedPath = '';
       if (audioRecorderPlayerRef.current && typeof audioRecorderPlayerRef.current.stopRecorder === 'function') {
-        recordedPath = await audioRecorderPlayerRef.current.stopRecorder();
+        try {
+          recordedPath = await audioRecorderPlayerRef.current.stopRecorder();
+        } catch (stopErr) {
+          console.warn('stopRecorder exception caught gracefully:', stopErr);
+        }
       }
 
       if (!shouldSend) {
@@ -2482,7 +2466,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         return;
       }
 
-      if (recordingSeconds < 1 && !recordedPath) {
+      if (recordingSeconds < 1 || !recordedPath) {
         Alert.alert('Voice Note Too Short', 'Please hold or tap record for at least 1 second.');
         setRecordingSeconds(0);
         setRecordTime('0:00');
@@ -2495,12 +2479,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         return;
       }
 
+      let formattedUri = audioUri;
+      if (Platform.OS === 'android') {
+        formattedUri = audioUri.startsWith('file://') ? audioUri : `file://${audioUri}`;
+      } else {
+        formattedUri = audioUri.replace('file://', '');
+      }
+
       const ext = Platform.OS === 'ios' ? 'm4a' : 'mp4';
       const fileName = `voice_${Date.now()}.${ext}`;
 
       const formData = new FormData();
       formData.append('file', {
-        uri: Platform.OS === 'android' ? audioUri : audioUri.replace('file://', ''),
+        uri: formattedUri,
         name: fileName,
         type: Platform.OS === 'ios' ? 'audio/m4a' : 'audio/mp4',
       });
@@ -2518,7 +2509,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         });
       } catch (uploadErr) {
         console.error('Error uploading voice note audio:', uploadErr);
-        Alert.alert('Upload Error', 'Failed to upload voice note to server.');
+        Alert.alert('Upload Error', 'Failed to upload voice note to server. Please check your internet connection.');
       }
     } catch (e) {
       console.error('Error stopping voice note recording:', e);
@@ -3386,8 +3377,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           />
         )}
 
-        {/* Voice Call Overlay Modal */}
-        {callState !== 'idle' && callSession && (
+        {/* [VOICE CALLING HIDDEN AS REQUESTED]: Voice Call Overlay Modal commented out
+        callState !== 'idle' && callSession && (
           <Modal
             visible={callState !== 'idle'}
             transparent={true}
@@ -3396,7 +3387,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           >
             <View style={styles.voiceCallOverlay}>
               <View style={styles.voiceCallContent}>
-                {/* Peer Profile Card */}
                 <View style={styles.voiceCallAvatarContainer}>
                   {callSession.image ? (
                     <Image source={{ uri: getImageUrl(callSession.image) }} style={styles.voiceCallAvatar} />
@@ -3423,11 +3413,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   </Text>
                 )}
 
-                {/* Call Controls */}
                 <View style={styles.voiceCallControlsRow}>
                   {callState === 'incoming' ? (
                     <>
-                      {/* Decline Call */}
                       <TouchableOpacity
                         style={[styles.voiceCallButton, styles.voiceCallDeclineButton]}
                         onPress={rejectVoiceCall}
@@ -3437,7 +3425,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         <Text style={styles.voiceCallButtonText}>Decline</Text>
                       </TouchableOpacity>
                       
-                      {/* Accept Call */}
                       <TouchableOpacity
                         style={[styles.voiceCallButton, styles.voiceCallAcceptButton]}
                         onPress={acceptVoiceCall}
@@ -3449,7 +3436,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     </>
                   ) : (
                     <>
-                      {/* Mute Button */}
                       {callState === 'connected' && (
                         <TouchableOpacity
                           style={[styles.voiceCallRoundButton, isCallMuted && styles.voiceCallRoundButtonActive]}
@@ -3465,7 +3451,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         </TouchableOpacity>
                       )}
 
-                      {/* End Call Button */}
                       <TouchableOpacity
                         style={[styles.voiceCallButton, styles.voiceCallEndButton]}
                         onPress={endVoiceCall}
@@ -3475,7 +3460,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         <Text style={styles.voiceCallButtonText}>End Call</Text>
                       </TouchableOpacity>
 
-                      {/* Speaker Button */}
                       {callState === 'connected' && (
                         <TouchableOpacity
                           style={[styles.voiceCallRoundButton, isSpeakerOn && styles.voiceCallRoundButtonActive]}
@@ -3492,7 +3476,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               </View>
             </View>
           </Modal>
-        )}
+        )
+        */}
 
         {/* Modal: Match Screen Overlay Popup */}
         {matchedUser && (
@@ -5913,7 +5898,10 @@ const styles = StyleSheet.create({
     color: '#34B7F1',
   },
   chatMicButton: {
-    padding: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#00A884',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,

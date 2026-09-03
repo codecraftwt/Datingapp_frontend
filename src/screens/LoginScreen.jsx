@@ -335,10 +335,11 @@ export const LoginScreen = ({ onNavigate }) => {
 
             <CustomButton
               title="LOG IN"
-              variant="primary"
+              variant="white"
               loading={loading}
               onPress={handleLogin}
-              style={styles.loginBtn}
+              style={[styles.loginBtn, { backgroundColor: '#FFFFFF' }]}
+              textStyle={{ color: '#FFFFFF', fontWeight: '800' }}
             />
           </View>
 

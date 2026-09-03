@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BASE_URL, CANDIDATE_URLS, LIVE_URL, getBaseUrl, setBaseUrl } from './config';
+import { BASE_URL, CANDIDATE_URLS, LIVE_URL, LOCAL_URL, EMULATOR_URL, NETWORK_URL, getBaseUrl, setBaseUrl } from './config';
 
 let isResolving = false;
 let activeResolvedUrl = null;
@@ -13,11 +13,13 @@ const resolveWorkingBaseUrl = async () => {
   if (isResolving) return getBaseUrl();
   isResolving = true;
 
-  for (const candidate of CANDIDATE_URLS) {
+  const candidateList = [NETWORK_URL, LOCAL_URL, EMULATOR_URL, LIVE_URL];
+
+  for (const candidate of candidateList) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`${candidate}/`, { method: 'GET', signal: controller.signal });
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const res = await fetch(`${candidate}/health`, { method: 'GET', signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok || res.status < 500) {
         activeResolvedUrl = candidate;
@@ -27,11 +29,12 @@ const resolveWorkingBaseUrl = async () => {
         return candidate;
       }
     } catch (err) {
-      // ignore and try next candidate URL
+      // try next candidate
     }
   }
 
-  activeResolvedUrl = getBaseUrl();
+  activeResolvedUrl = LIVE_URL;
+  setBaseUrl(LIVE_URL);
   isResolving = false;
   return activeResolvedUrl;
 };
@@ -79,38 +82,77 @@ const request = async (url, options = {}, isRetry = false) => {
     }
 
     let currentBase = activeResolvedUrl || getBaseUrl();
+    const formatFullUrl = (base, path) => {
+      const b = (base || '').replace(/\/+$/, '');
+      const p = path.startsWith('/') ? path : `/${path}`;
+      return `${b}${p}`;
+    };
 
     let response;
     try {
       const controller = new AbortController();
       const reqTimeout = setTimeout(() => controller.abort(), options.timeout || 15000);
 
-      response = await fetch(`${currentBase}${url}`, {
+      const targetUrl = formatFullUrl(currentBase, url);
+      response = await fetch(targetUrl, {
         ...options,
         headers,
         signal: options.signal || controller.signal,
       });
       clearTimeout(reqTimeout);
     } catch (networkErr) {
+      if (options.signal && options.signal.aborted) {
+        throw networkErr;
+      }
       if (networkErr.name === 'AbortError') {
-        console.warn(`[apiClient] Request to ${currentBase}${url} timed out (15s). Retrying...`);
+        console.warn(`[apiClient] Request to ${formatFullUrl(currentBase, url)} timed out (15s). Retrying...`);
       } else {
-        console.warn(`[apiClient] Network request failed on ${currentBase}${url}. Retrying with auto-resolution...`);
+        console.warn(`[apiClient] Network request failed on ${formatFullUrl(currentBase, url)}. Retrying with auto-resolution...`);
       }
       activeResolvedUrl = null;
       currentBase = await resolveWorkingBaseUrl();
       try {
         const retryController = new AbortController();
         const retryTimeout = setTimeout(() => retryController.abort(), 15000);
-        response = await fetch(`${currentBase}${url}`, {
+        const retryUrl = formatFullUrl(currentBase, url);
+        response = await fetch(retryUrl, {
           ...options,
           headers,
-          signal: options.signal || retryController.signal,
+          signal: retryController.signal,
         });
         clearTimeout(retryTimeout);
       } catch (retryErr) {
-        console.warn(`[apiClient] Connection retry on ${currentBase}${url} failed:`, retryErr.message);
+        if (retryErr.name === 'AbortError') {
+          console.warn(`[apiClient] Connection retry timed out on ${currentBase}${url}`);
+        } else {
+          console.warn(`[apiClient] Connection retry on ${currentBase}${url} failed:`, retryErr.message);
+        }
         throw retryErr;
+      }
+    }
+
+    // Auto-fallback to local backend candidates if remote backend returns 404
+    if (!response.ok && response.status === 404 && currentBase === LIVE_URL && !isRetry) {
+      console.warn(`[apiClient] Remote LIVE_URL returned 404 for ${url}. Trying local backend candidates...`);
+      for (const fallbackUrl of [LOCAL_URL, EMULATOR_URL, NETWORK_URL]) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          const testRes = await fetch(`${fallbackUrl}${url}`, { ...options, headers, signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (testRes.ok || testRes.status < 500) {
+            activeResolvedUrl = fallbackUrl;
+            setBaseUrl(fallbackUrl);
+            const responseText = await testRes.text();
+            try {
+              return JSON.parse(responseText);
+            } catch (e) {
+              return { success: true };
+            }
+          }
+        } catch (fErr) {
+          // try next local fallback candidate
+        }
       }
     }
 
@@ -349,6 +391,25 @@ export const apiClient = {
       method: 'GET',
     });
   },
+  updatePresence: async () => {
+    try {
+      return await request('/api/profile/presence', {
+        method: 'POST',
+      });
+    } catch (err) {
+      return { success: false };
+    }
+  },
+  getOnlineStatusMap: async () => {
+    return await request('/api/profile/online-status', {
+      method: 'GET',
+    });
+  },
+  getUserOnlineStatus: async (userId) => {
+    return await request(`/api/profile/online-status/${userId}`, {
+      method: 'GET',
+    });
+  },
   hideProfileMedia: async (mediaUrl) => {
     return await request('/api/profile/hide-media', {
       method: 'PUT',
@@ -386,9 +447,17 @@ export const apiClient = {
 
   // Chat endpoints
   getMessages: async () => {
-    return await request('/api/chat/messages', {
-      method: 'GET',
-    });
+    try {
+      return await request('/api/chat/messages', {
+        method: 'GET',
+      });
+    } catch (err) {
+      if (err.name === 'AbortError' || err.message?.includes('Aborted') || err.message?.includes('abort')) {
+        console.warn('[apiClient] getMessages request aborted or timed out. Returning empty list.');
+        return [];
+      }
+      throw err;
+    }
   },
   sendMessage: async (body) => {
     return await request('/api/chat/messages', {
@@ -474,11 +543,47 @@ export const apiClient = {
       body: JSON.stringify(body),
     });
   },
+  updateProfileVisibility: async (body) => {
+    return await request('/api/profile/visibility', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+  },
   blockUser: async (body) => {
     return await request('/api/match/block', {
       method: 'POST',
       body: JSON.stringify(body),
     });
+  },
+  getBlockedUsers: async (userId) => {
+    try {
+      const endpoint = userId ? `/api/match/blocked-users/${userId}` : '/api/match/blocked-users';
+      return await request(endpoint, {
+        method: 'GET',
+      });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        const altEndpoint = userId ? `/api/profile/blocked-users/${userId}` : '/api/profile/blocked-users';
+        return await request(altEndpoint, { method: 'GET' });
+      }
+      throw err;
+    }
+  },
+  unblockUser: async (body) => {
+    try {
+      return await request('/api/match/unblock', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        return await request('/api/profile/unblock', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+      }
+      throw err;
+    }
   },
   reportUser: async (body) => {
     return await request('/api/user/report', {
@@ -591,5 +696,8 @@ export const apiClient = {
 
   resetResolvedUrl: () => {
     resetResolvedUrl();
+  },
+  request: async (endpoint, options) => {
+    return await request(endpoint, options);
   },
 };

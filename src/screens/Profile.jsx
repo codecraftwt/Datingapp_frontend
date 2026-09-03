@@ -106,6 +106,117 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [reportedUsersList, setReportedUsersList] = useState([]);
   const [reportedUsersLoading, setReportedUsersLoading] = useState(false);
 
+  // Blocked Users Modal State
+  const [isBlockedUsersModalOpen, setIsBlockedUsersModalOpen] = useState(false);
+  const [blockedUsersList, setBlockedUsersList] = useState([]);
+  const [blockedUsersLoading, setBlockedUsersLoading] = useState(false);
+  const [unblockingUserId, setUnblockingUserId] = useState(null);
+
+  // Profile Privacy & Visibility State
+  const [isProfileHiddenState, setIsProfileHiddenState] = useState(!!userProfile?.isProfileHidden);
+  const [visibilityLoading, setVisibilityLoading] = useState(false);
+
+  useEffect(() => {
+    if (userProfile && userProfile.isProfileHidden !== undefined) {
+      setIsProfileHiddenState(!!userProfile.isProfileHidden);
+    }
+  }, [userProfile]);
+
+  const handleToggleProfileVisibility = async () => {
+    const nextVal = !isProfileHiddenState;
+    const actionText = nextVal ? 'Hide My Profile' : 'Show My Profile';
+    const msgText = nextVal
+      ? 'Hide your profile from candidate discovery & search? Existing matches and chats remain available.'
+      : 'Show your profile in candidate discovery & search again?';
+
+    Alert.alert(
+      `${actionText} 🔒`,
+      msgText,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: nextVal ? 'Hide Profile' : 'Show Profile',
+          onPress: async () => {
+            try {
+              setVisibilityLoading(true);
+              let res;
+              if (typeof apiClient?.updateProfileVisibility === 'function') {
+                res = await apiClient.updateProfileVisibility({ isProfileHidden: nextVal });
+              } else if (typeof apiClient?.request === 'function') {
+                res = await apiClient.request('/api/profile/visibility', {
+                  method: 'PUT',
+                  body: JSON.stringify({ isProfileHidden: nextVal }),
+                });
+              } else {
+                throw new Error('API Client method updateProfileVisibility not ready. Please restart app.');
+              }
+              setIsProfileHiddenState(nextVal);
+              setProfile((prev) => ({ ...prev, isProfileHidden: nextVal }));
+              if (onUpdateProfile) {
+                onUpdateProfile({ ...(userProfile || {}), isProfileHidden: nextVal });
+              }
+              Alert.alert(
+                nextVal ? 'Profile Hidden ' : 'Profile Visible ',
+                res?.message || (nextVal ? 'Profile is now hidden from discovery.' : 'Profile is now visible.')
+              );
+              fetchProfileFromBackend();
+            } catch (err) {
+              console.error('Error toggling profile visibility:', err);
+              Alert.alert('Error', err?.data?.message || err?.message || 'Failed to update profile visibility.');
+            } finally {
+              setVisibilityLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const fetchBlockedUsers = async () => {
+    try {
+      setBlockedUsersLoading(true);
+      const res = await apiClient.getBlockedUsers();
+      const list = res?.blockedUsers || res?.data || [];
+      setBlockedUsersList(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.log('Error fetching blocked users:', err);
+      setBlockedUsersList([]);
+    } finally {
+      setBlockedUsersLoading(false);
+    }
+  };
+
+  const handleOpenBlockedUsersModal = () => {
+    setIsBlockedUsersModalOpen(true);
+    fetchBlockedUsers();
+  };
+
+  const handleUnblockUserInProfile = async (targetUserId, targetName) => {
+    Alert.alert(
+      'Unblock User 🔓',
+      `Are you sure you want to unblock ${targetName}? They will be able to view your profile and message you again.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unblock',
+          onPress: async () => {
+            try {
+              setUnblockingUserId(targetUserId);
+              await apiClient.unblockUser({ targetUserId });
+              setBlockedUsersList((prev) => prev.filter((u) => (u.id || u._id || u.userId)?.toString() !== targetUserId.toString()));
+              Alert.alert('User Unblocked 🔓', `${targetName} has been unblocked.`);
+            } catch (err) {
+              console.log('Error unblocking user:', err);
+              Alert.alert('Error', 'Failed to unblock user.');
+            } finally {
+              setUnblockingUserId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleFetchAndShowReportedUsers = async () => {
     try {
       setReportedUsersLoading(true);
@@ -777,7 +888,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                   <Image source={{ uri: thumb }} style={styles.storyThumb} />
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                     <Ionicons name={isVid ? "videocam-outline" : "camera-outline"} size={10} color="#FFF" style={{ marginRight: 2 }} />
-                    <Text style={styles.storyBadge}>{isVid ? 'Video' : `Photo #${idx + 1}`}</Text>
+                    <Text style={styles.storyBadge}>{isVid ? 'Video' : `Photo${idx + 1}`}</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -832,6 +943,13 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         </View>
 
         {displayData.gender && <Text style={styles.genderSub}>{displayData.gender}</Text>}
+
+        {/* Real-time Online Status Badge */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: 'rgba(56, 239, 125, 0.15)', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 }}>
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#38EF7D', marginRight: 6 }} />
+          <Text style={{ color: '#38EF7D', fontSize: 12, fontWeight: '700' }}>Online</Text>
+        </View>
+
         {displayData.email && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
             <Ionicons name="mail-outline" size={13} color="rgba(255,255,255,0.6)" style={{ marginRight: 5 }} />
@@ -1094,6 +1212,40 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
+          onPress={handleToggleProfileVisibility}
+          disabled={visibilityLoading}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={isProfileHiddenState ? "eye-outline" : "eye-off-outline"}
+            size={22}
+            color={isProfileHiddenState ? "#00E676" : "#FF9500"}
+            style={{ marginRight: 10 }}
+          />
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.actionText}>
+              {isProfileHiddenState ? 'Show My Profile' : 'Hide My Profile'}
+            </Text>
+            <View style={{
+              backgroundColor: isProfileHiddenState ? 'rgba(255, 149, 0, 0.15)' : 'rgba(0, 230, 118, 0.15)',
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: 8,
+              marginLeft: 6,
+            }}>
+              <Text style={{
+                color: isProfileHiddenState ? '#FF9500' : '#00E676',
+                fontSize: 11,
+                fontWeight: '700',
+              }}>
+                {isProfileHiddenState ? '🔒 Hidden' : '👁️ Visible'}
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionRow}
           onPress={() => openGalleryModal(1)}
           activeOpacity={0.7}
         >
@@ -1130,32 +1282,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
-          onPress={async () => {
-            try {
-              setLoading(true);
-              const token = await registerFcmToken();
-              if (token) {
-                Alert.alert(
-                  'Push Notifications Active 🔔',
-                  `Successfully connected device token:\n\n${token.substring(0, 32)}...`
-                );
-              } else {
-                Alert.alert(
-                  'Push Notification Setup',
-                  'Attempted token sync. Please ensure Google Play Services and Notification permissions are enabled.'
-                );
-              }
-            } catch (e) {
-              Alert.alert('Push Token Error', e?.message || 'Failed to sync FCM token');
-            } finally {
-              setLoading(false);
-            }
-          }}
+          onPress={handleOpenBlockedUsersModal}
           activeOpacity={0.7}
         >
-          <Ionicons name="notifications-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
-          <Text style={styles.actionText}>Sync Push Notifications</Text>
+          <Ionicons name="hand-left-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
+          <Text style={styles.actionText}>Blocked Accounts</Text>
         </TouchableOpacity>
+
+
 
         <TouchableOpacity
           style={styles.actionRow}
@@ -1341,6 +1475,135 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               <Text style={styles.reportedCloseBtnText}>CLOSE</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* Blocked Accounts Modal */}
+      <Modal
+        visible={isBlockedUsersModalOpen}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsBlockedUsersModalOpen(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: '#121212', paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 25 : 40) }}>
+          {/* Header */}
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: 20,
+            paddingVertical: 14,
+            borderBottomWidth: 1,
+            borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+          }}>
+            <TouchableOpacity
+              style={{ padding: 6 }}
+              onPress={() => setIsBlockedUsersModalOpen(false)}
+            >
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>Blocked Accounts 🔒</Text>
+            <TouchableOpacity
+              style={{ padding: 6 }}
+              onPress={fetchBlockedUsers}
+            >
+              <Ionicons name="refresh" size={20} color="#FE3C72" />
+            </TouchableOpacity>
+          </View>
+
+          {blockedUsersLoading ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#FE3C72" />
+              <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 12, fontSize: 14 }}>
+                Loading blocked accounts...
+              </Text>
+            </View>
+          ) : blockedUsersList.length === 0 ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
+              <Text style={{ fontSize: 48, marginBottom: 16 }}>🛡️</Text>
+              <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700', textAlign: 'center' }}>
+                No Blocked Accounts
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                You haven't blocked any users yet. Blocked accounts will be listed here with an option to unblock them.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView style={{ flex: 1, paddingHorizontal: 20, paddingTop: 16 }} showsVerticalScrollIndicator={false}>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 16 }}>
+                Showing {blockedUsersList.length} blocked account{blockedUsersList.length > 1 ? 's' : ''}. Unblocking allows them to view your profile and message you.
+              </Text>
+
+              {blockedUsersList.map((item) => {
+                const userId = item.id || item._id || item.userId;
+                const userName = item.firstName || item.name || 'Blocked User';
+                const userAvatar = item.profileImage || (item.photos && item.photos[0]) || null;
+                const isUnblocking = unblockingUserId === userId;
+
+                return (
+                  <View
+                    key={userId}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                      borderRadius: 14,
+                      padding: 14,
+                      marginBottom: 12,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 255, 255, 0.1)',
+                    }}
+                  >
+                    {userAvatar ? (
+                      <Image source={{ uri: getImageUrl(userAvatar) }} style={{ width: 50, height: 50, borderRadius: 25, marginRight: 14 }} />
+                    ) : (
+                      <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#FE3C72', justifyContent: 'center', alignItems: 'center', marginRight: 14 }}>
+                        <Text style={{ color: '#FFF', fontSize: 20, fontWeight: 'bold' }}>
+                          {userName ? userName[0].toUpperCase() : 'U'}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={{ flex: 1, marginRight: 10 }}>
+                      <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }} numberOfLines={1}>
+                        {userName}{item.age ? `, ${item.age}` : ''}
+                      </Text>
+                      {!!item.city && (
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 }}>
+                          📍 {item.city}
+                        </Text>
+                      )}
+                      {!!item.blockReason && (
+                        <Text style={{ color: '#FF3B30', fontSize: 11, marginTop: 2 }}>
+                          Reason: {item.blockReason}
+                        </Text>
+                      )}
+                    </View>
+
+                    <TouchableOpacity
+                      style={{
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
+                        borderRadius: 20,
+                        backgroundColor: '#FE3C72',
+                        opacity: isUnblocking ? 0.6 : 1,
+                      }}
+                      onPress={() => handleUnblockUserInProfile(userId, userName)}
+                      disabled={isUnblocking}
+                      activeOpacity={0.8}
+                    >
+                      {isUnblocking ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>Unblock</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          )}
         </View>
       </Modal>
 

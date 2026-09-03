@@ -155,11 +155,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
     const photosList = rawPhotosList.map(extractPhotoUri).filter(Boolean);
 
     const uniquePhotos = Array.from(new Set(photosList));
-    const avatar = extractPhotoUri(profile.profileImage);
-    const finalPhotos =
-      uniquePhotos.length > 0
-        ? uniquePhotos
-        : [avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
+    const finalPhotos = uniquePhotos.length > 0 ? uniquePhotos : [];
 
     setPreviewMediaModal({
       visible: true,
@@ -749,14 +745,18 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
               >
                 {/* Profile Image & Badges */}
                 <View style={styles.cardHeaderImageRow}>
-                  <Image
-                    source={{
-                      uri: profileImgUri
-                        ? getImageUrl(profileImgUri)
-                        : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'
-                    }}
-                    style={styles.cardAvatar}
-                  />
+                  {profileImgUri ? (
+                    <Image
+                      source={{ uri: getImageUrl(profileImgUri) }}
+                      style={styles.cardAvatar}
+                    />
+                  ) : (
+                    <View style={[styles.cardAvatar, { backgroundColor: '#3A3A48', justifyContent: 'center', alignItems: 'center' }]}>
+                      <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '700' }}>
+                        {(item.firstName || item.name || 'U')[0].toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
                   <View style={styles.cardHeaderMeta}>
                     <View style={styles.nameRow}>
                       <Text style={styles.cardName}>{safeString(item.firstName || item.name)}</Text>
@@ -1487,7 +1487,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                   ];
                   const photos = rawPhotos.map(extractPhotoUri).filter(Boolean);
                   const uniquePhotos = Array.from(new Set(photos));
-                  const displayPhotos = uniquePhotos.length > 0 ? uniquePhotos : ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400'];
+                  const displayPhotos = uniquePhotos;
                   const activePhoto = displayPhotos[activePhotoIndex % displayPhotos.length];
 
                   return (
@@ -1721,14 +1721,18 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
                 You and {matchedCelebrationUser.firstName || matchedCelebrationUser.name} liked each other!
               </Text>
 
-              <Image
-                source={{
-                  uri: matchedCelebrationUser.profileImage
-                    ? getImageUrl(matchedCelebrationUser.profileImage)
-                    : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
-                }}
-                style={styles.matchDialogAvatar}
-              />
+              {matchedCelebrationUser.profileImage ? (
+                <Image
+                  source={{ uri: getImageUrl(matchedCelebrationUser.profileImage) }}
+                  style={styles.matchDialogAvatar}
+                />
+              ) : (
+                <View style={[styles.matchDialogAvatar, { backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={{ color: '#FFF', fontSize: 24, fontWeight: '700' }}>
+                    {(matchedCelebrationUser.firstName || matchedCelebrationUser.name || 'U')[0].toUpperCase()}
+                  </Text>
+                </View>
+              )}
 
               <TouchableOpacity
                 style={styles.matchDialogChatBtn}

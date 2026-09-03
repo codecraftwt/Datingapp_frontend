@@ -23,6 +23,7 @@ export const CustomButton = ({
     variant === 'secondary' && styles.secondaryButton,
     variant === 'accent' && styles.accentButton,
     variant === 'outline' && styles.outlineButton,
+    variant === 'white' && styles.whiteButton,
     isButtonDisabled && styles.disabledButton,
     style,
   ];
@@ -33,6 +34,7 @@ export const CustomButton = ({
     variant === 'secondary' && styles.secondaryText,
     variant === 'accent' && styles.accentText,
     variant === 'outline' && styles.outlineText,
+    variant === 'white' && styles.whiteText,
     isButtonDisabled && styles.disabledText,
     textStyle,
   ];
@@ -95,6 +97,15 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.3)',
     shadowOpacity: 0,
     elevation: 0,
+  },
+  whiteButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  whiteText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   disabledButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
