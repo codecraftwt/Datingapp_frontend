@@ -188,6 +188,10 @@ const request = async (url, options = {}, isRetry = false) => {
     }
     return data;
   } catch (error) {
+    if (error?.name === 'AbortError' || error?.message?.includes('Aborted') || error?.message?.includes('abort')) {
+      console.warn(`[apiClient] Request to ${url} was aborted or timed out.`);
+      throw error;
+    }
     if (!isRetry && (error?.data?.message?.includes('Server error') || error?.message?.includes('500'))) {
       console.warn(`[apiClient] Retrying failed API call on ${url}...`);
       await new Promise((res) => setTimeout(res, 1000));
@@ -466,9 +470,17 @@ export const apiClient = {
     });
   },
   getChatMessages: async (selectedUserId) => {
-    return await request(`/api/chat/messages/${selectedUserId}`, {
-      method: 'GET',
-    });
+    try {
+      return await request(`/api/chat/messages/${selectedUserId}`, {
+        method: 'GET',
+      });
+    } catch (err) {
+      if (err?.name === 'AbortError' || err?.message?.includes('Aborted') || err?.message?.includes('abort')) {
+        console.warn(`[apiClient] getChatMessages request for ${selectedUserId} was aborted or timed out.`);
+        return { success: true, messages: [], isBlockedByMe: false, isBlockedByOther: false };
+      }
+      throw err;
+    }
   },
   editMessage: async ({ messageId, text }) => {
     return await request(`/api/chat/messages/${messageId}`, {

@@ -750,6 +750,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       );
       dispatch(setMessages(rawMsgs));
     } catch (err) {
+      if (err?.name === 'AbortError' || err?.message?.includes('Aborted') || err?.message?.includes('abort')) {
+        return; // Silently ignore cancelled/aborted request
+      }
       console.log('Error fetching chat messages:', err);
     }
   };
@@ -2515,12 +2518,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const found = chatsList.find((c) => c.id === prevActiveChat.id);
         if (found) {
           const extraMsgs = (prevActiveChat.messages || []).filter(
-            (m) => !found.messages.some((f) => String(f.id) === String(m.id))
+            (m) => m.id !== 'match-init' && !found.messages.some((f) => String(f.id) === String(m.id))
           );
+          const combined = [...found.messages, ...extraMsgs];
+          const hasRealMessages = combined.some((m) => m.id !== 'match-init');
+          const cleanMessages = hasRealMessages ? combined.filter((m) => m.id !== 'match-init') : combined;
           return {
             ...found,
             isBlocked: found.isBlocked || prevActiveChat.isBlocked || false,
-            messages: [...found.messages, ...extraMsgs],
+            messages: cleanMessages,
           };
         }
       }
@@ -2552,12 +2558,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     // Maintain any active temp messages & real-time received messages
     setActiveChat((prev) => {
       if (prev && prev.id === activeChat.id) {
-        const extraMsgs = (prev.messages || []).filter(
-          (m) => String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id))
-        );
         if (formatted.length === 0 && prev.messages.some(m => m.id === 'match-init')) {
           return prev;
         }
+        const extraMsgs = (prev.messages || []).filter(
+          (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id)))
+        );
         return {
           ...prev,
           messages: [...formatted, ...extraMsgs],
@@ -2569,12 +2575,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setChats((prevChats) =>
       prevChats.map((c) => {
         if (c.id === activeChat.id) {
-          const extraMsgs = (c.messages || []).filter(
-            (m) => String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id))
-          );
           if (formatted.length === 0 && c.messages.some(m => m.id === 'match-init')) {
             return c;
           }
+          const extraMsgs = (c.messages || []).filter(
+            (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id)))
+          );
           return {
             ...c,
             messages: [...formatted, ...extraMsgs],
@@ -2833,7 +2839,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setChats((prevChats) =>
       prevChats.map((c) => {
         if (isIdMatch(c, receiverId)) {
-          const msgs = c.messages || [];
+          const msgs = (c.messages || []).filter((m) => m.id !== 'match-init');
           const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
           return {
             ...c,
@@ -2845,7 +2851,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     );
     setActiveChat((prevActive) => {
       if (isIdMatch(prevActive, receiverId)) {
-        const msgs = prevActive.messages || [];
+        const msgs = (prevActive.messages || []).filter((m) => m.id !== 'match-init');
         const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
         return {
           ...prevActive,

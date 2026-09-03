@@ -18,6 +18,7 @@ import { apiClient, setAuthToken } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
+import { TopToastBanner } from '../components/TopToastBanner';
 import { registerFcmToken } from '../services/notificationService';
 
 export const LoginScreen = ({ onNavigate }) => {
@@ -26,6 +27,7 @@ export const LoginScreen = ({ onNavigate }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [alreadyLoggedInError, setAlreadyLoggedInError] = useState(false);
+  const [topToast, setTopToast] = useState({ visible: false, message: '', type: 'success' });
 
   // OTP Verification States
   const [showOtpModal, setShowOtpModal] = useState(false);
@@ -72,10 +74,19 @@ export const LoginScreen = ({ onNavigate }) => {
       registerFcmToken().catch((e) => console.log('[LoginScreen] FCM register notice:', e));
 
       if (Platform.OS === 'android') {
-        ToastAndroid.show('Logged in successfully! 👋', ToastAndroid.SHORT);
-      } else {
-        Alert.alert('Login Successful 🎉', 'Welcome back!');
+        try {
+          ToastAndroid.showWithGravityAndOffset(
+            'Logged in successfully.',
+            ToastAndroid.LONG,
+            ToastAndroid.TOP,
+            0,
+            120
+          );
+        } catch (e) {
+          ToastAndroid.show('Logged in successfully.', ToastAndroid.SHORT);
+        }
       }
+      setTopToast({ visible: true, message: 'Logged in successfully.', type: 'success' });
 
       if (onNavigate) {
         if (isReturningUser) {
@@ -421,6 +432,12 @@ export const LoginScreen = ({ onNavigate }) => {
             </ScrollView>
           </KeyboardAvoidingView>
         </Modal>
+        <TopToastBanner
+          visible={topToast.visible}
+          message={topToast.message}
+          type={topToast.type}
+          onHide={() => setTopToast((prev) => ({ ...prev, visible: false }))}
+        />
       </KeyboardAvoidingView>
     </SimulatedGradientBackground>
   );

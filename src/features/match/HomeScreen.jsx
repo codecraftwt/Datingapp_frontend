@@ -1833,9 +1833,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setChats((prevChats) =>
       prevChats.map((c) => {
         if (isIdMatch(c, receiverId)) {
+          const msgs = (c.messages || []).filter((m) => m.id !== 'match-init');
           return {
             ...c,
-            messages: [...(c.messages || []), localMsg],
+            messages: [...msgs, localMsg],
           };
         }
         return c;
@@ -1843,9 +1844,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     );
     setActiveChat((prevActive) => {
       if (isIdMatch(prevActive, receiverId)) {
+        const msgs = (prevActive.messages || []).filter((m) => m.id !== 'match-init');
         return {
           ...prevActive,
-          messages: [...(prevActive.messages || []), localMsg],
+          messages: [...msgs, localMsg],
         };
       }
       return prevActive;

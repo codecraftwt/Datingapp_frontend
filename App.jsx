@@ -14,6 +14,7 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { apiClient } from './src/api/apiClient';
 import { syncUserLocationService } from './src/services/locationService';
 import { registerFcmToken, setupNotificationListeners, displayLocalSystemNotification } from './src/services/notificationService';
+import { TopToastBanner } from './src/components/TopToastBanner';
 
 function MainApp() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -21,6 +22,7 @@ function MainApp() {
   const [screenStack, setScreenStack] = useState(['LOGIN']);
   const [userProfile, setUserProfile] = useState(null);
   const [isConnected, setIsConnected] = useState(true);
+  const [topToast, setTopToast] = useState({ visible: false, message: '', type: 'info' });
 
   const currentScreen = screenStack[screenStack.length - 1] || 'LOGIN';
 
@@ -244,11 +246,23 @@ function MainApp() {
     dispatch(logout());
     setUserProfile(null);
 
+    const logoutMsg = 'Logged out successfully.';
     if (Platform.OS === 'android') {
-      ToastAndroid.show('Logged out successfully. See you soon! 👋', ToastAndroid.SHORT);
+      try {
+        ToastAndroid.showWithGravityAndOffset(
+          logoutMsg,
+          ToastAndroid.LONG,
+          ToastAndroid.TOP,
+          0,
+          120
+        );
+      } catch (e) {
+        ToastAndroid.show(logoutMsg, ToastAndroid.SHORT);
+      }
     } else {
       Alert.alert('Logged Out', 'You have been logged out successfully.');
     }
+    setTopToast({ visible: true, message: logoutMsg, type: 'info' });
 
     navigateTo('LOGIN');
   };
@@ -350,6 +364,12 @@ function MainApp() {
             </Text>
           </View>
         )}
+        <TopToastBanner
+          visible={topToast.visible}
+          message={topToast.message}
+          type={topToast.type}
+          onHide={() => setTopToast((prev) => ({ ...prev, visible: false }))}
+        />
       </View>
     </SafeAreaProvider>
   );
