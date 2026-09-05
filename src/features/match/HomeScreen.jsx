@@ -1467,7 +1467,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setActiveChat((prevActiveChat) => {
       if (prevActiveChat) {
         const found = chatsList.find((c) => c.id === prevActiveChat.id);
-        if (found) return found;
+        if (found) {
+          const prevMsgs = prevActiveChat.messages || [];
+          const foundMsgs = found.messages || [];
+          const isSameLength = foundMsgs.length === prevMsgs.length;
+          const isSameContent = isSameLength && foundMsgs.every((m, idx) => {
+            const p = prevMsgs[idx];
+            return p && String(m.id || m._id) === String(p.id || p._id) && m.text === p.text;
+          });
+          if (isSameContent && found.name === prevActiveChat.name && found.image === prevActiveChat.image) {
+            return prevActiveChat;
+          }
+          return found;
+        }
       }
       return prevActiveChat;
     });
@@ -2483,9 +2495,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       let formattedUri = audioUri;
       if (Platform.OS === 'android') {
-        formattedUri = audioUri.startsWith('file://') ? audioUri : `file://${audioUri}`;
+        const cleanPath = audioUri.replace(/^file:\/*/, '');
+        formattedUri = `file:///${cleanPath}`;
       } else {
-        formattedUri = audioUri.replace('file://', '');
+        formattedUri = audioUri.replace(/^file:\/*/, '');
       }
 
       const ext = Platform.OS === 'ios' ? 'm4a' : 'mp4';

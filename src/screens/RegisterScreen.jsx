@@ -13,6 +13,7 @@ import {
   TextInput,
   PermissionsAndroid,
   Linking,
+  useWindowDimensions,
 } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -24,6 +25,8 @@ import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
 
 export const RegisterScreen = ({ onNavigate, onGoBack }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = Math.min(windowWidth - 32, 600);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [mobile, setMobile] = useState('');
@@ -198,11 +201,11 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
         style={styles.keyboardView}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { alignItems: 'center' }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.topBar}>
+          <View style={[styles.topBar, { width: cardWidth }]}>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => {
@@ -216,7 +219,7 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.headerContainer}>
+          <View style={[styles.headerContainer, { width: cardWidth }]}>
             <View style={styles.logoBadge}>
               <Text style={styles.logoHeart}>✨</Text>
             </View>
@@ -224,7 +227,7 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
             <Text style={styles.subtitle}>Join Spark and discover awesome matches</Text>
           </View>
 
-          <View style={styles.card}>
+          <View style={[styles.card, { width: cardWidth }]}>
             <CustomInput
               label="Full Name"
               iconType="user"

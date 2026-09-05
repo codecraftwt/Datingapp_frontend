@@ -398,13 +398,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     try {
       setLoading(true);
 
-      // Upload image to Cloudinary via Backend API
+      const isVid = isVideoUrl(localUri) || asset.type?.startsWith('video/');
+
+      // Upload image or video to Cloudinary via Backend API
       let finalPhotoUrl = localUri;
       try {
         const formData = new FormData();
-        const ext = 'jpg';
-        const mime = asset.type || 'image/jpeg';
-        const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `photo_${Date.now()}.${ext}`;
+        const ext = isVid ? 'mp4' : 'jpg';
+        const mime = asset.type || (isVid ? 'video/mp4' : 'image/jpeg');
+        const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}.${ext}`;
 
         formData.append('photo', {
           uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
@@ -422,7 +424,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         const errorMsg =
           uploadErr?.data?.message ||
           uploadErr?.message ||
-          'Failed to upload photo to server. Please try again.';
+          'Failed to upload media to server. Please try again.';
 
         Alert.alert('Upload Error', errorMsg);
         setLoading(false);
@@ -441,6 +443,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         profileImage: finalPhotoUrl,
         profileImages: updatedPhotos,
         photos: updatedPhotos,
+        media: updatedPhotos,
       };
 
       setProfile(updatedProfile);
@@ -448,7 +451,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         onUpdateProfile(updatedProfile);
       }
 
-      Alert.alert('Photo Uploaded 📸', 'Your main profile photo has been updated successfully!');
+      Alert.alert(isVid ? 'Video Uploaded 📹' : 'Photo Uploaded 📸', `Your main profile ${isVid ? 'video' : 'photo'} has been updated successfully!`);
     } catch (err) {
       console.log('Error saving new profile media:', err);
     } finally {
@@ -592,7 +595,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       }
 
       const options = {
-        mediaType: 'photo',
+        mediaType: 'mixed',
         quality: 0.8,
         includeBase64: false,
       };
@@ -603,11 +606,11 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           console.warn('Gallery launch response error:', response.errorCode, response.errorMessage);
           if (response.errorCode === 'permission') {
             Alert.alert(
-              'Photo Permission Needed 🖼️',
-              'Please grant photo storage permission in your phone settings to choose photos from gallery.'
+              'Permission Needed 🖼️',
+              'Please grant media storage permission in your phone settings to choose photos or videos from gallery.'
             );
           } else {
-            Alert.alert('Gallery Error', response.errorMessage || 'Failed to pick photo from gallery.');
+            Alert.alert('Gallery Error', response.errorMessage || 'Failed to pick photo or video from gallery.');
           }
           return;
         }
@@ -617,21 +620,21 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       });
     } catch (e) {
       console.error('Exception in openGalleryPicker:', e);
-      Alert.alert('Gallery Error', e?.message || 'Could not open photo gallery.');
+      Alert.alert('Gallery Error', e?.message || 'Could not open media gallery.');
     }
   };
 
   const handleChangeProfilePhoto = () => {
     Alert.alert(
-      'Update Profile Photo 📷',
-      'Choose how you would like to update your profile photo:',
+      'Update Profile Image 📷',
+      'Choose how you would like to update your main profile image or video:',
       [
         {
           text: '📸 Take Photo (Camera)',
           onPress: openCameraPicker,
         },
         {
-          text: '🖼️ Choose from Gallery',
+          text: '🖼️ Choose Photo / Video from Gallery',
           onPress: openGalleryPicker,
         },
         {

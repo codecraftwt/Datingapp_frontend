@@ -91,7 +91,8 @@ const request = async (url, options = {}, isRetry = false) => {
     let response;
     try {
       const controller = new AbortController();
-      const reqTimeout = setTimeout(() => controller.abort(), options.timeout || 15000);
+      const defaultTimeout = isFormData ? 60000 : 15000;
+      const reqTimeout = setTimeout(() => controller.abort(), options.timeout || defaultTimeout);
 
       const targetUrl = formatFullUrl(currentBase, url);
       response = await fetch(targetUrl, {
@@ -105,7 +106,7 @@ const request = async (url, options = {}, isRetry = false) => {
         throw networkErr;
       }
       if (networkErr.name === 'AbortError') {
-        console.warn(`[apiClient] Request to ${formatFullUrl(currentBase, url)} timed out (15s). Retrying...`);
+        console.warn(`[apiClient] Request to ${formatFullUrl(currentBase, url)} timed out. Retrying...`);
       } else {
         console.warn(`[apiClient] Network request failed on ${formatFullUrl(currentBase, url)}. Retrying with auto-resolution...`);
       }

@@ -53,13 +53,13 @@ export const isVideoUrl = (url) => {
   if (!url || typeof url !== 'string') return false;
   const lower = url.toLowerCase();
   return (
-    lower.endsWith('.mp4') ||
-    lower.endsWith('.mov') ||
-    lower.endsWith('.webm') ||
-    lower.endsWith('.3gp') ||
-    lower.endsWith('.mkv') ||
     lower.includes('/video/upload/') ||
-    lower.includes('video')
+    lower.includes('/video/') ||
+    lower.includes('video') ||
+    lower.startsWith('data:video/') ||
+    lower.includes('mime=video') ||
+    lower.includes('type=video') ||
+    /\.(mp4|mov|webm|3gp|mkv|avi|m4v|flv)($|\?|#)/i.test(lower)
   );
 };
 
@@ -69,11 +69,11 @@ export const getVideoThumbnailUrl = (url) => {
   if (typeof fullUrl !== 'string') return fullUrl;
 
   const lower = fullUrl.toLowerCase();
-  if (lower.includes('/video/upload/')) {
+  if (lower.includes('/video/upload/') || lower.includes('/video/')) {
     // Transform Cloudinary video URL into a JPG video thumbnail frame
     let thumbnailUrl = fullUrl.replace('/video/upload/', '/video/upload/so_0,f_jpg/');
-    if (/\.(mp4|mov|webm|3gp|mkv)($|\?)/i.test(thumbnailUrl)) {
-      thumbnailUrl = thumbnailUrl.replace(/\.(mp4|mov|webm|3gp|mkv)($|\?)/i, '.jpg$2');
+    if (/\.(mp4|mov|webm|3gp|mkv|avi|m4v|flv)($|\?|#)/i.test(thumbnailUrl)) {
+      thumbnailUrl = thumbnailUrl.replace(/\.(mp4|mov|webm|3gp|mkv|avi|m4v|flv)($|\?|#)/i, '.jpg$2');
     } else if (!thumbnailUrl.endsWith('.jpg') && !thumbnailUrl.endsWith('.jpeg')) {
       thumbnailUrl = `${thumbnailUrl}.jpg`;
     }
@@ -81,3 +81,4 @@ export const getVideoThumbnailUrl = (url) => {
   }
   return fullUrl;
 };
+

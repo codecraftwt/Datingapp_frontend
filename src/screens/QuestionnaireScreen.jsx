@@ -158,6 +158,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const [photos, setPhotos] = useState(Array(9).fill(null));
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
   const [uploadingSlotIndex, setUploadingSlotIndex] = useState(null);
+  const [activePickerSlotIndex, setActivePickerSlotIndex] = useState(null);
   const [loading, setLoading] = useState(false);
 
   // Dynamic Options state fetched from Backend API
@@ -202,6 +203,26 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       if (initialData.bdayDay) setBdayDay(initialData.bdayDay);
       if (initialData.bdayMonth) setBdayMonth(initialData.bdayMonth);
       if (initialData.bdayYear) setBdayYear(initialData.bdayYear);
+
+      const dobVal = initialData.dob || initialData.dateOfBirth;
+      if (dobVal && (!initialData.bdayDay || !initialData.bdayYear)) {
+        if (typeof dobVal === 'string' && dobVal.includes('-')) {
+          const parts = dobVal.split('T')[0].split('-');
+          if (parts.length === 3) {
+            setBdayYear(parts[0]);
+            setBdayMonth(parts[1]);
+            setBdayDay(parts[2]);
+          }
+        } else {
+          const d = new Date(dobVal);
+          if (!isNaN(d.getTime())) {
+            setBdayDay(String(d.getDate()).padStart(2, '0'));
+            setBdayMonth(String(d.getMonth() + 1).padStart(2, '0'));
+            setBdayYear(String(d.getFullYear()));
+          }
+        }
+      }
+
       if (initialData.gender) setGender(initialData.gender);
       if (initialData.interestedIn) setInterestedIn(initialData.interestedIn);
       if (initialData.orientation) setOrientation(initialData.orientation);
@@ -224,27 +245,34 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       if (initialData.languages && Array.isArray(initialData.languages)) setSelectedLanguages(initialData.languages);
 
       // Populate 9 photos grid with 1-to-1 index matching:
-      // Slot #1 (index 0) reads ONLY from profileImage (POST /api/profile/main-photo)
+      // Slots can contain both photos and videos.
+      // Prioritize media/profileImages array (which holds all slot items 1-to-1) before falling back to photos.
       const initialGrid = Array(9).fill(null);
+      const mediaList = (
+        Array.isArray(initialData.media) && initialData.media.length > 0
+          ? initialData.media
+          : Array.isArray(initialData.profileImages) && initialData.profileImages.length > 0
+            ? initialData.profileImages
+            : Array.isArray(initialData.photos)
+              ? initialData.photos
+              : []
+      );
+
       if (
         initialData.profileImage &&
         typeof initialData.profileImage === 'string' &&
         initialData.profileImage.trim().length > 0
       ) {
         initialGrid[0] = initialData.profileImage;
+      } else if (mediaList[0] && typeof mediaList[0] === 'string' && mediaList[0].trim().length > 0) {
+        initialGrid[0] = mediaList[0];
       } else {
         initialGrid[0] = null; // Strictly BLANK if no main profile photo exists!
       }
 
-      // Slots #2 through #9 (indices 1 to 8) read strictly from photos[1..8] / media[1..8]
-      const photosArray = Array.isArray(initialData.photos)
-        ? initialData.photos
-        : Array.isArray(initialData.media)
-          ? initialData.media
-          : [];
-
+      // Slots #2 through #9 (indices 1 to 8) read strictly from mediaList[1..8]
       for (let i = 1; i < 9; i++) {
-        const item = photosArray[i];
+        const item = mediaList[i];
         if (item && typeof item === 'string' && item.trim().length > 0) {
           initialGrid[i] = item;
         } else {
@@ -255,6 +283,22 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       setPhotos(initialGrid);
     } else {
       setPhotos(Array(9).fill(null));
+    }
+  }, [initialData]);
+
+  // Fallback profile fetch if initialData is null on mount
+  useEffect(() => {
+    if (!initialData) {
+      apiClient.getProfile().then((res) => {
+        const u = res?.user || res?.data?.user || res;
+        if (u) {
+          if (u.firstName || u.name) setFirstName(u.firstName || u.name);
+          if (u.gender) setGender(u.gender);
+          if (u.bdayDay) setBdayDay(u.bdayDay);
+          if (u.bdayMonth) setBdayMonth(u.bdayMonth);
+          if (u.bdayYear) setBdayYear(u.bdayYear);
+        }
+      }).catch((e) => console.log('Error fetching user profile fallback in QuestionnaireScreen:', e));
     }
   }, [initialData]);
 
@@ -300,21 +344,15 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const isVideoUrl = (url) => {
     if (!url || typeof url !== 'string') return false;
     const lower = url.toLowerCase();
-    if (
-      lower.endsWith('.mp4') ||
-      lower.endsWith('.mov') ||
-      lower.endsWith('.webm') ||
-      lower.endsWith('.3gp') ||
-      lower.endsWith('.mkv') ||
-      lower.endsWith('.avi') ||
-      lower.includes('/video/upload/')
-    ) {
-      return true;
-    }
-    if (lower.startsWith('data:video/') || lower.includes('mime=video') || lower.includes('type=video')) {
-      return true;
-    }
-    return false;
+    return (
+      lower.includes('/video/upload/') ||
+      lower.includes('/video/') ||
+      lower.includes('video') ||
+      lower.startsWith('data:video/') ||
+      lower.includes('mime=video') ||
+      lower.includes('type=video') ||
+      /\.(mp4|mov|webm|3gp|mkv|avi|m4v|flv)($|\?|#)/i.test(lower)
+    );
   };
 
   const processSelectedAsset = async (slotIndex, asset) => {
@@ -322,15 +360,6 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     const isMainProfileSlot = slotIndex === 0;
     const localUri = asset.uri;
     const isVideo = asset.type?.startsWith('video/') || isVideoUrl(asset.fileName || localUri);
-
-    // Slot #1 (Main Profile Picture) MUST be a photo ONLY
-    if (isMainProfileSlot && isVideo) {
-      Alert.alert(
-        'Main Profile Picture (Slot #1)',
-        'Your main profile picture (Slot #1) must be a photo. You can upload video clips in slots #2 through #9.'
-      );
-      return;
-    }
 
     // If video is longer than 15s, backend Cloudinary transformation automatically trims to first 15s
     if (isVideo && asset.duration && asset.duration > 15) {
@@ -469,10 +498,6 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   };
 
   const openVideoCameraForSlot = async (slotIndex) => {
-    if (slotIndex === 0) {
-      Alert.alert('Main Profile Picture', 'Slot #1 must be a photo.');
-      return;
-    }
     const hasPermission = await requestAndroidCameraPermission(true);
     if (!hasPermission) {
       console.log('[QuestionnaireScreen] Video camera permission check returned false, attempting launchCamera fallback...');
@@ -558,8 +583,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
   const openGalleryForSlot = async (slotIndex, mediaType = 'mixed') => {
     try {
-      const isMainProfileSlot = slotIndex === 0;
-      const effectiveType = isMainProfileSlot ? 'photo' : mediaType;
+      const effectiveType = mediaType || 'mixed';
       const needVideoPerm = effectiveType === 'video' || effectiveType === 'mixed';
 
       try {
@@ -601,60 +625,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   };
 
   const handlePickImageForSlot = (slotIndex) => {
-    const isMainProfileSlot = slotIndex === 0;
-    const hasExistingItem = photos[slotIndex] && typeof photos[slotIndex] === 'string' && photos[slotIndex].trim().length > 0;
-
-    const options = [];
-
-    if (isMainProfileSlot) {
-      options.push({
-        text: hasExistingItem ? '📸 Replace Photo (Camera)' : '📸 Take Photo (Camera)',
-        onPress: () => openCameraForSlot(slotIndex),
-      });
-      options.push({
-        text: hasExistingItem ? '🖼️ Replace Photo (Gallery)' : '🖼️ Choose Photo from Gallery',
-        onPress: () => openGalleryForSlot(slotIndex, 'photo'),
-      });
-    } else {
-      options.push({
-        text: hasExistingItem ? '📸 Replace with Photo (Camera)' : '📸 Take Photo (Camera)',
-        onPress: () => openCameraForSlot(slotIndex),
-      });
-      options.push({
-        text: hasExistingItem ? '🎥 Replace with Video Clip (Camera)' : '🎥 Record Video Clip (Camera)',
-        onPress: () => openVideoCameraForSlot(slotIndex),
-      });
-      options.push({
-        text: hasExistingItem ? '🖼️ Replace Photo from Gallery' : '🖼️ Choose Photo from Gallery',
-        onPress: () => openGalleryForSlot(slotIndex, 'photo'),
-      });
-      options.push({
-        text: hasExistingItem ? '🎬 Replace Video from Gallery' : '🎬 Choose Video from Gallery',
-        onPress: () => openGalleryForSlot(slotIndex, 'video'),
-      });
-    }
-
-    if (hasExistingItem) {
-      options.push({
-        text: '🗑️ Remove Item',
-        style: 'destructive',
-        onPress: () => handleRemovePhotoSlot(slotIndex),
-      });
-    }
-
-    options.push({
-      text: 'Cancel',
-      style: 'cancel',
-    });
-
-    Alert.alert(
-      isMainProfileSlot ? 'Main Profile Photo (Slot #1) 📷' : `Manage Slot #${slotIndex + 1} 📷`,
-      isMainProfileSlot
-        ? 'Slot #1 is your main profile picture and must be a photo.'
-        : (hasExistingItem ? 'Choose an action for this slot:' : 'Choose how you would like to add media to this slot:'),
-      options,
-      { cancelable: true }
-    );
+    setActivePickerSlotIndex(slotIndex);
   };
 
   const handleRemovePhotoSlot = (slotIndex) => {
@@ -887,7 +858,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   activeOpacity={0.8}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="log-out-outline" size={16} color="#FF3B30" style={{ marginRight: 4 }} />
+                    <Ionicons name="log-out-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
                     <Text style={styles.logoutHeaderBtnText}>Log Out</Text>
                   </View>
                 </TouchableOpacity>
@@ -1493,7 +1464,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   {/* 9 Photo & Video Slots Grid */}
                   <Text style={styles.inputLabel}>Upload Photos & Preview Videos (Up to 9 Slots)</Text>
-                  <Text style={styles.gridSubtext}>Slot #1 is your Main Profile Picture (Photo only). Slots #2 through #9 support photos & short video clips (up to 15s).</Text>
+                  <Text style={styles.gridSubtext}>Slot #1 is your Main Profile Image. All slots support photos & short video clips (up to 15s).</Text>
 
                   <View style={styles.gridContainer}>
                     {photos.map((photoUri, index) => {
@@ -1502,24 +1473,34 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                       return (
                         <View key={index} style={[styles.gridSlot, { width: slotWidth, height: slotHeight }]}>
                           {photoUri ? (
-                            <View style={styles.slotImageWrapper}>
+                            <TouchableOpacity
+                              style={styles.slotImageWrapper}
+                              onPress={() => handlePickImageForSlot(index)}
+                              activeOpacity={0.85}
+                            >
                               {isVid ? (
-                                <Video
-                                  source={{ uri: photoUri }}
-                                  style={styles.slotImage}
-                                  paused={true}
-                                  muted={true}
-                                  resizeMode="cover"
-                                  onError={(e) => {
-                                    console.warn(`[QuestionnaireScreen] Video render error for slot #${index + 1}:`, e);
-                                  }}
-                                />
+                                <View style={{ width: '100%', height: '100%', position: 'relative' }}>
+                                  <Image source={{ uri: thumbUri }} style={styles.slotImage} resizeMode="cover" />
+                                  <View style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    backgroundColor: 'rgba(0,0,0,0.3)',
+                                    borderRadius: 12,
+                                  }}>
+                                    <Ionicons name="play-circle" size={32} color="#FFFFFF" />
+                                  </View>
+                                </View>
                               ) : (
-                                <Image source={{ uri: thumbUri }} style={styles.slotImage} />
+                                <Image source={{ uri: thumbUri }} style={styles.slotImage} resizeMode="cover" />
                               )}
                               {isVid ? (
-                                <View style={[styles.mainBadge, { backgroundColor: '#3897F0' }]}>
-                                  <Text style={styles.mainBadgeText}>📹 Video</Text>
+                                <View style={[styles.mainBadge, { backgroundColor: index === 0 ? '#FE3C72' : '#3897F0' }]}>
+                                  <Text style={styles.mainBadgeText}>{index === 0 ? 'Main 📹 Video' : '📹 Video'}</Text>
                                 </View>
                               ) : index === 0 ? (
                                 <View style={styles.mainBadge}>
@@ -1538,7 +1519,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                               >
                                 <Text style={styles.deleteSlotText}>✕</Text>
                               </TouchableOpacity>
-                            </View>
+                            </TouchableOpacity>
                           ) : (
                             <TouchableOpacity
                               style={styles.emptySlotBtn}
@@ -1594,6 +1575,139 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           }
         }}
       />
+
+      {/* Custom Media Option Picker Modal for Slots 1 to 9 */}
+      <Modal
+        visible={activePickerSlotIndex !== null}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setActivePickerSlotIndex(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setActivePickerSlotIndex(null)}
+        >
+          <View style={styles.pickerModalContent} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalDragHandle} />
+            <Text style={styles.pickerModalTitle}>
+              {activePickerSlotIndex === 0
+                ? 'Main Profile Image (Slot #1)'
+                : `Manage Slot #${activePickerSlotIndex !== null ? activePickerSlotIndex + 1 : 1}`}
+            </Text>
+            <Text style={styles.pickerModalSubtitle}>
+              Select photos or short video clips (up to 15s) from your camera or gallery.
+            </Text>
+
+            <View style={styles.pickerOptionsContainer}>
+              {/* Photo Camera */}
+              <TouchableOpacity
+                style={styles.pickerOptionCard}
+                onPress={() => {
+                  const idx = activePickerSlotIndex;
+                  setActivePickerSlotIndex(null);
+                  openCameraForSlot(idx);
+                }}
+              >
+                <Ionicons name="camera-outline" size={22} color="#FE3C72" style={{ marginRight: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickerOptionTitle}>Take Photo (Camera)</Text>
+                  <Text style={styles.pickerOptionSub}>Capture a new photo with your camera</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Photo Gallery */}
+              <TouchableOpacity
+                style={styles.pickerOptionCard}
+                onPress={() => {
+                  const idx = activePickerSlotIndex;
+                  setActivePickerSlotIndex(null);
+                  openGalleryForSlot(idx, 'photo');
+                }}
+              >
+                <Ionicons name="images-outline" size={22} color="#FE3C72" style={{ marginRight: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickerOptionTitle}>Choose Photo from Gallery</Text>
+                  <Text style={styles.pickerOptionSub}>Select a photo from device storage</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Video Options for all slots */}
+              <TouchableOpacity
+                style={[styles.pickerOptionCard, { borderColor: 'rgba(56, 151, 240, 0.4)', backgroundColor: 'rgba(56, 151, 240, 0.12)' }]}
+                onPress={() => {
+                  const idx = activePickerSlotIndex;
+                  setActivePickerSlotIndex(null);
+                  openGalleryForSlot(idx, 'video');
+                }}
+              >
+                <Ionicons name="videocam-outline" size={22} color="#3897F0" style={{ marginRight: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickerOptionTitle}>Choose Video from Gallery 🎬</Text>
+                  <Text style={styles.pickerOptionSub}>Select a video clip from gallery (up to 15s)</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.pickerOptionCard}
+                onPress={() => {
+                  const idx = activePickerSlotIndex;
+                  setActivePickerSlotIndex(null);
+                  openVideoCameraForSlot(idx);
+                }}
+              >
+                <Ionicons name="film-outline" size={22} color="#3897F0" style={{ marginRight: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickerOptionTitle}>Record Video Clip (Camera)</Text>
+                  <Text style={styles.pickerOptionSub}>Record a short video clip with camera</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.pickerOptionCard}
+                onPress={() => {
+                  const idx = activePickerSlotIndex;
+                  setActivePickerSlotIndex(null);
+                  openGalleryForSlot(idx, 'mixed');
+                }}
+              >
+                <Ionicons name="folder-open-outline" size={22} color="#00E676" style={{ marginRight: 12 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickerOptionTitle}>Browse All Gallery Media (Photos & Videos)</Text>
+                  <Text style={styles.pickerOptionSub}>Select any photo or video from gallery</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Remove/Clear Slot option if slot has content */}
+              {activePickerSlotIndex !== null && photos[activePickerSlotIndex] && (
+                <TouchableOpacity
+                  style={[styles.pickerOptionCard, { backgroundColor: 'rgba(255, 59, 48, 0.15)', borderColor: 'rgba(255, 59, 48, 0.4)' }]}
+                  onPress={() => {
+                    const idx = activePickerSlotIndex;
+                    setActivePickerSlotIndex(null);
+                    handleRemovePhotoSlot(idx);
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={22} color="#FF3B30" style={{ marginRight: 12 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pickerOptionTitle, { color: '#FF3B30' }]}>
+                      {activePickerSlotIndex === 0 ? 'Remove Main Photo' : `Clear Slot #${activePickerSlotIndex + 1}`}
+                    </Text>
+                    <Text style={[styles.pickerOptionSub, { color: 'rgba(255, 59, 48, 0.8)' }]}>Delete item from this slot</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <TouchableOpacity
+              style={styles.pickerCancelBtn}
+              onPress={() => setActivePickerSlotIndex(null)}
+            >
+              <Text style={styles.pickerCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SimulatedGradientBackground>
   );
 };
@@ -2139,15 +2253,88 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 59, 48, 0.15)',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 59, 48, 0.4)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   logoutHeaderBtnText: {
-    color: '#FF3B30',
+    color: '#FFFFFF',
     fontSize: 13,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  pickerModalContent: {
+    width: '100%',
+    maxHeight: '85%',
+    backgroundColor: '#1C1C28',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  modalDragHandle: {
+    width: 38,
+    height: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 3,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  pickerModalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  pickerModalSubtitle: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  pickerOptionsContainer: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  pickerOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  pickerOptionTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pickerOptionSub: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  pickerCancelBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  pickerCancelText: {
+    color: '#FFFFFF',
+    fontSize: 15,
     fontWeight: '700',
   },
 });

@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ToastAndroid,
+  useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch } from 'react-redux';
@@ -22,6 +23,8 @@ import { TopToastBanner } from '../components/TopToastBanner';
 import { registerFcmToken } from '../services/notificationService';
 
 export const LoginScreen = ({ onNavigate }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = Math.min(windowWidth - 32, 480);
   const dispatch = useDispatch();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -280,11 +283,11 @@ export const LoginScreen = ({ onNavigate }) => {
         style={styles.keyboardView}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { alignItems: 'center' }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.headerContainer}>
+          <View style={[styles.headerContainer, { width: cardWidth }]}>
             <View style={styles.logoBadge}>
               <Text style={styles.logoHeart}>🔥</Text>
             </View>
@@ -292,7 +295,7 @@ export const LoginScreen = ({ onNavigate }) => {
             <Text style={styles.subtitle}>Find your true connection today</Text>
           </View>
 
-          <View style={styles.card}>
+          <View style={[styles.card, { width: cardWidth }]}>
             <Text style={styles.cardTitle}>Welcome Back</Text>
 
             {/* Inline warning banner when user is already logged in elsewhere */}
@@ -350,11 +353,11 @@ export const LoginScreen = ({ onNavigate }) => {
               loading={loading}
               onPress={handleLogin}
               style={[styles.loginBtn, { backgroundColor: '#FFFFFF' }]}
-              textStyle={{ color: '#FFFFFF', fontWeight: '800' }}
+              textStyle={{ color: '#000000', fontWeight: '800' }}
             />
           </View>
 
-          <View style={styles.footerContainer}>
+          <View style={[styles.footerContainer, { width: cardWidth }]}>
             <Text style={styles.footerText}>Don't have an account?</Text>
             <TouchableOpacity
               onPress={() => onNavigate && onNavigate('REGISTER')}

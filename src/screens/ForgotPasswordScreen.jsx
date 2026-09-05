@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ToastAndroid,
+  useWindowDimensions,
 } from 'react-native';
 import { apiClient } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
@@ -16,6 +17,8 @@ import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
 
 export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = Math.min(windowWidth - 32, 480);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -161,11 +164,11 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
         style={styles.keyboardView}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { alignItems: 'center' }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.topBar}>
+          <View style={[styles.topBar, { width: cardWidth }]}>
             <TouchableOpacity
               style={styles.backButton}
               onPress={() => {
@@ -183,7 +186,7 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.headerContainer}>
+          <View style={[styles.headerContainer, { width: cardWidth }]}>
             <View style={styles.logoBadge}>
               <Text style={styles.logoHeart}>🔑</Text>
             </View>
@@ -197,7 +200,7 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
             </Text>
           </View>
 
-          <View style={styles.card}>
+          <View style={[styles.card, { width: cardWidth }]}>
             {step === 1 && (
               <>
                 <CustomInput

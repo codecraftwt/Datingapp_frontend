@@ -171,6 +171,7 @@ function MainApp() {
             setUserProfile(storedProfile ? JSON.parse(storedProfile) : parsedUser);
             navigateTo('HOME');
           } else {
+            setUserProfile(parsedUser);
             navigateTo('QUESTIONNAIRE');
           }
 
@@ -315,6 +316,7 @@ function MainApp() {
             onGoBack={goBack}
             onFinish={handleFinishQuestionnaire}
             onLogout={handleLogout}
+            initialData={userProfile}
           />
         );
       case 'HOME':

@@ -724,11 +724,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (!prev) return prev;
         const pId = (prev.id || prev._id || prev.userId)?.toString();
         if (pId === partnerId) {
+          const hasMatchInit = (prev.messages || []).some((m) => m.id === 'match-init');
+          const finalMsgs = (formattedMsgs.length === 0 && hasMatchInit) ? prev.messages : formattedMsgs;
+          const prevMsgs = prev.messages || [];
+          const msgsEqual = prevMsgs.length === finalMsgs.length &&
+            prevMsgs.every((m, i) => m.id === finalMsgs[i]?.id && m.text === finalMsgs[i]?.text);
+          const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : prev.isBlocked;
+          const isBlockedByOtherVal = isBlockedByOther !== undefined ? isBlockedByOther : prev.isBlockedByOther;
+          if (msgsEqual && isBlockedByMeVal === prev.isBlocked && isBlockedByOtherVal === prev.isBlockedByOther) {
+            return prev;
+          }
           return {
             ...prev,
-            messages: formattedMsgs,
-            ...(isBlockedByMe !== undefined ? { isBlocked: isBlockedByMe } : {}),
-            ...(isBlockedByOther !== undefined ? { isBlockedByOther: isBlockedByOther } : {}),
+            messages: finalMsgs,
+            isBlocked: isBlockedByMeVal,
+            isBlockedByOther: isBlockedByOtherVal,
           };
         }
         return prev;
@@ -738,11 +748,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         prevChats.map((c) => {
           const cId = (c.id || c._id || c.userId)?.toString();
           if (cId === partnerId) {
+            const hasMatchInit = (c.messages || []).some((m) => m.id === 'match-init');
+            const finalMsgs = (formattedMsgs.length === 0 && hasMatchInit) ? c.messages : formattedMsgs;
+            const prevMsgs = c.messages || [];
+            const msgsEqual = prevMsgs.length === finalMsgs.length &&
+              prevMsgs.every((m, i) => m.id === finalMsgs[i]?.id && m.text === finalMsgs[i]?.text);
+            const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : c.isBlocked;
+            const isBlockedByOtherVal = isBlockedByOther !== undefined ? isBlockedByOther : c.isBlockedByOther;
+            if (msgsEqual && isBlockedByMeVal === c.isBlocked && isBlockedByOtherVal === c.isBlockedByOther) {
+              return c;
+            }
             return {
               ...c,
-              messages: formattedMsgs,
-              ...(isBlockedByMe !== undefined ? { isBlocked: isBlockedByMe } : {}),
-              ...(isBlockedByOther !== undefined ? { isBlockedByOther: isBlockedByOther } : {}),
+              messages: finalMsgs,
+              isBlocked: isBlockedByMeVal,
+              isBlockedByOther: isBlockedByOtherVal,
             };
           }
           return c;
@@ -1354,7 +1374,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const updated = prevChats.map((c) => {
         if (matchId(c, otherId)) {
           chatExists = true;
-          const msgList = c.messages || [];
+          const msgList = (c.messages || []).filter((m) => m.id !== 'match-init');
           if (msgList.some((m) => (m.id || m._id)?.toString() === formattedMsg.id)) {
             return c;
           }
@@ -1384,7 +1404,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     setActiveChat((prevActiveChat) => {
       if (matchId(prevActiveChat, otherId)) {
-        const msgList = prevActiveChat.messages || [];
+        const msgList = (prevActiveChat.messages || []).filter((m) => m.id !== 'match-init');
         if (msgList.some((m) => (m.id || m._id)?.toString() === formattedMsg.id)) {
           return prevActiveChat;
         }
@@ -2162,7 +2182,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [activeChat, currentUser]);
+  }, [activeChat?.id, currentUser?.id || currentUser?._id]);
 
   // AppState change listener & global presence ping: reconnect socket & re-emit join on foreground, going_offline on background
   useEffect(() => {
@@ -2228,7 +2248,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         appStateSubscription.remove();
       }
     };
-  }, [currentUser, activeChat]);
+  }, [currentUser]);
 
   // NetInfo network & Wi-Fi connectivity listener for strict online/offline status
   useEffect(() => {
@@ -2523,9 +2543,30 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           const combined = [...found.messages, ...extraMsgs];
           const hasRealMessages = combined.some((m) => m.id !== 'match-init');
           const cleanMessages = hasRealMessages ? combined.filter((m) => m.id !== 'match-init') : combined;
+          const isBlocked = found.isBlocked || prevActiveChat.isBlocked || false;
+          const isBlockedByOther = found.isBlockedByOther || prevActiveChat.isBlockedByOther || false;
+          const prevMsgs = prevActiveChat.messages || [];
+
+          const isSameLength = cleanMessages.length === prevMsgs.length;
+          const isSameContent = isSameLength && cleanMessages.every((m, idx) => {
+            const p = prevMsgs[idx];
+            return p && String(m.id || m._id) === String(p.id || p._id) && m.text === p.text && m.status === p.status && m.createdAt === p.createdAt;
+          });
+
+          if (
+            isSameContent &&
+            isBlocked === prevActiveChat.isBlocked &&
+            isBlockedByOther === prevActiveChat.isBlockedByOther &&
+            found.name === prevActiveChat.name &&
+            found.image === prevActiveChat.image
+          ) {
+            return prevActiveChat;
+          }
+
           return {
             ...found,
-            isBlocked: found.isBlocked || prevActiveChat.isBlocked || false,
+            isBlocked: isBlocked,
+            isBlockedByOther: isBlockedByOther,
             messages: cleanMessages,
           };
         }
@@ -2564,9 +2605,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const extraMsgs = (prev.messages || []).filter(
           (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id)))
         );
+        const nextMsgs = [...formatted, ...extraMsgs];
+        const prevMsgs = prev.messages || [];
+        if (
+          nextMsgs.length === prevMsgs.length &&
+          nextMsgs.every((m, i) => m.id === prevMsgs[i]?.id && m.text === prevMsgs[i]?.text)
+        ) {
+          return prev;
+        }
         return {
           ...prev,
-          messages: [...formatted, ...extraMsgs],
+          messages: nextMsgs,
         };
       }
       return prev;
@@ -2581,9 +2630,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           const extraMsgs = (c.messages || []).filter(
             (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id)))
           );
+          const nextMsgs = [...formatted, ...extraMsgs];
+          const prevMsgs = c.messages || [];
+          if (
+            nextMsgs.length === prevMsgs.length &&
+            nextMsgs.every((m, i) => m.id === prevMsgs[i]?.id && m.text === prevMsgs[i]?.text)
+          ) {
+            return c;
+          }
           return {
             ...c,
-            messages: [...formatted, ...extraMsgs],
+            messages: nextMsgs,
           };
         }
         return c;
@@ -3623,9 +3680,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       let formattedUri = audioUri;
       if (Platform.OS === 'android') {
-        formattedUri = audioUri.startsWith('file://') ? audioUri : `file://${audioUri}`;
+        const cleanPath = audioUri.replace(/^file:\/*/, '');
+        formattedUri = `file:///${cleanPath}`;
       } else {
-        formattedUri = audioUri.replace('file://', '');
+        formattedUri = audioUri.replace(/^file:\/*/, '');
       }
 
       const ext = Platform.OS === 'ios' ? 'm4a' : 'mp4';
