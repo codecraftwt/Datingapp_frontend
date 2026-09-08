@@ -21,6 +21,8 @@ import {
   SafeAreaView,
   BackHandler,
   AppState,
+  ActivityIndicator,
+  ToastAndroid,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
@@ -40,7 +42,7 @@ import { SearchScreen } from './SearchScreen';
 import { PreviewModal } from '../components/PreviewModal';
 import Video from 'react-native-video';
 import { useDispatch, useSelector } from 'react-redux';
-import { apiClient } from '../api/apiClient';
+import { apiClient, getIsManualLogoutInProgress } from '../api/apiClient';
 import { BASE_URL, getBaseUrl, getImageUrl as formatConfigUrl, isVideoUrl, getVideoThumbnailUrl } from '../api/config';
 import { selectCurrentUser } from '../redux/slices/authSlice';
 import {
@@ -252,7 +254,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     try {
       setIsMessagesLoading(true);
       const res = await apiClient.getMessages();
-      dispatch(setAllMessages(res || []));
+      // Backend now returns { messages, conversationPartners } — extract each part
+      const rawMessages = Array.isArray(res) ? res : (res?.messages || res || []);
+      const partners = (!Array.isArray(res) && res?.conversationPartners) ? res.conversationPartners : {};
+      dispatch(setAllMessages(rawMessages));
+      if (partners && Object.keys(partners).length > 0) {
+        setConversationPartners((prev) => ({ ...prev, ...partners }));
+      }
     } catch (err) {
       console.log('Error fetching messages:', err);
     } finally {
@@ -262,6 +270,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const [blockedUsersList, setBlockedUsersList] = useState([]);
   const [blockedByOtherList, setBlockedByOtherList] = useState([]);
+  // Real names/images of all chat partners — fetched directly from User collection, unaffected by block status
+  const [conversationPartners, setConversationPartners] = useState({});
+
 
   const fetchBlockedUsers = async () => {
     try {
@@ -373,6 +384,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const curId = currentUser ? (currentUser.id || currentUser._id) : (userProfile ? (userProfile.id || userProfile._id) : null);
     const uId = curId ? curId.toString() : null;
     if (uId) {
+      fetchQuestionnaires();
+      fetchSwipedIds();
       fetchMessages();
       fetchUnreadLikesCount();
       fetchMatchesList();
@@ -386,7 +399,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       try { fetchUnreadLikesCount(); } catch (e) {}
       try { fetchMessages(); } catch (e) {}
     }, 4000);
-    return () => clearInterval(badgeSyncInterval);
+    // Poll blocked/unblocked status every 30 seconds as a fallback for missed socket events
+    const blockedSyncInterval = setInterval(() => {
+      try { fetchBlockedUsers(); } catch (e) {}
+    }, 30000);
+    return () => {
+      clearInterval(badgeSyncInterval);
+      clearInterval(blockedSyncInterval);
+    };
   }, []);
 
   const refetch = fetchQuestionnaires;
@@ -394,6 +414,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const refetchLikes = fetchLikes;
   const refetchMatchesList = fetchMatchesList;
   const refetchSwipedIds = fetchSwipedIds;
+
+  const [isRefreshingHome, setIsRefreshingHome] = useState(false);
+
+  const handleRefreshAllHomeData = async () => {
+    if (isRefreshingHome) return;
+    try {
+      setIsRefreshingHome(true);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Refreshing page...', ToastAndroid.SHORT);
+      }
+      await Promise.all([
+        fetchQuestionnaires(),
+        fetchSwipedIds(),
+        fetchMessages(),
+        fetchLikes(),
+        fetchUnreadLikesCount(),
+        fetchMatchesList(),
+        fetchBlockedUsers(),
+      ]);
+      setTopToast({ visible: true, message: 'All page data refreshed successfully! ✨', type: 'success' });
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Refreshed successfully! ✨', ToastAndroid.SHORT);
+      }
+    } catch (err) {
+      console.log('Error refreshing Home page data:', err);
+    } finally {
+      setIsRefreshingHome(false);
+    }
+  };
 
   const questionnairesData = useMemo(() => ({ users: otherProfiles }), [otherProfiles]);
   const messagesData = allMessages;
@@ -608,6 +657,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [selectedReportReason, setSelectedReportReason] = useState('Inappropriate Photos or Content');
   const [reportDetails, setReportDetails] = useState('');
   const [alsoBlockOnReport, setAlsoBlockOnReport] = useState(false);
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   // Admin Warning Modal States
   const [activeWarningData, setActiveWarningData] = useState(null);
   const [showAdminWarningModal, setShowAdminWarningModal] = useState(false);
@@ -1957,6 +2007,30 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         });
       });
 
+      socketRef.current.on('session_terminated', (data) => {
+        console.log('🔴 [FRONTEND SOCKET] session_terminated event received:', data);
+        if (typeof getIsManualLogoutInProgress === 'function' && getIsManualLogoutInProgress()) {
+          console.log('[FRONTEND SOCKET] Manual logout in progress, suppressing session_terminated popup.');
+          return;
+        }
+        const msg = data?.message || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.';
+        Alert.alert(
+          'Session Terminated ⚠️',
+          msg,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                if (onLogout) {
+                  onLogout();
+                }
+              },
+            },
+          ],
+          { cancelable: false }
+        );
+      });
+
       socketRef.current.on('user_blocked_by_other', ({ blockerId }) => {
         console.log('Socket.IO user_blocked_by_other received:', blockerId);
         if (blockerId) {
@@ -1969,7 +2043,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         console.log('Socket.IO user_unblocked_by_other received:', blockerId);
         if (blockerId) {
           const bIdStr = blockerId.toString();
+          // Remove blocker from blockedByOtherList so the real name shows up immediately
           setBlockedByOtherList((prev) => prev.filter((id) => id !== bIdStr));
+          // Refresh blocked list and matches from API to get fresh name/profile data
+          fetchBlockedUsers();
+          fetchMatchesList();
         }
       });
 
@@ -2419,6 +2497,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
     }
 
+    // Overlay conversationPartners (fetched directly from User collection, unaffected by block status)
+    // Applied LAST so real names always win over stale match/questionnaire data
+    if (conversationPartners && Object.keys(conversationPartners).length > 0) {
+      Object.entries(conversationPartners).forEach(([uId, partner]) => {
+        if (partner && partner.name) {
+          const existing = otherUsersMap.get(uId) || {};
+          otherUsersMap.set(uId, {
+            ...existing,
+            id: uId,
+            name: partner.name,
+            image: partner.image || existing.image || existing.profileImage,
+            isOnline: partner.isOnline !== undefined ? partner.isOnline : existing.isOnline,
+            lastSeen: partner.lastSeen || existing.lastSeen,
+          });
+          if (partner.isOnline !== undefined) initialOnlineMap[uId] = partner.isOnline;
+          if (partner.lastSeen) initialLastSeenMap[uId] = partner.lastSeen;
+        }
+      });
+    }
+
     const blockedUserIdsSet = new Set();
     if (Array.isArray(blockedUsersList)) {
       blockedUsersList.forEach((b) => {
@@ -2464,16 +2562,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
     });
 
+    // Build blockedByOtherSet from both the dedicated blocked list AND the match-level isBlockedByOther flags
     const blockedByOtherSet = new Set(Array.isArray(blockedByOtherList) ? blockedByOtherList.map(id => id.toString()) : []);
+    // Augment with per-match isBlockedByOther flags returned by the updated getMatches API
+    if (matches) {
+      matches.forEach((u) => {
+        const uId = (u.id || u._id)?.toString();
+        if (uId && u.isBlockedByOther) {
+          blockedByOtherSet.add(uId);
+        }
+      });
+    }
+
 
     const chatsList = [];
     Object.keys(messagesByOtherUser).forEach((otherId) => {
       const otherUser = otherUsersMap.get(otherId) || { id: otherId, name: 'Matched User', image: null };
       const isBlocked = blockedUserIdsSet.has(otherId) || !!otherUser.isBlocked;
       const isBlockedByOther = blockedByOtherSet.has(otherId);
+      // If the other user has blocked ME, hide their real name until they unblock
+      const displayName = isBlockedByOther
+        ? 'Matched User'
+        : (otherUser.name || otherUser.firstName || 'Matched User');
       chatsList.push({
         id: otherId,
-        name: otherUser.name || otherUser.firstName || 'Matched User',
+        name: displayName,
         image: otherUser.image || otherUser.profileImage,
         lastSeen: otherUser.lastSeen,
         isBlocked: isBlocked,
@@ -2489,9 +2602,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const otherUser = otherUsersMap.get(matchedUserStr) || { id: matchedUserStr, name: 'Matched User', image: null };
         const isBlocked = blockedUserIdsSet.has(matchedUserStr) || !!otherUser.isBlocked;
         const isBlockedByOther = blockedByOtherSet.has(matchedUserStr);
+        // If the other user has blocked ME, hide their real name until they unblock
+        const displayName = isBlockedByOther
+          ? 'Matched User'
+          : (otherUser.name || otherUser.firstName || 'Matched User');
         chatsList.push({
           id: matchedUserStr,
-          name: otherUser.name || otherUser.firstName || 'Matched User',
+          name: displayName,
           image: otherUser.image || otherUser.profileImage,
           lastSeen: otherUser.lastSeen,
           isBlocked: isBlocked,
@@ -2500,7 +2617,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             {
               id: 'match-init',
               sender: 'them',
-              text: `It's a Match! Say hi to ${otherUser.name || otherUser.firstName || 'Matched User'}! 👋`,
+              text: `It's a Match! Say hi to ${displayName}! 👋`,
             },
           ],
         });
@@ -2573,7 +2690,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
       return prevActiveChat;
     });
-  }, [messagesData, questionnairesData, matches, currentUser, matchedUserIds, blockedUsersList, blockedByOtherList]);
+  }, [messagesData, questionnairesData, matches, currentUser, matchedUserIds, blockedUsersList, blockedByOtherList, conversationPartners]);
 
   // Sync individual chat messages query data into local chats and activeChat states
   useEffect(() => {
@@ -3821,41 +3938,33 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             </View>
             <Text style={styles.logoText}>FlameMatch</Text>
           </View>
-          {activeTab === 'profile' && (
-            <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-              <Text style={styles.logoutButtonText}>Log Out</Text>
-            </TouchableOpacity>
-          )}
-        </View>
 
-        {/* Top Warning Banner (Displays at top of HomeScreen when reported user receives warning) */}
-        {activeWarningData && !activeWarningData.isAcknowledged && (
-          <View style={styles.topWarningBanner}>
+          <View style={styles.headerRightActions}>
             <TouchableOpacity
-              style={styles.topWarningBannerContent}
-              onPress={() => setShowAdminWarningModal(true)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.topWarningEmoji}>⚠️</Text>
-              <View style={styles.topWarningTextWrapper}>
-                <Text style={styles.topWarningTitle}>Account Guideline Warning</Text>
-                <Text style={styles.topWarningSub} numberOfLines={1}>
-                  {activeWarningData.category || 'Policy violation flagged'} • Tap ⓘ info to expand notice
-                </Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Information (i) icon button that expands the full warning modal */}
-            <TouchableOpacity
-              style={styles.topWarningInfoBtn}
-              onPress={() => setShowAdminWarningModal(true)}
+              style={styles.refreshHeaderBtn}
+              onPress={handleRefreshAllHomeData}
               activeOpacity={0.7}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              disabled={isRefreshingHome}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Text style={styles.topWarningInfoIcon}>ⓘ</Text>
+              {isRefreshingHome ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Ionicons
+                  name="refresh-outline"
+                  size={20}
+                  color="#FFFFFF"
+                />
+              )}
             </TouchableOpacity>
+
+            {activeTab === 'profile' && (
+              <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
+                <Text style={styles.logoutButtonText}>Log Out</Text>
+              </TouchableOpacity>
+            )}
           </View>
-        )}
+        </View>
 
         {/* Tab Content Area */}
         <View style={styles.contentArea}>
@@ -3874,7 +3983,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           {activeTab === 'swipe' && (
             <View style={styles.swipeContainer}>
-              {swipeIndex < MOCK_MATCHES.length ? (
+              {isRefreshingHome || isQuestionnairesLoading ? (
+                <View style={styles.homeCenterLoadingContainer}>
+                  <ActivityIndicator size="large" color="#FFFFFF" />
+                  <Text style={styles.homeCenterLoadingText}>Finding matches for you...</Text>
+                </View>
+              ) : swipeIndex < MOCK_MATCHES.length ? (
                 <View style={styles.stackContainer}>
                   {/* Background Card */}
                   {swipeIndex + 1 < MOCK_MATCHES.length && (
@@ -5603,12 +5717,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 ...(selectedLikesProfile.photos || []),
                 ...(selectedLikesProfile.videos || []),
                 ...(selectedLikesProfile.media || []),
-              ].filter(Boolean)
+              ].filter((item, idx, arr) => {
+                if (!item || typeof item !== 'string' || item === 'null' || item === 'undefined' || item.trim() === '') return false;
+                const hiddenSet = new Set(Array.isArray(selectedLikesProfile.hiddenMedia) ? selectedLikesProfile.hiddenMedia : []);
+                if (hiddenSet.has(item)) return false;
+                return arr.indexOf(item) === idx;
+              })
             }
             initialIndex={likesPreviewStoryIndex || 0}
             userName={selectedLikesProfile.firstName || selectedLikesProfile.name || 'Candidate'}
             userAvatar={selectedLikesProfile.profileImage || selectedLikesProfile.image}
             isOwnProfile={false}
+            updatedAt={selectedLikesProfile.updatedAt || selectedLikesProfile.createdAt}
+            mediaTimestamps={selectedLikesProfile.mediaTimestamps}
             onClose={() => setLikesPreviewStoryIndex(null)}
           />
         )}
@@ -5618,16 +5739,25 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           <PreviewModal
             visible={candidateStoryIndex !== null}
             photos={
-              (MOCK_MATCHES[swipeIndex]?.profileImages && MOCK_MATCHES[swipeIndex].profileImages.length > 0)
-                ? MOCK_MATCHES[swipeIndex].profileImages
-                : (MOCK_MATCHES[swipeIndex]?.photos && MOCK_MATCHES[swipeIndex].photos.length > 0)
-                ? MOCK_MATCHES[swipeIndex].photos
-                : [MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image].filter(Boolean)
+              [
+                MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image,
+                ...(MOCK_MATCHES[swipeIndex]?.profileImages || []),
+                ...(MOCK_MATCHES[swipeIndex]?.photos || []),
+                ...(MOCK_MATCHES[swipeIndex]?.videos || []),
+                ...(MOCK_MATCHES[swipeIndex]?.media || []),
+              ].filter((item, idx, arr) => {
+                if (!item || typeof item !== 'string' || item === 'null' || item === 'undefined' || item.trim() === '') return false;
+                const hiddenSet = new Set(Array.isArray(MOCK_MATCHES[swipeIndex]?.hiddenMedia) ? MOCK_MATCHES[swipeIndex].hiddenMedia : []);
+                if (hiddenSet.has(item)) return false;
+                return arr.indexOf(item) === idx;
+              })
             }
             initialIndex={candidateStoryIndex || 0}
             userName={MOCK_MATCHES[swipeIndex]?.name || MOCK_MATCHES[swipeIndex]?.firstName || 'Suggested Match'}
             userAvatar={MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image}
             isOwnProfile={false}
+            updatedAt={MOCK_MATCHES[swipeIndex]?.updatedAt || MOCK_MATCHES[swipeIndex]?.createdAt}
+            mediaTimestamps={MOCK_MATCHES[swipeIndex]?.mediaTimestamps}
             onClose={() => setCandidateStoryIndex(null)}
           />
         )}
@@ -6212,6 +6342,39 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.5,
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  refreshHeaderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  refreshSpinIcon: {
+    opacity: 0.5,
+  },
+  homeCenterLoadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    minHeight: 300,
+  },
+  homeCenterLoadingText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 14,
+    textAlign: 'center',
+    letterSpacing: 0.3,
   },
   logoutButton: {
     paddingVertical: 6,

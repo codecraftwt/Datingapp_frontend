@@ -39,6 +39,16 @@ export const CustomButton = ({
     textStyle,
   ];
 
+  const flatTextStyle = StyleSheet.flatten(textStyles) || {};
+  let spinnerColor = flatTextStyle.color;
+  if (variant === 'white' || flatTextStyle.color === '#000000') {
+    spinnerColor = '#000000';
+  } else if (variant === 'primary') {
+    spinnerColor = '#FE3C72';
+  } else if (!spinnerColor) {
+    spinnerColor = '#FFFFFF';
+  }
+
   return (
     <TouchableOpacity
       style={buttonStyles}
@@ -49,7 +59,7 @@ export const CustomButton = ({
       {loading ? (
         <ActivityIndicator
           size="small"
-          color={variant === 'primary' ? '#FF5864' : '#FFFFFF'}
+          color={spinnerColor}
         />
       ) : (
         <Text style={textStyles}>{title}</Text>

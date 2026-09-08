@@ -48,6 +48,19 @@ AsyncStorage.getItem('token').then((token) => {
   }
 }).catch(() => {});
 
+let onSessionTerminatedCallback = null;
+let isManualLogoutInProgress = false;
+
+export const setManualLogoutInProgress = (val) => {
+  isManualLogoutInProgress = !!val;
+};
+
+export const getIsManualLogoutInProgress = () => isManualLogoutInProgress;
+
+export const setOnSessionTerminatedHandler = (cb) => {
+  onSessionTerminatedCallback = cb;
+};
+
 export const setAuthToken = (token) => {
   authTokenInMemory = token;
 };
@@ -91,7 +104,7 @@ const request = async (url, options = {}, isRetry = false) => {
     let response;
     try {
       const controller = new AbortController();
-      const defaultTimeout = isFormData ? 60000 : 15000;
+      const defaultTimeout = isFormData ? 180000 : 15000;
       const reqTimeout = setTimeout(() => controller.abort(), options.timeout || defaultTimeout);
 
       const targetUrl = formatFullUrl(currentBase, url);
@@ -171,7 +184,7 @@ const request = async (url, options = {}, isRetry = false) => {
     } catch (jsonErr) {
       console.error(`[apiClient] Non-JSON response received from ${url} (status ${response.status}):`, responseText.substring(0, 150));
       if (response.status === 413) {
-        throw new Error('File Size Limit Exceeded: The uploaded video file is too large (max 100MB allowed).');
+        throw new Error('File Size Limit Exceeded: The uploaded file is too large (max 500MB allowed).');
       }
       if (response.status === 404) {
         throw new Error(`Endpoint Not Found (404): ${url}`);
@@ -180,10 +193,31 @@ const request = async (url, options = {}, isRetry = false) => {
     }
 
     if (!response.ok) {
-      if (response.status === 401 || data?.message?.includes('authorization denied') || data?.message?.includes('invalid or expired')) {
-        console.warn('[apiClient] Stale or expired token detected (401). Clearing token cache...');
+      if (
+        response.status === 401 ||
+        data?.code === 'SINGLE_DEVICE_CONFLICT' ||
+        data?.code === 'SESSION_TERMINATED' ||
+        data?.message?.includes('authorization denied') ||
+        data?.message?.includes('invalid or expired') ||
+        data?.message?.includes('accessed on another device') ||
+        data?.message?.includes('logged out from all devices')
+      ) {
+        console.warn('[apiClient] Stale, expired, or terminated session detected (401). Clearing token cache...');
         authTokenInMemory = null;
         AsyncStorage.removeItem('token').catch(() => {});
+        AsyncStorage.removeItem('user').catch(() => {});
+
+        const isExplicitRemoteTermination =
+          data?.code === 'SINGLE_DEVICE_CONFLICT' ||
+          data?.code === 'SESSION_TERMINATED' ||
+          data?.message?.includes('accessed on another device') ||
+          data?.message?.includes('logged out from all devices');
+
+        if (isExplicitRemoteTermination && !isManualLogoutInProgress && onSessionTerminatedCallback) {
+          onSessionTerminatedCallback(
+            data?.message || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.'
+          );
+        }
       }
       throw { data, status: response.status };
     }
@@ -707,6 +741,14 @@ export const apiClient = {
     });
   },
 
+  logoutBackend: async () => {
+    isManualLogoutInProgress = true;
+    try {
+      return await request('/api/auth/logout', { method: 'POST' });
+    } catch (e) {
+      console.log('[apiClient] logoutBackend request warning:', e);
+    }
+  },
   resetResolvedUrl: () => {
     resetResolvedUrl();
   },

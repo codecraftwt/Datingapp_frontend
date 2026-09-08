@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,10 +11,155 @@ import {
   TouchableWithoutFeedback,
   useWindowDimensions,
   Alert,
+  Platform,
+  Animated,
+  Easing,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Video from 'react-native-video';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl as checkIsVideoUrl } from '../api/config';
+
+export const formatMediaUploadTime = (photoItem, uploadTimes, index, uploadTime, fallbackTime, mediaTimestamps) => {
+  let timeVal = null;
+
+  // Extract URL string from photoItem
+  let urlStr = '';
+  if (typeof photoItem === 'string') {
+    urlStr = photoItem;
+  } else if (photoItem && typeof photoItem === 'object') {
+    urlStr = photoItem.url || photoItem.uri || photoItem.secure_url || photoItem.path || photoItem.mediaUrl || '';
+  }
+
+  // 1. Try matching against mediaTimestamps dictionary
+  if (mediaTimestamps && typeof mediaTimestamps === 'object') {
+    if (urlStr) {
+      const trimmedUrl = urlStr.trim();
+      const cleanUrl = trimmedUrl.split('?')[0];
+
+      // Direct exact match or clean URL match
+      timeVal = mediaTimestamps[urlStr] || mediaTimestamps[trimmedUrl] || mediaTimestamps[cleanUrl];
+
+      // Match without protocol or host
+      if (!timeVal) {
+        const urlWithoutProtocol = cleanUrl.replace(/^https?:\/\//i, '');
+        const matchKey = Object.keys(mediaTimestamps).find((k) => {
+          if (!k) return false;
+          const cleanK = String(k).split('?')[0].replace(/^https?:\/\//i, '');
+          return cleanK === urlWithoutProtocol || cleanUrl.includes(cleanK) || String(k).includes(cleanUrl);
+        });
+        if (matchKey) timeVal = mediaTimestamps[matchKey];
+      }
+
+      // Match by filename / basename (e.g. photo_123.jpg or upload_123.mp4)
+      if (!timeVal) {
+        const filename = cleanUrl.substring(cleanUrl.lastIndexOf('/') + 1);
+        if (filename && filename.length > 3) {
+          const matchKey = Object.keys(mediaTimestamps).find((k) => {
+            if (!k) return false;
+            const keyStr = String(k);
+            const keyFilename = keyStr.substring(keyStr.lastIndexOf('/') + 1);
+            return keyStr.includes(filename) || filename.includes(keyFilename);
+          });
+          if (matchKey) timeVal = mediaTimestamps[matchKey];
+        }
+      }
+    }
+
+    // Index-based lookup fallback in mediaTimestamps
+    if (!timeVal && typeof index === 'number') {
+      const keys = Object.keys(mediaTimestamps);
+      if (keys[index] && mediaTimestamps[keys[index]]) {
+        timeVal = mediaTimestamps[keys[index]];
+      } else if (mediaTimestamps[index] || mediaTimestamps[String(index)]) {
+        timeVal = mediaTimestamps[index] || mediaTimestamps[String(index)];
+      }
+    }
+  }
+
+  // 2. Try object fields in photoItem
+  if (!timeVal && photoItem && typeof photoItem === 'object') {
+    timeVal = photoItem.uploadedAt || photoItem.createdAt || photoItem.timestamp || photoItem.updatedAt || photoItem.time;
+  }
+
+  // 3. Try uploadTimes array
+  if (!timeVal && Array.isArray(uploadTimes) && uploadTimes[index]) {
+    timeVal = uploadTimes[index];
+  }
+
+  // 4. Try uploadTime prop
+  if (!timeVal && uploadTime) {
+    timeVal = uploadTime;
+  }
+
+  // 5. Try extracting timestamp embedded in Cloudinary / File URL (e.g. /v1725789000/ or file_1725789000)
+  if (!timeVal && urlStr) {
+    // Cloudinary version tag match: /v(\d{9,13})/
+    const vMatch = urlStr.match(/\/v(\d{9,13})\//);
+    if (vMatch && vMatch[1]) {
+      const sec = parseInt(vMatch[1], 10);
+      if (!isNaN(sec) && sec > 1000000000) {
+        timeVal = sec < 10000000000 ? sec * 1000 : sec;
+      }
+    }
+
+    // Generic UNIX timestamp in filename: 1725789000000
+    if (!timeVal) {
+      const tsMatch = urlStr.match(/(\d{10,13})/);
+      if (tsMatch && tsMatch[1]) {
+        const ts = parseInt(tsMatch[1], 10);
+        if (!isNaN(ts) && ts > 1500000000) {
+          timeVal = ts < 10000000000 ? ts * 1000 : ts;
+        }
+      }
+    }
+  }
+
+  // 6. Try fallbackTime (e.g. user createdAt / updatedAt)
+  if (!timeVal && fallbackTime) {
+    timeVal = fallbackTime;
+  }
+
+  // If no date timestamp is available, return 'Uploaded recently' instead of current clock time
+  if (!timeVal) {
+    return 'Uploaded recently';
+  }
+
+  try {
+    const d = new Date(timeVal);
+    if (isNaN(d.getTime())) {
+      return String(timeVal);
+    }
+
+    const now = new Date();
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const isToday =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+
+    if (isToday) {
+      return `Today at ${timeStr}`;
+    }
+
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday =
+      d.getDate() === yesterday.getDate() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getFullYear() === yesterday.getFullYear();
+
+    if (isYesterday) {
+      return `Yesterday at ${timeStr}`;
+    }
+
+    const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${dateStr} at ${timeStr}`;
+  } catch (e) {
+    return 'Uploaded recently';
+  }
+};
 
 export const PreviewModal = ({
   visible,
@@ -27,14 +172,39 @@ export const PreviewModal = ({
   onUnhideMedia,
   isHiddenMode = false,
   isOwnProfile = false,
+  mediaTimestamps,
+  uploadTimes,
+  uploadTime,
+  userUpdatedAt,
+  updatedAt,
+  createdAt,
 }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const statusBarHeight = Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 0;
+  const topInset = Math.max(insets.top || 0, statusBarHeight) + 10;
+
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
-  const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [mediaError, setMediaError] = useState(false);
 
   const [detectedDuration, setDetectedDuration] = useState(null);
+
+  // WhatsApp Status Smooth Animated Progress Value
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const currentAnimValueRef = useRef(0);
+  const pausedValueRef = useRef(0);
+  const currentDurationRef = useRef(5000);
+  const isAnimatingRef = useRef(false);
+
+  useEffect(() => {
+    const listenerId = progressAnim.addListener(({ value }) => {
+      currentAnimValueRef.current = value;
+    });
+    return () => {
+      progressAnim.removeListener(listenerId);
+    };
+  }, [progressAnim]);
 
   // Three Dots options menu state & hidden media set
   const [menuVisible, setMenuVisible] = useState(false);
@@ -42,12 +212,60 @@ export const PreviewModal = ({
 
   const showHideOptionsBtn = isOwnProfile && (typeof onHideMedia === 'function' || typeof onUnhideMedia === 'function');
 
-  const IMAGE_DURATION = 4000; // 4 seconds for images
+  const IMAGE_DURATION = 5000; // 5 seconds smooth fill for status photos
   const DEFAULT_VIDEO_DURATION = 15000; // fallback max 15 seconds for video status items
+
+  const rawPhoto = photos[currentIndex] || photos[0];
+  const isCurrentVideo = checkIsVideoUrl(rawPhoto);
+
+  const startAnimation = (fromValue = 0, durationMs = IMAGE_DURATION) => {
+    progressAnim.stopAnimation();
+    progressAnim.setValue(fromValue);
+    currentDurationRef.current = durationMs;
+    pausedValueRef.current = fromValue;
+    currentAnimValueRef.current = fromValue;
+    isAnimatingRef.current = true;
+
+    const remainingMs = Math.max(0, (1 - fromValue) * durationMs);
+    if (remainingMs <= 10) {
+      handleNextStory();
+      return;
+    }
+
+    Animated.timing(progressAnim, {
+      toValue: 1,
+      duration: remainingMs,
+      easing: Easing.linear,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) {
+        isAnimatingRef.current = false;
+        handleNextStory();
+      }
+    });
+  };
+
+  const pauseAnimation = () => {
+    progressAnim.stopAnimation((val) => {
+      pausedValueRef.current = val;
+      currentAnimValueRef.current = val;
+      isAnimatingRef.current = false;
+    });
+  };
+
+  const resumeAnimation = () => {
+    const val = currentAnimValueRef.current || pausedValueRef.current;
+    if (val < 0.99) {
+      startAnimation(val, currentDurationRef.current);
+    } else {
+      handleNextStory();
+    }
+  };
 
   useEffect(() => {
     setCurrentIndex(initialIndex);
-    setProgress(0);
+    progressAnim.setValue(0);
+    pausedValueRef.current = 0;
     setMediaError(false);
     setIsPaused(false);
     setDetectedDuration(null);
@@ -57,60 +275,37 @@ export const PreviewModal = ({
 
   useEffect(() => {
     setMediaError(false);
-    setProgress(0);
+    progressAnim.setValue(0);
+    pausedValueRef.current = 0;
     setIsPaused(false);
     setDetectedDuration(null);
-  }, [currentIndex]);
 
-  const rawPhoto = photos[currentIndex] || photos[0];
-  const isCurrentVideo = checkIsVideoUrl(rawPhoto);
-  const activeDuration = isCurrentVideo
-    ? Math.min(15000, Math.max(2000, detectedDuration || DEFAULT_VIDEO_DURATION))
-    : IMAGE_DURATION;
-
-  useEffect(() => {
-    // Only run setInterval timer for static images (videos use native onProgress/onEnd)
-    if (!visible || photos.length === 0 || isPaused || isCurrentVideo) return;
-
-    const intervalTime = 40;
-    const stepIncrement = intervalTime / IMAGE_DURATION;
-
-    const timer = setInterval(() => {
-      setProgress((prev) => {
-        const nextProgress = prev + stepIncrement;
-        if (nextProgress >= 1) {
-          clearInterval(timer);
-          return 1;
-        }
-        return nextProgress;
-      });
-    }, intervalTime);
-
-    return () => clearInterval(timer);
-  }, [visible, currentIndex, isPaused, photos.length, isCurrentVideo]);
-
-  // Safely trigger story advance for images when progress reaches 100%
-  useEffect(() => {
-    if (!isCurrentVideo && progress >= 1) {
-      handleNextStory();
+    if (visible && photos.length > 0) {
+      const dur = isCurrentVideo ? (detectedDuration || DEFAULT_VIDEO_DURATION) : IMAGE_DURATION;
+      startAnimation(0, dur);
     }
-  }, [progress, isCurrentVideo]);
+
+    return () => {
+      progressAnim.stopAnimation();
+    };
+  }, [currentIndex, visible]);
 
   const handleNextStory = () => {
+    progressAnim.stopAnimation();
     if (currentIndex < photos.length - 1) {
       setCurrentIndex((prev) => prev + 1);
-      setProgress(0);
     } else {
       onClose();
     }
   };
 
   const handlePrevStory = () => {
+    progressAnim.stopAnimation();
     if (currentIndex > 0) {
       setCurrentIndex((prev) => prev - 1);
-      setProgress(0);
     } else {
-      setProgress(0);
+      const dur = isCurrentVideo ? (detectedDuration || DEFAULT_VIDEO_DURATION) : IMAGE_DURATION;
+      startAnimation(0, dur);
     }
   };
 
@@ -138,7 +333,6 @@ export const PreviewModal = ({
     } else {
       const nextTarget = remainingIndices.find((i) => i >= targetIdx) ?? remainingIndices[0];
       setCurrentIndex(nextTarget);
-      setProgress(0);
     }
   };
 
@@ -166,7 +360,6 @@ export const PreviewModal = ({
     } else {
       const nextTarget = remainingIndices.find((i) => i >= targetIdx) ?? remainingIndices[0];
       setCurrentIndex(nextTarget);
-      setProgress(0);
     }
   };
 
@@ -175,10 +368,12 @@ export const PreviewModal = ({
   const handlePressIn = () => {
     pressStartTimeRef.current = Date.now();
     setIsPaused(true);
+    pauseAnimation();
   };
 
   const handlePressOut = () => {
     setIsPaused(false);
+    resumeAnimation();
   };
 
   const handleScreenPress = (evt) => {
@@ -235,13 +430,28 @@ export const PreviewModal = ({
                   paused={isPaused}
                   repeat={false}
                   controls={false}
-                  onProgress={(data) => {
-                    if (!isPaused && data && data.seekableDuration && data.seekableDuration > 0) {
-                      const ratio = data.currentTime / data.seekableDuration;
-                      setProgress(Math.min(1, Math.max(0, ratio)));
+                  onLoad={(meta) => {
+                    if (meta && meta.duration && meta.duration > 0) {
+                      const durMs = Math.min(15000, meta.duration * 1000);
+                      setDetectedDuration(durMs);
+                      if (!isPaused) {
+                        startAnimation(0, durMs);
+                      }
                     }
                   }}
-                  onEnd={handleNextStory}
+                  onProgress={(data) => {
+                    if (!isPaused && data && data.seekableDuration && data.seekableDuration > 0) {
+                      const totalDurMs = Math.min(15000, data.seekableDuration * 1000);
+                      const ratio = data.currentTime / data.seekableDuration;
+                      if (!isAnimatingRef.current || Math.abs(currentAnimValueRef.current - ratio) > 0.2) {
+                        startAnimation(ratio, totalDurMs);
+                      }
+                    }
+                  }}
+                  onEnd={() => {
+                    progressAnim.stopAnimation();
+                    handleNextStory();
+                  }}
                   onError={(err) => {
                     console.log('Error playing in-app video:', err);
                     setMediaError(true);
@@ -260,14 +470,34 @@ export const PreviewModal = ({
         </TouchableWithoutFeedback>
 
         {/* Top Header Overlay Bar - Fades out on Long Press like WhatsApp Status */}
-        <SafeAreaView style={[styles.topHeaderContainer, { opacity: isPaused ? 0 : 1 }]} pointerEvents="box-none">
+        <View style={[styles.topHeaderContainer, { paddingTop: topInset, opacity: isPaused ? 0 : 1 }]} pointerEvents="box-none">
           {/* Segmented Progress Bar */}
           <View style={styles.progressRow}>
-            {photos.map((_, idx) => (
-              <View key={idx} style={styles.progressSegmentBg}>
-                <View style={[styles.progressSegmentFill, { width: idx < currentIndex ? '100%' : idx === currentIndex ? '100%' : '0%' }]} />
-              </View>
-            ))}
+            {photos.map((_, idx) => {
+              let animatedWidth;
+              if (idx < currentIndex) {
+                animatedWidth = '100%';
+              } else if (idx === currentIndex) {
+                animatedWidth = progressAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0%', '100%'],
+                  extrapolate: 'clamp',
+                });
+              } else {
+                animatedWidth = '0%';
+              }
+
+              return (
+                <View key={idx} style={styles.progressSegmentBg}>
+                  <Animated.View
+                    style={[
+                      styles.progressSegmentFill,
+                      { width: animatedWidth },
+                    ]}
+                  />
+                </View>
+              );
+            })}
           </View>
 
           <View style={styles.userInfoRow} pointerEvents="box-none">
@@ -280,7 +510,7 @@ export const PreviewModal = ({
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name={isCurrentVideo ? "videocam-outline" : "camera-outline"} size={13} color="rgba(255, 255, 255, 0.7)" style={{ marginRight: 4 }} />
                   <Text style={styles.statusTimeText}>
-                    {currentIndex + 1} of {photos.length} • Just now
+                    {currentIndex + 1} of {photos.length} • {formatMediaUploadTime(rawPhoto, uploadTimes, currentIndex, uploadTime, userUpdatedAt || updatedAt || createdAt, mediaTimestamps)}
                   </Text>
                 </View>
               </View>
@@ -297,9 +527,9 @@ export const PreviewModal = ({
               </TouchableOpacity>
             </View>
           </View>
-        </SafeAreaView>
+        </View>
 
-        <View style={[styles.bottomCaptionContainer, { opacity: isPaused ? 0 : 1 }]} pointerEvents="none">
+        <View style={[styles.bottomCaptionContainer, { paddingBottom: Math.max(insets.bottom || 0, 20), opacity: isPaused ? 0 : 1 }]} pointerEvents="none">
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             {currentIndex === 0 && <Ionicons name="star" size={14} color="#FFD700" style={{ marginRight: 5 }} />}
             <Text style={styles.captionText}>

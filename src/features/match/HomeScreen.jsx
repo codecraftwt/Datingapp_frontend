@@ -19,6 +19,8 @@ import {
   Linking,
   NativeModules,
   AppState,
+  ActivityIndicator,
+  ToastAndroid,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -225,6 +227,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     fetchSwipedIds();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const curId = currentUser ? (currentUser.id || currentUser._id) : (userProfile ? (userProfile.id || userProfile._id) : null);
+    const uId = curId ? curId.toString() : null;
+    if (uId) {
+      fetchQuestionnaires();
+      fetchSwipedIds();
+      fetchMessages();
+      fetchLikes();
+      fetchMatchesList();
+    }
+  }, [currentUser, userProfile]);
 
   const refetch = fetchQuestionnaires;
   const refetchMessages = fetchMessages;

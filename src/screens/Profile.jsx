@@ -391,59 +391,44 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
     // Slot #1 (Main Profile Picture) must be a photo ONLY
     if (isVideo) {
-      Alert.alert('Main Profile Picture', 'Your main profile picture (Slot #1) must be a photo.');
+      Alert.alert('Main Profile Picture 📷', 'Your main profile picture (Slot #1) must be a photo. Videos are not allowed for Slot #1.');
       return;
     }
 
     try {
       setLoading(true);
 
-      const isVid = isVideoUrl(localUri) || asset.type?.startsWith('video/');
+      const formData = new FormData();
+      const ext = 'jpg';
+      const mime = asset.type || 'image/jpeg';
+      const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `photo_${Date.now()}.${ext}`;
 
-      // Upload image or video to Cloudinary via Backend API
-      let finalPhotoUrl = localUri;
-      try {
-        const formData = new FormData();
-        const ext = isVid ? 'mp4' : 'jpg';
-        const mime = asset.type || (isVid ? 'video/mp4' : 'image/jpeg');
-        const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}.${ext}`;
+      formData.append('photo', {
+        uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
+        type: mime,
+        name: safeName,
+      });
 
-        formData.append('photo', {
-          uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
-          type: mime,
-          name: safeName,
-        });
+      const uploadRes = await apiClient.uploadMainPhoto(formData);
+      const cloudinaryUrl = uploadRes.profileImage || uploadRes.url || uploadRes.data?.url || uploadRes.secure_url;
+      const finalPhotoUrl = cloudinaryUrl || localUri;
 
-        const uploadRes = await apiClient.uploadMainPhoto(formData);
-        const cloudinaryUrl = uploadRes.profileImage || uploadRes.url || uploadRes.data?.url || uploadRes.secure_url;
-        if (cloudinaryUrl) {
-          finalPhotoUrl = cloudinaryUrl;
-        }
-      } catch (uploadErr) {
-        console.log('Cloudinary upload error:', uploadErr);
-        const errorMsg =
-          uploadErr?.data?.message ||
-          uploadErr?.message ||
-          'Failed to upload media to server. Please try again.';
+      const returnedUser = uploadRes.user || uploadRes.data?.user;
+      const newTimestamps = uploadRes.mediaTimestamps || returnedUser?.mediaTimestamps || {
+        ...(displayData.mediaTimestamps || {}),
+        [finalPhotoUrl]: uploadRes.uploadedAt || new Date().toISOString()
+      };
 
-        Alert.alert('Upload Error', errorMsg);
-        setLoading(false);
-        return;
-      }
-
-      const updatedPhotos = [...rawPhotosList];
-      if (updatedPhotos.length > 0) {
-        updatedPhotos[0] = finalPhotoUrl;
-      } else {
-        updatedPhotos.push(finalPhotoUrl);
-      }
+      const cleanGalleryPhotos = rawPhotosList.filter((p) => p && typeof p === 'string' && p !== finalPhotoUrl);
 
       const updatedProfile = {
         ...displayData,
+        ...(returnedUser || {}),
         profileImage: finalPhotoUrl,
-        profileImages: updatedPhotos,
-        photos: updatedPhotos,
-        media: updatedPhotos,
+        profileImages: cleanGalleryPhotos,
+        photos: cleanGalleryPhotos,
+        media: cleanGalleryPhotos,
+        mediaTimestamps: newTimestamps,
       };
 
       setProfile(updatedProfile);
@@ -451,9 +436,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         onUpdateProfile(updatedProfile);
       }
 
-      Alert.alert(isVid ? 'Video Uploaded 📹' : 'Photo Uploaded 📸', `Your main profile ${isVid ? 'video' : 'photo'} has been updated successfully!`);
+      Alert.alert('Photo Uploaded 📸', 'Your main profile photo has been updated successfully!');
     } catch (err) {
       console.log('Error saving new profile media:', err);
+      const errorMsg =
+        err?.data?.message ||
+        err?.message ||
+        'Failed to upload media to server. Please try again.';
+      Alert.alert('Upload Error', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -595,7 +585,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       }
 
       const options = {
-        mediaType: 'mixed',
+        mediaType: 'photo',
         quality: 0.8,
         includeBase64: false,
       };
@@ -607,10 +597,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           if (response.errorCode === 'permission') {
             Alert.alert(
               'Permission Needed 🖼️',
-              'Please grant media storage permission in your phone settings to choose photos or videos from gallery.'
+              'Please grant media storage permission in your phone settings to choose photos from gallery.'
             );
           } else {
-            Alert.alert('Gallery Error', response.errorMessage || 'Failed to pick photo or video from gallery.');
+            Alert.alert('Gallery Error', response.errorMessage || 'Failed to pick photo from gallery.');
           }
           return;
         }
@@ -626,15 +616,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
   const handleChangeProfilePhoto = () => {
     Alert.alert(
-      'Update Profile Image 📷',
-      'Choose how you would like to update your main profile image or video:',
+      'Update Main Profile Image (Slot #1) 📷',
+      'Choose how you would like to update your main profile image:',
       [
         {
           text: '📸 Take Photo (Camera)',
           onPress: openCameraPicker,
         },
         {
-          text: '🖼️ Choose Photo / Video from Gallery',
+          text: '🖼️ Choose Photo from Gallery',
           onPress: openGalleryPicker,
         },
         {
@@ -1618,6 +1608,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         userName={displayData.firstName || displayData.name || 'My Status'}
         userAvatar={mainPhotoUrl}
         isOwnProfile={true}
+        updatedAt={displayData.updatedAt || displayData.createdAt}
+        mediaTimestamps={displayData.mediaTimestamps}
         onClose={() => setActiveStoryIndex(null)}
         onHideMedia={async (hiddenUrl) => {
           try {
@@ -1644,6 +1636,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         userAvatar={mainPhotoUrl}
         isHiddenMode={true}
         isOwnProfile={true}
+        updatedAt={displayData.updatedAt || displayData.createdAt}
+        mediaTimestamps={displayData.mediaTimestamps}
         onClose={() => setActiveHiddenStoryIndex(null)}
         onUnhideMedia={async (unhideUrl) => {
           try {

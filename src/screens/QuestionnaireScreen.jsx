@@ -156,6 +156,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const [selectedLanguages, setSelectedLanguages] = useState(['English', 'Hindi']);
 
   const [photos, setPhotos] = useState(Array(9).fill(null));
+  const [mediaTimestamps, setMediaTimestamps] = useState({});
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
   const [uploadingSlotIndex, setUploadingSlotIndex] = useState(null);
   const [activePickerSlotIndex, setActivePickerSlotIndex] = useState(null);
@@ -244,10 +245,17 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       if (initialData.interests && Array.isArray(initialData.interests)) setSelectedInterests(initialData.interests);
       if (initialData.languages && Array.isArray(initialData.languages)) setSelectedLanguages(initialData.languages);
 
-      // Populate 9 photos grid with 1-to-1 index matching:
-      // Slots can contain both photos and videos.
-      // Prioritize media/profileImages array (which holds all slot items 1-to-1) before falling back to photos.
+      // Populate 9 photos grid:
+      // Slot #1 (index 0) is strictly for main profile photo (profileImage).
+      // Slots #2 through #9 (indices 1 to 8) are for gallery media (photos & videos).
       const initialGrid = Array(9).fill(null);
+
+      const mainImg = (initialData.profileImage && typeof initialData.profileImage === 'string' && initialData.profileImage.trim().length > 0)
+        ? initialData.profileImage
+        : null;
+
+      initialGrid[0] = mainImg;
+
       const mediaList = (
         Array.isArray(initialData.media) && initialData.media.length > 0
           ? initialData.media
@@ -256,23 +264,11 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
             : Array.isArray(initialData.photos)
               ? initialData.photos
               : []
-      );
+      ).filter(item => item && typeof item === 'string' && item.trim().length > 0 && item !== mainImg);
 
-      if (
-        initialData.profileImage &&
-        typeof initialData.profileImage === 'string' &&
-        initialData.profileImage.trim().length > 0
-      ) {
-        initialGrid[0] = initialData.profileImage;
-      } else if (mediaList[0] && typeof mediaList[0] === 'string' && mediaList[0].trim().length > 0) {
-        initialGrid[0] = mediaList[0];
-      } else {
-        initialGrid[0] = null; // Strictly BLANK if no main profile photo exists!
-      }
-
-      // Slots #2 through #9 (indices 1 to 8) read strictly from mediaList[1..8]
+      // Slots #2 through #9 (indices 1 to 8) read gallery items
       for (let i = 1; i < 9; i++) {
-        const item = mediaList[i];
+        const item = mediaList[i - 1];
         if (item && typeof item === 'string' && item.trim().length > 0) {
           initialGrid[i] = item;
         } else {
@@ -374,12 +370,21 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       isVideo,
     });
 
-    // 100MB video limit
-    const maxVideoSizeBytes = 100 * 1024 * 1024; // 100 MB
+    // Slot #1 strictly accepts images/photos only
+    if (slotIndex === 0 && isVideo) {
+      Alert.alert(
+        'Image Only Slot 📷',
+        'Slot #1 accepts photos/images only. Videos are not allowed for Slot #1.'
+      );
+      return;
+    }
+
+    // 500MB video limit
+    const maxVideoSizeBytes = 500 * 1024 * 1024; // 500 MB
     if (isVideo && asset.fileSize && asset.fileSize > maxVideoSizeBytes) {
       Alert.alert(
-        'Video Size Exceeded',
-        `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video clip under 100MB (or 15 seconds or less) for app stability.`
+        'Video Size Exceeded 📹',
+        `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video clip under 500MB (or 15 seconds or less) for optimal performance.`
       );
       return;
     }
@@ -422,6 +427,14 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           updated[slotIndex] = cloudinaryUrl;
           return updated;
         });
+        if (uploadRes?.mediaTimestamps) {
+          setMediaTimestamps(uploadRes.mediaTimestamps);
+        } else {
+          setMediaTimestamps((prev) => ({
+            ...prev,
+            [cloudinaryUrl]: uploadRes?.uploadedAt || new Date().toISOString(),
+          }));
+        }
       }
     } catch (uploadErr) {
       console.error('[QuestionnaireScreen] Backend upload error:', uploadErr);
@@ -583,7 +596,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
   const openGalleryForSlot = async (slotIndex, mediaType = 'mixed') => {
     try {
-      const effectiveType = mediaType || 'mixed';
+      const effectiveType = slotIndex === 0 ? 'photo' : (mediaType || 'mixed');
       const needVideoPerm = effectiveType === 'video' || effectiveType === 'mixed';
 
       try {
@@ -714,6 +727,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     console.log('[QuestionnaireScreen] Final uploadedPhotosList:', uploadedPhotosList);
 
     const mainProfilePhoto = uploadedPhotosList[0] || null;
+    const galleryMediaList = uploadedPhotosList.slice(1).filter((p) => p && typeof p === 'string' && p.trim().length > 0 && p !== mainProfilePhoto);
     const validPhotos = uploadedPhotosList.filter((p) => p && typeof p === 'string' && p.trim().length > 0);
     const age = calculateAge();
 
@@ -749,10 +763,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       interests: selectedInterests,
       languages: selectedLanguages,
       profileImage: mainProfilePhoto,
-      profileImages: uploadedPhotosList,
-      photos: uploadedPhotosList,
-      videos: uploadedPhotosList.filter((p) => p && isVideoUrl(p)),
-      media: uploadedPhotosList,
+      profileImages: galleryMediaList,
+      photos: galleryMediaList.filter((p) => !isVideoUrl(p)),
+      videos: galleryMediaList.filter((p) => isVideoUrl(p)),
+      media: galleryMediaList,
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       completionPercentage: (() => {
         let computedPct = 0;
@@ -1464,7 +1478,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   {/* 9 Photo & Video Slots Grid */}
                   <Text style={styles.inputLabel}>Upload Photos & Preview Videos (Up to 9 Slots)</Text>
-                  <Text style={styles.gridSubtext}>Slot #1 is your Main Profile Image. All slots support photos & short video clips (up to 15s).</Text>
+                  <Text style={styles.gridSubtext}>Slot #1 is your Main Profile Photo (Images only). Slots 2–9 support photos & video clips (up to 15s).</Text>
 
                   <View style={styles.gridContainer}>
                     {photos.map((photoUri, index) => {
@@ -1568,6 +1582,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         userName={firstName || 'My Status'}
         userAvatar={validStoryPhotos[0]}
         isOwnProfile={true}
+        mediaTimestamps={mediaTimestamps}
         onClose={() => setActiveStoryIndex(null)}
         onHideMedia={(hiddenUrl, index) => {
           if (typeof index === 'number' && index >= 0) {
@@ -1596,7 +1611,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                 : `Manage Slot #${activePickerSlotIndex !== null ? activePickerSlotIndex + 1 : 1}`}
             </Text>
             <Text style={styles.pickerModalSubtitle}>
-              Select photos or short video clips (up to 15s) from your camera or gallery.
+              {activePickerSlotIndex === 0
+                ? 'Select a photo from your camera or gallery for your main profile picture.'
+                : 'Select photos or short video clips (up to 15s) from your camera or gallery.'}
             </Text>
 
             <View style={styles.pickerOptionsContainer}>
@@ -1632,51 +1649,55 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                 </View>
               </TouchableOpacity>
 
-              {/* Video Options for all slots */}
-              <TouchableOpacity
-                style={[styles.pickerOptionCard, { borderColor: 'rgba(56, 151, 240, 0.4)', backgroundColor: 'rgba(56, 151, 240, 0.12)' }]}
-                onPress={() => {
-                  const idx = activePickerSlotIndex;
-                  setActivePickerSlotIndex(null);
-                  openGalleryForSlot(idx, 'video');
-                }}
-              >
-                <Ionicons name="videocam-outline" size={22} color="#3897F0" style={{ marginRight: 12 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pickerOptionTitle}>Choose Video from Gallery 🎬</Text>
-                  <Text style={styles.pickerOptionSub}>Select a video clip from gallery (up to 15s)</Text>
-                </View>
-              </TouchableOpacity>
+              {/* Video Options - Available for Slots 2 to 9 only */}
+              {activePickerSlotIndex !== 0 && (
+                <>
+                  <TouchableOpacity
+                    style={[styles.pickerOptionCard, { borderColor: 'rgba(56, 151, 240, 0.4)', backgroundColor: 'rgba(56, 151, 240, 0.12)' }]}
+                    onPress={() => {
+                      const idx = activePickerSlotIndex;
+                      setActivePickerSlotIndex(null);
+                      openGalleryForSlot(idx, 'video');
+                    }}
+                  >
+                    <Ionicons name="videocam-outline" size={22} color="#3897F0" style={{ marginRight: 12 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pickerOptionTitle}>Choose Video from Gallery 🎬</Text>
+                      <Text style={styles.pickerOptionSub}>Select a video clip from gallery (up to 15s)</Text>
+                    </View>
+                  </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.pickerOptionCard}
-                onPress={() => {
-                  const idx = activePickerSlotIndex;
-                  setActivePickerSlotIndex(null);
-                  openVideoCameraForSlot(idx);
-                }}
-              >
-                <Ionicons name="film-outline" size={22} color="#3897F0" style={{ marginRight: 12 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pickerOptionTitle}>Record Video Clip (Camera)</Text>
-                  <Text style={styles.pickerOptionSub}>Record a short video clip with camera</Text>
-                </View>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.pickerOptionCard}
+                    onPress={() => {
+                      const idx = activePickerSlotIndex;
+                      setActivePickerSlotIndex(null);
+                      openVideoCameraForSlot(idx);
+                    }}
+                  >
+                    <Ionicons name="film-outline" size={22} color="#3897F0" style={{ marginRight: 12 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pickerOptionTitle}>Record Video Clip (Camera)</Text>
+                      <Text style={styles.pickerOptionSub}>Record a short video clip with camera</Text>
+                    </View>
+                  </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.pickerOptionCard}
-                onPress={() => {
-                  const idx = activePickerSlotIndex;
-                  setActivePickerSlotIndex(null);
-                  openGalleryForSlot(idx, 'mixed');
-                }}
-              >
-                <Ionicons name="folder-open-outline" size={22} color="#00E676" style={{ marginRight: 12 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pickerOptionTitle}>Browse All Gallery Media (Photos & Videos)</Text>
-                  <Text style={styles.pickerOptionSub}>Select any photo or video from gallery</Text>
-                </View>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.pickerOptionCard}
+                    onPress={() => {
+                      const idx = activePickerSlotIndex;
+                      setActivePickerSlotIndex(null);
+                      openGalleryForSlot(idx, 'mixed');
+                    }}
+                  >
+                    <Ionicons name="folder-open-outline" size={22} color="#00E676" style={{ marginRight: 12 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pickerOptionTitle}>Browse All Gallery Media (Photos & Videos)</Text>
+                      <Text style={styles.pickerOptionSub}>Select any photo or video from gallery</Text>
+                    </View>
+                  </TouchableOpacity>
+                </>
+              )}
 
               {/* Remove/Clear Slot option if slot has content */}
               {activePickerSlotIndex !== null && photos[activePickerSlotIndex] && (

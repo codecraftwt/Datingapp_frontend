@@ -11,7 +11,7 @@ import { RegisterScreen } from './src/screens/RegisterScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
 import { QuestionnaireScreen } from './src/screens/QuestionnaireScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
-import { apiClient } from './src/api/apiClient';
+import { apiClient, setOnSessionTerminatedHandler, setAuthToken, setManualLogoutInProgress, getIsManualLogoutInProgress } from './src/api/apiClient';
 import { syncUserLocationService } from './src/services/locationService';
 import { registerFcmToken, setupNotificationListeners, displayLocalSystemNotification } from './src/services/notificationService';
 import { TopToastBanner } from './src/components/TopToastBanner';
@@ -23,6 +23,32 @@ function MainApp() {
   const [userProfile, setUserProfile] = useState(null);
   const [isConnected, setIsConnected] = useState(true);
   const [topToast, setTopToast] = useState({ visible: false, message: '', type: 'info' });
+
+  useEffect(() => {
+    setOnSessionTerminatedHandler((msg) => {
+      if (getIsManualLogoutInProgress()) return;
+      Alert.alert(
+        'Session Terminated ⚠️',
+        msg || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.',
+        [
+          {
+            text: 'OK',
+            onPress: async () => {
+              try {
+                await AsyncStorage.removeItem('token');
+                await AsyncStorage.removeItem('user');
+                setAuthToken(null);
+              } catch (e) {}
+              dispatch(logout());
+              setUserProfile(null);
+              setScreenStack(['LOGIN']);
+            },
+          },
+        ],
+        { cancelable: false }
+      );
+    });
+  }, [dispatch]);
 
   const currentScreen = screenStack[screenStack.length - 1] || 'LOGIN';
 
@@ -234,6 +260,7 @@ function MainApp() {
   };
 
   const handleLogout = async () => {
+    setManualLogoutInProgress(true);
     try {
       await apiClient.logoutBackend();
     } catch (err) {
@@ -266,6 +293,10 @@ function MainApp() {
     setTopToast({ visible: true, message: logoutMsg, type: 'info' });
 
     navigateTo('LOGIN');
+
+    setTimeout(() => {
+      setManualLogoutInProgress(false);
+    }, 3000);
   };
 
   const renderScreen = () => {

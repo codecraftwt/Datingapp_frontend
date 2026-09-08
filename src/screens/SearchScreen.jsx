@@ -1765,6 +1765,8 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
           userName={previewMediaModal.userName}
           userAvatar={previewMediaModal.userAvatar}
           isOwnProfile={false}
+          updatedAt={previewMediaModal.updatedAt}
+          mediaTimestamps={previewMediaModal.mediaTimestamps}
           onClose={() => setPreviewMediaModal((prev) => ({ ...prev, visible: false }))}
         />
       )}
