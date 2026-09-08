@@ -31,28 +31,73 @@ export const formatMediaUploadTime = (photoItem, uploadTimes, index, uploadTime,
     urlStr = photoItem.url || photoItem.uri || photoItem.secure_url || photoItem.path || photoItem.mediaUrl || '';
   }
 
+  // Helper to extract authentic upload timestamp embedded in filename / Cloudinary URL
+  const extractTimestampFromUrl = (url) => {
+    if (!url || typeof url !== 'string') return null;
+
+    // 1. Multer or frontend format: upload_1725789123456_ or media_1725789123456_
+    const prefixMatch = url.match(/(?:upload|media|photo|img|file|video)[-_](\d{10,13})_/i);
+    if (prefixMatch && prefixMatch[1]) {
+      const num = parseInt(prefixMatch[1], 10);
+      const ms = num < 10000000000 ? num * 1000 : num;
+      if (!isNaN(ms) && ms > 1577836800000 && ms <= Date.now() + 86400000) {
+        return ms;
+      }
+    }
+
+    // 2. Cloudinary version tag: /v(\d{9,13})/
+    const vMatch = url.match(/\/v(\d{9,13})\//);
+    if (vMatch && vMatch[1]) {
+      const num = parseInt(vMatch[1], 10);
+      const ms = num < 10000000000 ? num * 1000 : num;
+      if (!isNaN(ms) && ms > 1577836800000 && ms <= Date.now() + 86400000) {
+        return ms;
+      }
+    }
+
+    // 3. Basename timestamp
+    const filename = url.split('?')[0].split('/').pop() || '';
+    const ts13Match = filename.match(/(\d{13})/);
+    if (ts13Match && ts13Match[1]) {
+      const ms = parseInt(ts13Match[1], 10);
+      if (!isNaN(ms) && ms > 1577836800000 && ms <= Date.now() + 86400000) {
+        return ms;
+      }
+    }
+
+    const ts10Match = filename.match(/(\d{10})/);
+    if (ts10Match && ts10Match[1]) {
+      const ms = parseInt(ts10Match[1], 10) * 1000;
+      if (!isNaN(ms) && ms > 1577836800000 && ms <= Date.now() + 86400000) {
+        return ms;
+      }
+    }
+
+    return null;
+  };
+
+  const urlEmbeddedMs = extractTimestampFromUrl(urlStr);
+
   // 1. Try matching against mediaTimestamps dictionary
+  let dictVal = null;
   if (mediaTimestamps && typeof mediaTimestamps === 'object') {
     if (urlStr) {
       const trimmedUrl = urlStr.trim();
       const cleanUrl = trimmedUrl.split('?')[0];
 
-      // Direct exact match or clean URL match
-      timeVal = mediaTimestamps[urlStr] || mediaTimestamps[trimmedUrl] || mediaTimestamps[cleanUrl];
+      dictVal = mediaTimestamps[urlStr] || mediaTimestamps[trimmedUrl] || mediaTimestamps[cleanUrl];
 
-      // Match without protocol or host
-      if (!timeVal) {
+      if (!dictVal) {
         const urlWithoutProtocol = cleanUrl.replace(/^https?:\/\//i, '');
         const matchKey = Object.keys(mediaTimestamps).find((k) => {
           if (!k) return false;
           const cleanK = String(k).split('?')[0].replace(/^https?:\/\//i, '');
           return cleanK === urlWithoutProtocol || cleanUrl.includes(cleanK) || String(k).includes(cleanUrl);
         });
-        if (matchKey) timeVal = mediaTimestamps[matchKey];
+        if (matchKey) dictVal = mediaTimestamps[matchKey];
       }
 
-      // Match by filename / basename (e.g. photo_123.jpg or upload_123.mp4)
-      if (!timeVal) {
+      if (!dictVal) {
         const filename = cleanUrl.substring(cleanUrl.lastIndexOf('/') + 1);
         if (filename && filename.length > 3) {
           const matchKey = Object.keys(mediaTimestamps).find((k) => {
@@ -61,25 +106,41 @@ export const formatMediaUploadTime = (photoItem, uploadTimes, index, uploadTime,
             const keyFilename = keyStr.substring(keyStr.lastIndexOf('/') + 1);
             return keyStr.includes(filename) || filename.includes(keyFilename);
           });
-          if (matchKey) timeVal = mediaTimestamps[matchKey];
+          if (matchKey) dictVal = mediaTimestamps[matchKey];
         }
       }
     }
 
-    // Index-based lookup fallback in mediaTimestamps
-    if (!timeVal && typeof index === 'number') {
+    if (!dictVal && typeof index === 'number') {
       const keys = Object.keys(mediaTimestamps);
       if (keys[index] && mediaTimestamps[keys[index]]) {
-        timeVal = mediaTimestamps[keys[index]];
+        dictVal = mediaTimestamps[keys[index]];
       } else if (mediaTimestamps[index] || mediaTimestamps[String(index)]) {
-        timeVal = mediaTimestamps[index] || mediaTimestamps[String(index)];
+        dictVal = mediaTimestamps[index] || mediaTimestamps[String(index)];
       }
     }
   }
 
+  // If we have an authentic URL-embedded upload timestamp, compare with dictVal
+  if (urlEmbeddedMs) {
+    if (dictVal) {
+      const dictMs = new Date(dictVal).getTime();
+      // If dictVal is significantly newer than the URL embedded creation time (e.g. > 2 mins), it was an updatedAt overwrite!
+      if (!isNaN(dictMs) && dictMs > urlEmbeddedMs + 120000) {
+        timeVal = urlEmbeddedMs;
+      } else {
+        timeVal = dictVal;
+      }
+    } else {
+      timeVal = urlEmbeddedMs;
+    }
+  } else {
+    timeVal = dictVal;
+  }
+
   // 2. Try object fields in photoItem
   if (!timeVal && photoItem && typeof photoItem === 'object') {
-    timeVal = photoItem.uploadedAt || photoItem.createdAt || photoItem.timestamp || photoItem.updatedAt || photoItem.time;
+    timeVal = photoItem.uploadedAt || photoItem.createdAt || photoItem.timestamp || photoItem.time;
   }
 
   // 3. Try uploadTimes array
@@ -92,35 +153,11 @@ export const formatMediaUploadTime = (photoItem, uploadTimes, index, uploadTime,
     timeVal = uploadTime;
   }
 
-  // 5. Try extracting timestamp embedded in Cloudinary / File URL (e.g. /v1725789000/ or file_1725789000)
-  if (!timeVal && urlStr) {
-    // Cloudinary version tag match: /v(\d{9,13})/
-    const vMatch = urlStr.match(/\/v(\d{9,13})\//);
-    if (vMatch && vMatch[1]) {
-      const sec = parseInt(vMatch[1], 10);
-      if (!isNaN(sec) && sec > 1000000000) {
-        timeVal = sec < 10000000000 ? sec * 1000 : sec;
-      }
-    }
-
-    // Generic UNIX timestamp in filename: 1725789000000
-    if (!timeVal) {
-      const tsMatch = urlStr.match(/(\d{10,13})/);
-      if (tsMatch && tsMatch[1]) {
-        const ts = parseInt(tsMatch[1], 10);
-        if (!isNaN(ts) && ts > 1500000000) {
-          timeVal = ts < 10000000000 ? ts * 1000 : ts;
-        }
-      }
-    }
-  }
-
-  // 6. Try fallbackTime (e.g. user createdAt / updatedAt)
+  // 5. Try fallbackTime (strictly user createdAt, NEVER updatedAt)
   if (!timeVal && fallbackTime) {
     timeVal = fallbackTime;
   }
 
-  // If no date timestamp is available, return 'Uploaded recently' instead of current clock time
   if (!timeVal) {
     return 'Uploaded recently';
   }
@@ -154,8 +191,14 @@ export const formatMediaUploadTime = (photoItem, uploadTimes, index, uploadTime,
       return `Yesterday at ${timeStr}`;
     }
 
-    const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    return `${dateStr} at ${timeStr}`;
+    const isSameYear = d.getFullYear() === now.getFullYear();
+    if (isSameYear) {
+      const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      return `${dateStr} at ${timeStr}`;
+    }
+
+    const fullDateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${fullDateStr} at ${timeStr}`;
   } catch (e) {
     return 'Uploaded recently';
   }
@@ -178,6 +221,7 @@ export const PreviewModal = ({
   userUpdatedAt,
   updatedAt,
   createdAt,
+  userCreatedAt,
 }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -510,7 +554,7 @@ export const PreviewModal = ({
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name={isCurrentVideo ? "videocam-outline" : "camera-outline"} size={13} color="rgba(255, 255, 255, 0.7)" style={{ marginRight: 4 }} />
                   <Text style={styles.statusTimeText}>
-                    {currentIndex + 1} of {photos.length} • {formatMediaUploadTime(rawPhoto, uploadTimes, currentIndex, uploadTime, userUpdatedAt || updatedAt || createdAt, mediaTimestamps)}
+                    {currentIndex + 1} of {photos.length} • {formatMediaUploadTime(rawPhoto, uploadTimes, currentIndex, uploadTime, createdAt || userCreatedAt || null, mediaTimestamps)}
                   </Text>
                 </View>
               </View>

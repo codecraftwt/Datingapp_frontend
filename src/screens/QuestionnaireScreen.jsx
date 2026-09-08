@@ -276,6 +276,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         }
       }
 
+      if (initialData.mediaTimestamps && typeof initialData.mediaTimestamps === 'object') {
+        setMediaTimestamps(initialData.mediaTimestamps);
+      }
       setPhotos(initialGrid);
     } else {
       setPhotos(Array(9).fill(null));
@@ -293,6 +296,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           if (u.bdayDay) setBdayDay(u.bdayDay);
           if (u.bdayMonth) setBdayMonth(u.bdayMonth);
           if (u.bdayYear) setBdayYear(u.bdayYear);
+          if (u.mediaTimestamps && typeof u.mediaTimestamps === 'object') {
+            setMediaTimestamps(u.mediaTimestamps);
+          }
         }
       }).catch((e) => console.log('Error fetching user profile fallback in QuestionnaireScreen:', e));
     }
@@ -686,6 +692,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
     // Guarantee all local file:// and content:// URIs are uploaded to Cloudinary sequentially before saving questionnaire
     const uploadedPhotosList = [];
+    const latestMediaTimestamps = { ...(mediaTimestamps || {}) };
     for (let index = 0; index < photos.length; index++) {
       const photoUri = photos[index];
       if (!photoUri) {
@@ -713,6 +720,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           const cloudUrl = uploadRes?.url || uploadRes?.secure_url || uploadRes?.data?.url;
           if (cloudUrl && cloudUrl.startsWith('http')) {
             uploadedPhotosList.push(cloudUrl);
+            latestMediaTimestamps[cloudUrl] = new Date().toISOString();
             continue;
           }
         } catch (e) {
@@ -724,6 +732,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       }
     }
 
+    setMediaTimestamps(latestMediaTimestamps);
     console.log('[QuestionnaireScreen] Final uploadedPhotosList:', uploadedPhotosList);
 
     const mainProfilePhoto = uploadedPhotosList[0] || null;
@@ -767,6 +776,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       photos: galleryMediaList.filter((p) => !isVideoUrl(p)),
       videos: galleryMediaList.filter((p) => isVideoUrl(p)),
       media: galleryMediaList,
+      mediaTimestamps: latestMediaTimestamps,
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       completionPercentage: (() => {
         let computedPct = 0;
@@ -1582,6 +1592,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         userName={firstName || 'My Status'}
         userAvatar={validStoryPhotos[0]}
         isOwnProfile={true}
+        createdAt={initialData?.createdAt}
         mediaTimestamps={mediaTimestamps}
         onClose={() => setActiveStoryIndex(null)}
         onHideMedia={(hiddenUrl, index) => {

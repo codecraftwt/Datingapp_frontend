@@ -3152,53 +3152,77 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
     }
 
+    // Helper: remove message from local state for a given chat partner
+    const removeMessageFromState = (msgId) => {
+      const chatPartnerId = activeChat?.id;
+      setChats((prevChats) =>
+        prevChats.map((c) => {
+          if (c.id === chatPartnerId) {
+            return { ...c, messages: c.messages.filter((m) => m.id !== msgId) };
+          }
+          return c;
+        })
+      );
+      setActiveChat((prevActive) => {
+        if (prevActive && prevActive.id === chatPartnerId) {
+          return { ...prevActive, messages: prevActive.messages.filter((m) => m.id !== msgId) };
+        }
+        return prevActive;
+      });
+    };
+
     options.push({
       text: 'Delete Message',
       style: 'destructive',
       onPress: () => {
+        // Show delete scope sub-alert
+        const deleteOptions = [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete for Me',
+            onPress: async () => {
+              try {
+                if (msg.id && !msg.id.toString().startsWith('temp-')) {
+                  await apiClient.deleteMessage(msg.id, false);
+                }
+                removeMessageFromState(msg.id);
+                refetchChatMessages();
+              } catch (err) {
+                console.error('Failed to delete message for me:', err);
+                Alert.alert('Error', 'Failed to delete message.');
+              }
+            },
+          },
+        ];
+
+        // "Delete for Everyone" only available for messages sent by the current user
+        if (isMyMessage) {
+          deleteOptions.push({
+            text: 'Delete for Everyone',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                if (msg.id && !msg.id.toString().startsWith('temp-')) {
+                  await apiClient.deleteMessage(msg.id, true);
+                }
+                // Remove from local state immediately (socket event will handle receiver side)
+                removeMessageFromState(msg.id);
+                refetchChatMessages();
+              } catch (err) {
+                console.error('Failed to delete message for everyone:', err);
+                Alert.alert('Error', 'Failed to delete message for everyone.');
+              }
+            },
+          });
+        }
+
         Alert.alert(
           'Delete Message',
-          `Are you sure you want to delete this ${msg.fileName ? 'document' : (msg.messageType || 'message')}?`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: async () => {
-                try {
-                  if (msg.id && !msg.id.toString().startsWith('temp-')) {
-                    await apiClient.deleteMessage(msg.id);
-                  }
-                  console.log('Message deleted successfully:', msg.id);
-                  const receiverId = activeChat.id;
-                  setChats((prevChats) =>
-                    prevChats.map((c) => {
-                      if (c.id === receiverId) {
-                        return {
-                          ...c,
-                          messages: c.messages.filter((m) => m.id !== msg.id),
-                        };
-                      }
-                      return c;
-                    })
-                  );
-                  setActiveChat((prevActive) => {
-                    if (prevActive && prevActive.id === receiverId) {
-                      return {
-                        ...prevActive,
-                        messages: prevActive.messages.filter((m) => m.id !== msg.id),
-                      };
-                    }
-                    return prevActive;
-                  });
-                  refetchChatMessages();
-                } catch (err) {
-                  console.error('Failed to delete message:', err);
-                  Alert.alert('Error', 'Failed to delete message.');
-                }
-              },
-            },
-          ]
+          isMyMessage
+            ? 'Choose how to delete this message:'
+            : 'Delete this message for yourself?',
+          deleteOptions,
+          { cancelable: true }
         );
       },
     });
@@ -3215,6 +3239,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       { cancelable: true }
     );
   };
+
 
   const handleClearChat = () => {
     if (!activeChat) return;
@@ -4284,58 +4309,74 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     >
                       <Text style={styles.chatBackArrow}>←</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                      activeOpacity={0.8}
-                      onPress={async () => {
-                        const partnerId = activeChat.id || activeChat._id || activeChat.userId;
-                        setLikesActivePhotoIndex(0);
+                    {(() => {
+                      const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
+                      const isBlockedByOther = !!(
+                        activeChat.isBlockedByOther ||
+                        activeChat.name === 'Matched User' ||
+                        (partnerId && blockedByOtherList && blockedByOtherList.map((id) => id.toString()).includes(partnerId))
+                      );
+                      const isPartnerOnline = !isBlockedByOther && !!(partnerId && (onlineUsersMap[partnerId] || activeChat.isOnline || activeChat.user?.isOnline));
 
-                        const localCandidate =
-                          (Array.isArray(MOCK_MATCHES) ? MOCK_MATCHES : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
-                          (Array.isArray(likesList) ? likesList : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
-                          (Array.isArray(chats) ? chats : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
-                          {};
-
-                        let enrichedProfile = { ...localCandidate, ...activeChat };
-
-                        try {
-                          if (partnerId) {
-                            const res = await apiClient.getUserById(partnerId);
-                            if (res && res.user) {
-                              enrichedProfile = { ...enrichedProfile, ...res.user };
+                      return (
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                          activeOpacity={isBlockedByOther ? 1 : 0.8}
+                          disabled={isBlockedByOther}
+                          onPress={async () => {
+                            // If blocked by the other user, do NOT expand profile and do NOT call API
+                            if (isBlockedByOther) {
+                              return;
                             }
-                          }
-                        } catch (e) {
-                          console.log('Error fetching chat partner full profile by ID:', e);
-                        }
 
-                        setSelectedLikesProfile(enrichedProfile);
-                      }}
-                    >
-                      {(() => {
-                        const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
-                        const isPartnerOnline = !!(partnerId && (onlineUsersMap[partnerId] || activeChat.isOnline || activeChat.user?.isOnline));
-                        return (
-                          <>
-                            <View style={styles.avatarWrapper}>
-                              <Image source={{ uri: getImageUrl(activeChat.image || activeChat.profileImage) }} style={styles.chatHeaderAvatar} />
-                              {isPartnerOnline && (
-                                <View style={styles.onlineDotOverlay} />
-                              )}
-                            </View>
-                            <View style={styles.chatHeaderTitleContainer}>
-                              <Text style={styles.chatHeaderName}>{activeChat.name || activeChat.firstName}</Text>
-                              <Text style={styles.chatHeaderStatusText}>
-                                {isPartnerOnline
+                            setLikesActivePhotoIndex(0);
+
+                            const localCandidate =
+                              (Array.isArray(MOCK_MATCHES) ? MOCK_MATCHES : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                              (Array.isArray(likesList) ? likesList : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                              (Array.isArray(chats) ? chats : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                              {};
+
+                            let enrichedProfile = { ...localCandidate, ...activeChat };
+
+                            try {
+                              if (partnerId) {
+                                const res = await apiClient.getUserById(partnerId);
+                                if (res && res.user) {
+                                  enrichedProfile = { ...enrichedProfile, ...res.user };
+                                }
+                              }
+                            } catch (e) {
+                              console.log('Error fetching chat partner full profile by ID:', e);
+                            }
+
+                            setSelectedLikesProfile(enrichedProfile);
+                          }}
+                        >
+                          <View style={styles.avatarWrapper}>
+                            <Image
+                              source={{ uri: isBlockedByOther ? '' : getImageUrl(activeChat.image || activeChat.profileImage) }}
+                              style={styles.chatHeaderAvatar}
+                            />
+                            {isPartnerOnline && (
+                              <View style={styles.onlineDotOverlay} />
+                            )}
+                          </View>
+                          <View style={styles.chatHeaderTitleContainer}>
+                            <Text style={styles.chatHeaderName}>
+                              {isBlockedByOther ? 'Matched User' : (activeChat.name || activeChat.firstName)}
+                            </Text>
+                            <Text style={styles.chatHeaderStatusText}>
+                              {isBlockedByOther
+                                ? ''
+                                : isPartnerOnline
                                   ? 'Online'
                                   : formatLastSeen((partnerId && lastSeenMap[partnerId]) || activeChat.lastSeen)}
-                              </Text>
-                            </View>
-                          </>
-                        );
-                      })()}
-                    </TouchableOpacity>
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })()}
                     {/* [VOICE CALLING HIDDEN AS REQUESTED]: Chat Header Voice Call button commented out
                     <TouchableOpacity
                       style={styles.callChatHeaderButton}
@@ -4969,16 +5010,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               })()}
                             </View>
                             <View style={styles.chatRowInfo}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Text style={[styles.chatRowName, unreadCount > 0 && styles.chatRowNameUnread]}>
-                                  {chat.name}
-                                </Text>
-                                {chat.isBlocked && (
-                                  <View style={{ backgroundColor: 'rgba(255,59,48,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 }}>
-                                    <Text style={{ color: '#FF3B30', fontSize: 11, fontWeight: '700' }}>🔒 Blocked</Text>
-                                  </View>
-                                )}
-                              </View>
+                              <Text style={[styles.chatRowName, unreadCount > 0 && styles.chatRowNameUnread]} numberOfLines={1}>
+                                {chat.name}
+                              </Text>
                               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                                 {(() => {
                                   const currentId = (currentUser?.id || currentUser?._id)?.toString();
@@ -5007,11 +5041,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               </View>
                             </View>
                             <View style={styles.chatRowRightMeta}>
-                              <Text style={[styles.chatRowTime, unreadCount > 0 && styles.chatRowTimeUnread]}>
-                                {lastMsg && lastMsg.createdAt && lastMsg.createdAt !== 'match-init'
-                                  ? formatMessageTime(lastMsg.createdAt)
-                                  : 'Now'}
-                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                {chat.isBlocked && (
+                                  <View style={{ backgroundColor: 'rgba(255,59,48,0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginRight: 6 }}>
+                                    <Text style={{ color: '#FF3B30', fontSize: 10, fontWeight: '700' }}>Blocked</Text>
+                                  </View>
+                                )}
+                                <Text style={[styles.chatRowTime, unreadCount > 0 && styles.chatRowTimeUnread]}>
+                                  {lastMsg && lastMsg.createdAt && lastMsg.createdAt !== 'match-init'
+                                    ? formatMessageTime(lastMsg.createdAt)
+                                    : 'Now'}
+                                </Text>
+                              </View>
                               {unreadCount > 0 && (
                                 <View style={styles.whatsappUnreadBadge}>
                                   <Text style={styles.whatsappUnreadBadgeText}>
@@ -5728,6 +5769,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             userName={selectedLikesProfile.firstName || selectedLikesProfile.name || 'Candidate'}
             userAvatar={selectedLikesProfile.profileImage || selectedLikesProfile.image}
             isOwnProfile={false}
+            createdAt={selectedLikesProfile.createdAt}
             updatedAt={selectedLikesProfile.updatedAt || selectedLikesProfile.createdAt}
             mediaTimestamps={selectedLikesProfile.mediaTimestamps}
             onClose={() => setLikesPreviewStoryIndex(null)}
@@ -5756,6 +5798,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             userName={MOCK_MATCHES[swipeIndex]?.name || MOCK_MATCHES[swipeIndex]?.firstName || 'Suggested Match'}
             userAvatar={MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image}
             isOwnProfile={false}
+            createdAt={MOCK_MATCHES[swipeIndex]?.createdAt}
             updatedAt={MOCK_MATCHES[swipeIndex]?.updatedAt || MOCK_MATCHES[swipeIndex]?.createdAt}
             mediaTimestamps={MOCK_MATCHES[swipeIndex]?.mediaTimestamps}
             onClose={() => setCandidateStoryIndex(null)}

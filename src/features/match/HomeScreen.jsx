@@ -3402,6 +3402,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             userName={MOCK_MATCHES[swipeIndex]?.name || MOCK_MATCHES[swipeIndex]?.firstName || 'Suggested Match'}
             userAvatar={MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image}
             isOwnProfile={false}
+            createdAt={MOCK_MATCHES[swipeIndex]?.createdAt}
+            updatedAt={MOCK_MATCHES[swipeIndex]?.updatedAt || MOCK_MATCHES[swipeIndex]?.createdAt}
+            mediaTimestamps={MOCK_MATCHES[swipeIndex]?.mediaTimestamps}
             onClose={() => setCandidateStoryIndex(null)}
           />
         )}

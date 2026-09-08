@@ -163,6 +163,9 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
       initialIndex: initialIdx < finalPhotos.length ? initialIdx : 0,
       userName: safeString(profile.firstName || profile.name, 'Suggested Match'),
       userAvatar: avatar || finalPhotos[0],
+      mediaTimestamps: profile.mediaTimestamps,
+      createdAt: profile.createdAt,
+      updatedAt: profile.updatedAt,
     });
   };
 
@@ -1765,7 +1768,8 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
           userName={previewMediaModal.userName}
           userAvatar={previewMediaModal.userAvatar}
           isOwnProfile={false}
-          updatedAt={previewMediaModal.updatedAt}
+          createdAt={previewMediaModal.createdAt}
+          updatedAt={previewMediaModal.updatedAt || previewMediaModal.createdAt}
           mediaTimestamps={previewMediaModal.mediaTimestamps}
           onClose={() => setPreviewMediaModal((prev) => ({ ...prev, visible: false }))}
         />

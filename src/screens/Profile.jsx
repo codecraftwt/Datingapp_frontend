@@ -223,7 +223,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       setIsReportedUsersModalOpen(true);
       const res = await apiClient.getMyReports();
       const list = res.reports || res.data?.reports || [];
-      setReportedUsersList(list);
+      const currentUserId = (profile?._id || profile?.id || '').toString();
+      // Ensure only users reported by ME are shown (exclude any report where reported target is myself)
+      const filteredList = list.filter((rep) => {
+        const target = rep.reportedUser || {};
+        const targetId = (target._id || target.id || '').toString();
+        return targetId && (!currentUserId || targetId !== currentUserId);
+      });
+      setReportedUsersList(filteredList);
     } catch (err) {
       console.log('Error fetching reported users:', err);
       Alert.alert('Error', 'Failed to fetch your reported users list.');
@@ -1608,6 +1615,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         userName={displayData.firstName || displayData.name || 'My Status'}
         userAvatar={mainPhotoUrl}
         isOwnProfile={true}
+        createdAt={displayData.createdAt}
         updatedAt={displayData.updatedAt || displayData.createdAt}
         mediaTimestamps={displayData.mediaTimestamps}
         onClose={() => setActiveStoryIndex(null)}
@@ -1636,6 +1644,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         userAvatar={mainPhotoUrl}
         isHiddenMode={true}
         isOwnProfile={true}
+        createdAt={displayData.createdAt}
         updatedAt={displayData.updatedAt || displayData.createdAt}
         mediaTimestamps={displayData.mediaTimestamps}
         onClose={() => setActiveHiddenStoryIndex(null)}
