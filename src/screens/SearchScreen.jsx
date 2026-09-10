@@ -45,8 +45,12 @@ const safeString = (val, fallback = '') => {
   return String(val);
 };
 
-export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
+export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBack, onBack }) {
   const insets = useSafeAreaInsets();
+
+  const activeUser = currentUser || userProfile;
+  const userInterestedIn = activeUser?.interestedIn || 'Everyone';
+
   // Search Bar State
   const [searchKeyword, setSearchKeyword] = useState('');
   
@@ -105,7 +109,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
   const [ageMin, setAgeMin] = useState(18);
   const [ageMax, setAgeMax] = useState(50);
   const [distanceKm, setDistanceKm] = useState(50);
-  const [selectedGender, setSelectedGender] = useState('Everyone');
+  const [selectedGender, setSelectedGender] = useState(userInterestedIn);
   const [selectedInterests, setSelectedInterests] = useState([]);
   const [selectedLanguages, setSelectedLanguages] = useState([]);
   const [selectedDrinkHabits, setSelectedDrinkHabits] = useState([]);
@@ -175,6 +179,16 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
     loadUserSavedPreferences();
   }, []);
 
+  // Sync selectedGender when user's questionnaire gender preference (interestedIn) changes
+  useEffect(() => {
+    if (userInterestedIn) {
+      setSelectedGender((prev) => {
+        if (!prev || prev === 'Everyone') return userInterestedIn;
+        return prev;
+      });
+    }
+  }, [userInterestedIn]);
+
   const loadMasterFilterOptions = async () => {
     try {
       const res = await apiClient.getFilterOptions();
@@ -209,7 +223,11 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
         if (p.ageMin) setAgeMin(p.ageMin);
         if (p.ageMax) setAgeMax(p.ageMax);
         if (p.distanceKm) setDistanceKm(p.distanceKm);
-        if (p.gender) setSelectedGender(p.gender);
+        if (p.gender && p.gender !== 'Everyone') {
+          setSelectedGender(p.gender);
+        } else if (userInterestedIn) {
+          setSelectedGender(userInterestedIn);
+        }
         if (p.interests) setSelectedInterests(p.interests);
         if (p.languages) setSelectedLanguages(p.languages);
         if (p.sortBy) setSortBy(p.sortBy);
@@ -328,7 +346,7 @@ export function SearchScreen({ onSelectProfile, onGoBack, onBack }) {
     setAgeMin(18);
     setAgeMax(50);
     setDistanceKm(50);
-    setSelectedGender('Everyone');
+    setSelectedGender(userInterestedIn);
     setSelectedInterests([]);
     setSelectedLanguages([]);
     setSelectedDrinkHabits([]);

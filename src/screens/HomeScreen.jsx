@@ -26,6 +26,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { pick as pickDocument, types as documentTypes, isCancel as isDocumentCancel } from '@react-native-documents/picker';
 import {
@@ -213,6 +214,55 @@ const formatLastSeen = (lastSeenTime) => {
   }
 };
 
+const getLatestMessageTime = (chat) => {
+  if (!chat || !Array.isArray(chat.messages) || chat.messages.length === 0) {
+    if (chat?.updatedAt) {
+      const t = new Date(chat.updatedAt).getTime();
+      if (!isNaN(t)) return t;
+    }
+    if (chat?.createdAt) {
+      const t = new Date(chat.createdAt).getTime();
+      if (!isNaN(t)) return t;
+    }
+    return 0;
+  }
+
+  // Filter out placeholder init messages if real messages exist
+  const realMsgs = chat.messages.filter(
+    (m) => m && m.id !== 'match-init' && m.id !== 'blocked-init'
+  );
+  const targetMsgs = realMsgs.length > 0 ? realMsgs : chat.messages;
+
+  let maxTime = 0;
+  targetMsgs.forEach((m) => {
+    if (!m) return;
+    let t = 0;
+    if (m.createdAt && m.createdAt !== 'match-init') {
+      t = new Date(m.createdAt).getTime();
+    } else if (m.time && typeof m.time === 'number') {
+      t = m.time;
+    }
+    if (!isNaN(t) && t > maxTime) {
+      maxTime = t;
+    }
+  });
+
+  if (maxTime === 0 && chat.updatedAt) {
+    const t = new Date(chat.updatedAt).getTime();
+    if (!isNaN(t)) maxTime = t;
+  }
+  if (maxTime === 0 && chat.createdAt) {
+    const t = new Date(chat.createdAt).getTime();
+    if (!isNaN(t)) maxTime = t;
+  }
+  return maxTime;
+};
+
+const sortChatsByRecent = (chatsArr) => {
+  if (!Array.isArray(chatsArr)) return chatsArr;
+  return [...chatsArr].sort((a, b) => getLatestMessageTime(b) - getLatestMessageTime(a));
+};
+
 export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile, onNavigate, onGoBack }) => {
   const insets = useSafeAreaInsets();
   const safeBottomPadding = Math.max(insets.bottom, Platform.OS === 'ios' ? 12 : 8);
@@ -250,6 +300,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
+  // Load cached messages from AsyncStorage on startup so history appears instantly
+  useEffect(() => {
+    const userId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+    if (!userId) return;
+    AsyncStorage.getItem(`cached_chat_messages_${userId}`)
+      .then((cachedStr) => {
+        if (cachedStr) {
+          try {
+            const cachedMsgs = JSON.parse(cachedStr);
+            if (Array.isArray(cachedMsgs) && cachedMsgs.length > 0) {
+              if (!allMessages || allMessages.length === 0) {
+                dispatch(setAllMessages(cachedMsgs));
+              }
+            }
+          } catch (_) {}
+        }
+      })
+      .catch(() => {});
+  }, [currentUser, userProfile]);
+
   const fetchMessages = async () => {
     try {
       setIsMessagesLoading(true);
@@ -257,12 +327,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       // Backend now returns { messages, conversationPartners } — extract each part
       const rawMessages = Array.isArray(res) ? res : (res?.messages || res || []);
       const partners = (!Array.isArray(res) && res?.conversationPartners) ? res.conversationPartners : {};
-      dispatch(setAllMessages(rawMessages));
+      if (Array.isArray(rawMessages)) {
+        dispatch(setAllMessages(rawMessages));
+        const userId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+        if (userId && rawMessages.length > 0) {
+          AsyncStorage.setItem(`cached_chat_messages_${userId}`, JSON.stringify(rawMessages)).catch(() => {});
+        }
+      }
       if (partners && Object.keys(partners).length > 0) {
         setConversationPartners((prev) => ({ ...prev, ...partners }));
       }
     } catch (err) {
-      console.log('Error fetching messages:', err);
+      console.log('Error fetching messages (retaining cached messages):', err);
     } finally {
       setIsMessagesLoading(false);
     }
@@ -322,12 +398,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const fetchUnreadLikesCount = async () => {
     try {
+      const netState = await NetInfo.fetch();
+      if (netState && netState.isConnected === false) return;
       const res = await apiClient.getUnreadNotifications();
       if (res && Array.isArray(res.notifications)) {
         const likeNotifs = res.notifications.filter((n) => (n.type === 'like' || n.type === 'superlike') && !n.isRead);
         setUnreadLikesCount(likeNotifs.length);
       }
     } catch (err) {
+      if (err?.isOffline || err?.message?.includes('offline') || err?.message?.includes('Network request failed')) {
+        return;
+      }
       console.log('Error fetching unread likes count:', err);
     }
   };
@@ -395,13 +476,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   }, [currentUser, userProfile]);
 
   useEffect(() => {
-    const badgeSyncInterval = setInterval(() => {
-      try { fetchUnreadLikesCount(); } catch (e) {}
-      try { fetchMessages(); } catch (e) {}
+    const badgeSyncInterval = setInterval(async () => {
+      try {
+        const netState = await NetInfo.fetch();
+        if (netState && netState.isConnected === false) return;
+        fetchUnreadLikesCount();
+        fetchMessages();
+      } catch (e) {}
     }, 4000);
     // Poll blocked/unblocked status every 30 seconds as a fallback for missed socket events
-    const blockedSyncInterval = setInterval(() => {
-      try { fetchBlockedUsers(); } catch (e) {}
+    const blockedSyncInterval = setInterval(async () => {
+      try {
+        const netState = await NetInfo.fetch();
+        if (netState && netState.isConnected === false) return;
+        fetchBlockedUsers();
+      } catch (e) {}
     }, 30000);
     return () => {
       clearInterval(badgeSyncInterval);
@@ -774,9 +863,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (!prev) return prev;
         const pId = (prev.id || prev._id || prev.userId)?.toString();
         if (pId === partnerId) {
-          const hasMatchInit = (prev.messages || []).some((m) => m.id === 'match-init');
-          const finalMsgs = (formattedMsgs.length === 0 && hasMatchInit) ? prev.messages : formattedMsgs;
           const prevMsgs = prev.messages || [];
+          const finalMsgs = (formattedMsgs.length === 0 && prevMsgs.length > 0) ? prevMsgs : formattedMsgs;
           const msgsEqual = prevMsgs.length === finalMsgs.length &&
             prevMsgs.every((m, i) => m.id === finalMsgs[i]?.id && m.text === finalMsgs[i]?.text);
           const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : prev.isBlocked;
@@ -798,9 +886,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         prevChats.map((c) => {
           const cId = (c.id || c._id || c.userId)?.toString();
           if (cId === partnerId) {
-            const hasMatchInit = (c.messages || []).some((m) => m.id === 'match-init');
-            const finalMsgs = (formattedMsgs.length === 0 && hasMatchInit) ? c.messages : formattedMsgs;
             const prevMsgs = c.messages || [];
+            const finalMsgs = (formattedMsgs.length === 0 && prevMsgs.length > 0) ? prevMsgs : formattedMsgs;
             const msgsEqual = prevMsgs.length === finalMsgs.length &&
               prevMsgs.every((m, i) => m.id === finalMsgs[i]?.id && m.text === finalMsgs[i]?.text);
             const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : c.isBlocked;
@@ -1521,10 +1608,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       socketRef.current.on('user_status', ({ userId, status, lastSeen }) => {
-        console.log(`Socket.IO user_status: ${userId} is ${status}, lastSeen: ${lastSeen}`);
+        const isOnline = status === 'online';
+        console.log(`🔄 [FRONTEND STATUS CHANGE] User "${userId}" status changed to -> ${isOnline ? 'Online 🟢' : 'Offline 🔴'} (via socket event user_status, lastSeen: ${lastSeen || 'N/A'})`);
         setOnlineUsersMap((prev) => ({
           ...prev,
-          [userId.toString()]: status === 'online',
+          [userId.toString()]: isOnline,
         }));
         if (status === 'offline' && lastSeen) {
           setLastSeenMap((prev) => ({
@@ -1535,7 +1623,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       socketRef.current.on('online_status_response', ({ targetUserId, isOnline, lastSeen }) => {
-        console.log(`Socket.IO online_status_response: targetUserId=${targetUserId}, isOnline=${isOnline}, lastSeen=${lastSeen}`);
+        console.log(`🔄 [FRONTEND STATUS CHANGE] Target User "${targetUserId}" status updated to -> ${isOnline ? 'Online 🟢' : 'Offline 🔴'} (via online_status_response, lastSeen: ${lastSeen || 'N/A'})`);
         if (targetUserId) {
           setOnlineUsersMap((prev) => ({
             ...prev,
@@ -1640,8 +1728,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         };
         const rIdStr = (msgData.receiverId || msgData.receiver)?.toString();
 
-        setChats((prevChats) =>
-          prevChats.map((c) => {
+        setChats((prevChats) => {
+          if (!Array.isArray(prevChats)) return prevChats;
+          const updated = prevChats.map((c) => {
             const cIdStr = (c.id || c._id || c.userId)?.toString();
             if (cIdStr === rIdStr) {
               const msgs = c.messages || [];
@@ -1654,8 +1743,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               };
             }
             return c;
-          })
-        );
+          });
+          return sortChatsByRecent(updated);
+        });
         setActiveChat((prevActive) => {
           if (!prevActive) return prevActive;
           const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
@@ -1716,10 +1806,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           return prevActive;
         });
 
-        // 2. Instantly update chats list state
+        // 2. Instantly update chats list state & sort most recent to top!
         setChats((prevChats) => {
           if (!Array.isArray(prevChats)) return prevChats;
           const existsInChats = prevChats.some((c) => (c.id || c._id || c.userId)?.toString() === senderIdStr);
+          let updatedChats;
           if (!existsInChats) {
             const newChat = {
               id: senderIdStr,
@@ -1729,22 +1820,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               lastMessageTime: formattedMsg.time,
               messages: [formattedMsg],
             };
-            return [newChat, ...prevChats];
+            updatedChats = [newChat, ...prevChats];
+          } else {
+            updatedChats = prevChats.map((c) => {
+              const chatPartnerId = (c.id || c._id || c.userId)?.toString();
+              if (chatPartnerId === senderIdStr) {
+                const msgs = c.messages || [];
+                const exists = msgs.some((m) => (m.id || m._id)?.toString() === formattedMsg.id);
+                return {
+                  ...c,
+                  lastMessage: formattedMsg.text || 'Message',
+                  lastMessageTime: formattedMsg.time,
+                  messages: exists ? msgs : [...msgs, formattedMsg],
+                };
+              }
+              return c;
+            });
           }
-          return prevChats.map((c) => {
-            const chatPartnerId = (c.id || c._id || c.userId)?.toString();
-            if (chatPartnerId === senderIdStr) {
-              const msgs = c.messages || [];
-              const exists = msgs.some((m) => (m.id || m._id)?.toString() === formattedMsg.id);
-              return {
-                ...c,
-                lastMessage: formattedMsg.text || 'Message',
-                lastMessageTime: formattedMsg.time,
-                messages: exists ? msgs : [...msgs, formattedMsg],
-              };
-            }
-            return c;
-          });
+          return sortChatsByRecent(updatedChats);
         });
 
         if (handleIncomingMessageRef.current) {
@@ -2273,20 +2366,53 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     let pingInterval;
     if (currentId) {
       // Send initial presence update on mount/login
-      try { apiClient.updatePresence().catch(() => {}); } catch (e) {}
+      const evaluateAndEmitPresence = async () => {
+        const netState = await NetInfo.fetch().catch(() => ({ isConnected: true, isInternetReachable: true }));
+        const cond1_loggedIn = !!currentId;
+        const cond2_appActive = AppState.currentState === 'active';
+        const cond3_networkOn = !!(netState.isConnected && netState.isInternetReachable !== false);
+        const finalOnlineStatus = cond1_loggedIn && cond2_appActive && cond3_networkOn;
 
-      pingInterval = setInterval(() => {
-        if (AppState.currentState === 'active') {
+        console.log('🟢 [ONLINE STATUS CHECK]', {
+          Condition1_LoggedIn: cond1_loggedIn,
+          Condition2_AppActive: cond2_appActive,
+          Condition3_NetworkOn: cond3_networkOn,
+          FINAL_STATUS: finalOnlineStatus ? 'Online 🟢' : 'Offline 🔴'
+        });
+
+        if (finalOnlineStatus) {
           if (socketRef.current && socketRef.current.connected) {
             socketRef.current.emit('ping_presence', currentId);
           }
-          try { apiClient.updatePresence().catch(() => {}); } catch (e) {}
+          try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+        } else {
+          try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
         }
+      };
+
+      evaluateAndEmitPresence();
+
+      pingInterval = setInterval(() => {
+        evaluateAndEmitPresence();
       }, 10000);
     }
 
-    const handleAppStateChange = (nextAppState) => {
-      if (nextAppState === 'active' && currentId) {
+    const handleAppStateChange = async (nextAppState) => {
+      const netState = await NetInfo.fetch().catch(() => ({ isConnected: true, isInternetReachable: true }));
+      const cond1_loggedIn = !!currentId;
+      const cond2_appActive = nextAppState === 'active';
+      const cond3_networkOn = !!(netState.isConnected && netState.isInternetReachable !== false);
+      const finalOnlineStatus = cond1_loggedIn && cond2_appActive && cond3_networkOn;
+
+      console.log('🟢 [AppState Change - ONLINE STATUS CHECK]', {
+        nextAppState,
+        Condition1_LoggedIn: cond1_loggedIn,
+        Condition2_AppActive: cond2_appActive,
+        Condition3_NetworkOn: cond3_networkOn,
+        FINAL_STATUS: finalOnlineStatus ? 'Online 🟢' : 'Offline 🔴'
+      });
+
+      if (finalOnlineStatus) {
         // Instantly refresh badge counts on app active
         try { fetchUnreadLikesCount(); } catch (e) {}
         try { fetchLikes(); } catch (e) {}
@@ -2294,12 +2420,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         try { fetchMatchesList(); } catch (e) {}
         try { checkActiveWarning(); } catch (e) {}
 
+        try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+
         if (socketRef.current) {
           if (!socketRef.current.connected) {
             console.log('[AppState] Socket disconnected. Reconnecting...');
             socketRef.current.connect();
           } else {
-            console.log('[AppState] App in foreground. Re-emitting join and ping_presence for user:', currentId);
+            console.log('[AppState] App in foreground & online. Re-emitting join and ping_presence for user:', currentId);
             socketRef.current.emit('join', currentId);
             socketRef.current.emit('ping_presence', currentId);
           }
@@ -2311,8 +2439,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           }
         }
       } else if ((nextAppState === 'background' || nextAppState === 'inactive') && currentId) {
+        console.log('[AppState] App in background/inactive/locked screen. Updating presence API to offline...');
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
         if (socketRef.current) {
-          console.log('[AppState] App in background/inactive. Emitting going_offline and disconnecting synchronously for user:', currentId);
+          console.log('[AppState] Emitting going_offline and disconnecting socket for user:', currentId);
           try { socketRef.current.emit('going_offline', currentId); } catch (e) {}
           try { socketRef.current.disconnect(); } catch (e) {}
         }
@@ -2333,18 +2463,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
 
     const unsubscribeNetInfo = NetInfo.addEventListener((state) => {
-      const hasNetwork = !!(state.isConnected && state.isInternetReachable !== false);
-      console.log(`[NetInfo] Connectivity state change: isConnected=${state.isConnected}, isInternetReachable=${state.isInternetReachable}`);
+      const cond1_loggedIn = !!currentId;
+      const cond2_appActive = AppState.currentState === 'active';
+      const cond3_networkOn = !!(state.isConnected && state.isInternetReachable !== false);
+      const finalOnlineStatus = cond1_loggedIn && cond2_appActive && cond3_networkOn;
 
-      if (!hasNetwork) {
-        console.log('[NetInfo] Network/Wi-Fi disconnected. Disconnecting socket and going offline...');
+      console.log('🟢 [NetInfo Change - ONLINE STATUS CHECK]', {
+        isConnected: state.isConnected,
+        isInternetReachable: state.isInternetReachable,
+        Condition1_LoggedIn: cond1_loggedIn,
+        Condition2_AppActive: cond2_appActive,
+        Condition3_NetworkOn: cond3_networkOn,
+        FINAL_STATUS: finalOnlineStatus ? 'Online 🟢' : 'Offline 🔴'
+      });
+
+      if (!finalOnlineStatus) {
+        console.log('[NetInfo] Conditions not met (network/Wi-Fi off or inactive). Calling offline presence API and disconnecting socket...');
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
         if (socketRef.current) {
           try { if (currentId) socketRef.current.emit('going_offline', currentId); } catch (e) {}
           try { socketRef.current.disconnect(); } catch (e) {}
         }
       } else {
-        console.log('[NetInfo] Network/Wi-Fi connected.');
-        if (AppState.currentState === 'active' && currentId && socketRef.current) {
+        console.log('[NetInfo] All 3 conditions met (Network + App Active + Logged In). Calling online presence API & reconnecting socket.');
+        try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+        if (socketRef.current) {
           if (!socketRef.current.connected) {
             console.log('[NetInfo] Reconnecting socket for active user:', currentId);
             socketRef.current.connect();
@@ -2606,6 +2749,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const displayName = isBlockedByOther
           ? 'Matched User'
           : (otherUser.name || otherUser.firstName || 'Matched User');
+
+        // Preserve any real messages that already exist in local state
+        const existingChatInState = (chats || []).find((c) => (c.id || c._id || c.userId)?.toString() === matchedUserStr);
+        const existingRealMsgs = (existingChatInState?.messages || []).filter((m) => m.id !== 'match-init');
+
         chatsList.push({
           id: matchedUserStr,
           name: displayName,
@@ -2613,7 +2761,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           lastSeen: otherUser.lastSeen,
           isBlocked: isBlocked,
           isBlockedByOther: isBlockedByOther,
-          messages: [
+          messages: existingRealMsgs.length > 0 ? existingRealMsgs : [
             {
               id: 'match-init',
               sender: 'them',
@@ -2647,7 +2795,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
     });
 
-    setChats(chatsList);
+    setChats(sortChatsByRecent(chatsList));
 
     // Keep activeChat updated if open
     setActiveChat((prevActiveChat) => {
@@ -3010,8 +3158,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       return objIdStr === targetStr;
     };
 
-    setChats((prevChats) =>
-      prevChats.map((c) => {
+    setChats((prevChats) => {
+      if (!Array.isArray(prevChats)) return prevChats;
+      const updated = prevChats.map((c) => {
         if (isIdMatch(c, receiverId)) {
           const msgs = (c.messages || []).filter((m) => m.id !== 'match-init');
           const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
@@ -3021,8 +3170,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           };
         }
         return c;
-      })
-    );
+      });
+      return sortChatsByRecent(updated);
+    });
     setActiveChat((prevActive) => {
       if (isIdMatch(prevActive, receiverId)) {
         const msgs = (prevActive.messages || []).filter((m) => m.id !== 'match-init');
@@ -3995,6 +4145,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         <View style={styles.contentArea}>
           {activeTab === 'search' && (
             <SearchScreen
+              currentUser={currentUser}
+              userProfile={userProfile}
               onSelectProfile={(profile) => {
                 console.log('Selected Profile from Search:', profile);
               }}
@@ -4986,7 +5138,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   </View>
                   {chats.length > 0 ? (
                     <ScrollView style={styles.chatsList} showsVerticalScrollIndicator={false}>
-                      {chats.map((chat) => {
+                      {sortChatsByRecent(chats).map((chat) => {
                         const currentId = currentUser?.id || currentUser?._id;
                         const unreadCount = (chat.messages || []).filter(
                           (m) => (m.sender !== 'you' && m.senderId !== currentId?.toString()) && m.id !== 'match-init' && m.status !== 'seen'

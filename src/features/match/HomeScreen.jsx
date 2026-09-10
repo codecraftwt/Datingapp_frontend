@@ -988,10 +988,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       socketRef.current.on('user_status', ({ userId, status, lastSeen }) => {
-        console.log(`Socket.IO user_status: ${userId} is ${status}, lastSeen: ${lastSeen}`);
+        const isOnline = status === 'online';
+        console.log(`🔄 [FRONTEND MATCH STATUS CHANGE] User "${userId}" status changed to -> ${isOnline ? 'Online 🟢' : 'Offline 🔴'} (via socket event user_status, lastSeen: ${lastSeen || 'N/A'})`);
         setOnlineUsersMap((prev) => ({
           ...prev,
-          [userId.toString()]: status === 'online',
+          [userId.toString()]: isOnline,
         }));
         if (status === 'offline' && lastSeen) {
           setLastSeenMap((prev) => ({
@@ -1607,26 +1608,64 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     let pingInterval;
     if (currentId) {
-      pingInterval = setInterval(() => {
-        if (socketRef.current && socketRef.current.connected && AppState.currentState === 'active') {
-          socketRef.current.emit('ping_presence', currentId);
+      const evaluateAndEmitPresence = async () => {
+        const netState = await NetInfo.fetch().catch(() => ({ isConnected: true, isInternetReachable: true }));
+        const cond1_loggedIn = !!currentId;
+        const cond2_appActive = AppState.currentState === 'active';
+        const cond3_networkOn = !!(netState.isConnected && netState.isInternetReachable !== false);
+        const finalOnlineStatus = cond1_loggedIn && cond2_appActive && cond3_networkOn;
+
+        console.log('🟢 [ONLINE STATUS CHECK (Match)]', {
+          Condition1_LoggedIn: cond1_loggedIn,
+          Condition2_AppActive: cond2_appActive,
+          Condition3_NetworkOn: cond3_networkOn,
+          FINAL_STATUS: finalOnlineStatus ? 'Online 🟢' : 'Offline 🔴'
+        });
+
+        if (finalOnlineStatus) {
+          if (socketRef.current && socketRef.current.connected) {
+            socketRef.current.emit('ping_presence', currentId);
+          }
+          try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+        } else {
+          try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
         }
+      };
+
+      evaluateAndEmitPresence();
+
+      pingInterval = setInterval(() => {
+        evaluateAndEmitPresence();
       }, 15000);
     }
 
-    const handleAppStateChange = (nextAppState) => {
-      console.log(`[AppState] State changed to: ${nextAppState}`);
-      if (nextAppState === 'active' && currentId) {
+    const handleAppStateChange = async (nextAppState) => {
+      const netState = await NetInfo.fetch().catch(() => ({ isConnected: true, isInternetReachable: true }));
+      const cond1_loggedIn = !!currentId;
+      const cond2_appActive = nextAppState === 'active';
+      const cond3_networkOn = !!(netState.isConnected && netState.isInternetReachable !== false);
+      const finalOnlineStatus = cond1_loggedIn && cond2_appActive && cond3_networkOn;
+
+      console.log('🟢 [AppState Change - ONLINE STATUS CHECK (Match)]', {
+        nextAppState,
+        Condition1_LoggedIn: cond1_loggedIn,
+        Condition2_AppActive: cond2_appActive,
+        Condition3_NetworkOn: cond3_networkOn,
+        FINAL_STATUS: finalOnlineStatus ? 'Online 🟢' : 'Offline 🔴'
+      });
+
+      if (finalOnlineStatus) {
         try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) {}
         try { if (typeof refetchMessages === 'function') refetchMessages(); } catch (e) {}
         try { if (typeof refetchMatchesList === 'function') refetchMatchesList(); } catch (e) {}
+        try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
 
         if (socketRef.current) {
           if (!socketRef.current.connected) {
             console.log('[AppState] Socket disconnected. Reconnecting...');
             socketRef.current.connect();
           } else {
-            console.log('[AppState] App in foreground. Re-emitting join for user:', currentId);
+            console.log('[AppState] App in foreground & online. Re-emitting join for user:', currentId);
             socketRef.current.emit('join', currentId);
           }
         }
@@ -1637,8 +1676,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           }
         }
       } else if ((nextAppState === 'background' || nextAppState === 'inactive') && currentId) {
+        console.log('[AppState] App in background/inactive (Match). Updating presence API to offline...');
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
         if (socketRef.current) {
-          console.log('[AppState] App in background/inactive. Emitting going_offline and disconnecting synchronously for user:', currentId);
+          console.log('[AppState] Emitting going_offline and disconnecting synchronously for user:', currentId);
           try { socketRef.current.emit('going_offline', currentId); } catch (e) {}
           try { socketRef.current.disconnect(); } catch (e) {}
         }
@@ -1659,18 +1700,30 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
 
     const unsubscribeNetInfo = NetInfo.addEventListener((state) => {
-      const hasNetwork = !!(state.isConnected && state.isInternetReachable !== false);
-      console.log(`[NetInfo] Connectivity state change: isConnected=${state.isConnected}, isInternetReachable=${state.isInternetReachable}`);
+      const cond1_loggedIn = !!currentId;
+      const cond2_appActive = AppState.currentState === 'active';
+      const cond3_networkOn = !!(state.isConnected && state.isInternetReachable !== false);
+      const finalOnlineStatus = cond1_loggedIn && cond2_appActive && cond3_networkOn;
 
-      if (!hasNetwork) {
-        console.log('[NetInfo] Network/Wi-Fi disconnected. Disconnecting socket and going offline...');
+      console.log('🟢 [NetInfo Change - ONLINE STATUS CHECK (Match)]', {
+        isConnected: state.isConnected,
+        isInternetReachable: state.isInternetReachable,
+        Condition1_LoggedIn: cond1_loggedIn,
+        Condition2_AppActive: cond2_appActive,
+        Condition3_NetworkOn: cond3_networkOn,
+        FINAL_STATUS: finalOnlineStatus ? 'Online 🟢' : 'Offline 🔴'
+      });
+
+      if (!finalOnlineStatus) {
+        console.log('[NetInfo] Conditions not met (network/Wi-Fi off or inactive). Disconnecting socket and going offline...');
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
         if (socketRef.current) {
           try { if (currentId) socketRef.current.emit('going_offline', currentId); } catch (e) {}
           try { socketRef.current.disconnect(); } catch (e) {}
         }
       } else {
-        console.log('[NetInfo] Network/Wi-Fi connected.');
-        if (AppState.currentState === 'active' && currentId && socketRef.current) {
+        console.log('[NetInfo] All 3 conditions met (Network + App Active + Logged In). Reconnecting socket if needed.');
+        if (socketRef.current) {
           if (!socketRef.current.connected) {
             console.log('[NetInfo] Reconnecting socket for active user:', currentId);
             socketRef.current.connect();

@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { BASE_URL, CANDIDATE_URLS, LIVE_URL, LOCAL_URL, EMULATOR_URL, NETWORK_URL, getBaseUrl, setBaseUrl } from './config';
 
 let isResolving = false;
@@ -118,6 +119,19 @@ const request = async (url, options = {}, isRetry = false) => {
       if (options.signal && options.signal.aborted) {
         throw networkErr;
       }
+
+      // Check device network connectivity to avoid noisy retries when user turned network off
+      try {
+        const netState = await NetInfo.fetch();
+        if (netState && netState.isConnected === false) {
+          const offlineErr = new Error('Network request failed: Device is offline');
+          offlineErr.isOffline = true;
+          throw offlineErr;
+        }
+      } catch (checkErr) {
+        if (checkErr.isOffline) throw checkErr;
+      }
+
       if (networkErr.name === 'AbortError') {
         console.warn(`[apiClient] Request to ${formatFullUrl(currentBase, url)} timed out. Retrying...`);
       } else {
@@ -430,10 +444,11 @@ export const apiClient = {
       method: 'GET',
     });
   },
-  updatePresence: async () => {
+  updatePresence: async (presenceData) => {
     try {
       return await request('/api/profile/presence', {
         method: 'POST',
+        body: JSON.stringify(presenceData || { isOnline: true }),
       });
     } catch (err) {
       return { success: false };
@@ -492,8 +507,7 @@ export const apiClient = {
       });
     } catch (err) {
       if (err.name === 'AbortError' || err.message?.includes('Aborted') || err.message?.includes('abort')) {
-        console.warn('[apiClient] getMessages request aborted or timed out. Returning empty list.');
-        return [];
+        console.warn('[apiClient] getMessages request aborted or timed out.');
       }
       throw err;
     }
@@ -512,7 +526,6 @@ export const apiClient = {
     } catch (err) {
       if (err?.name === 'AbortError' || err?.message?.includes('Aborted') || err?.message?.includes('abort')) {
         console.warn(`[apiClient] getChatMessages request for ${selectedUserId} was aborted or timed out.`);
-        return { success: true, messages: [], isBlockedByMe: false, isBlockedByOther: false };
       }
       throw err;
     }

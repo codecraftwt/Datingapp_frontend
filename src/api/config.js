@@ -12,14 +12,11 @@ export const NETWORK_URL = 'http://10.0.3.64:5000';
  * - Local Wi-Fi Network: 'http://10.0.3.64:5000'
  * - Live Production Fallback: LIVE_URL
  */
-export const CANDIDATE_URLS = [
-  LIVE_URL,
-  LOCAL_URL,
-  EMULATOR_URL,
-  NETWORK_URL,
-];
+export const CANDIDATE_URLS = __DEV__
+  ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
+  : [LIVE_URL];
 
-let workingBaseUrl = LIVE_URL;
+let workingBaseUrl = __DEV__ ? LOCAL_URL : LIVE_URL;
 
 
 export const getBaseUrl = () => workingBaseUrl;
