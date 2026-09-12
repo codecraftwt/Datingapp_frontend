@@ -5,6 +5,21 @@ export const LOCAL_URL = 'http://localhost:5000';
 export const EMULATOR_URL = 'http://10.0.2.2:5000';
 export const NETWORK_URL = 'http://10.0.3.64:5000';
 
+export const STRIPE_PUBLISHABLE_KEY = 'pk_test_51OrZdzSGA5udBfcN8rWWXOK535E24Fp5njj3n1ccrwNROQKrcljjKvo7HpTNK8EwaaznhKLwZ777OfUgWwCmbB0w00lnqqp0HL';
+
+export const SUBSCRIPTION_PLANS = {
+  GOLD: {
+    productId: 'prod_VEWOERRHV3EsTS',
+    priceId: 'price_1UE3LnSGA5udBfcNKNBvbHv8',
+    type: 'Gold',
+  },
+  PREMIUM: {
+    productId: 'prod_VEWNuxpAsnKkZm',
+    priceId: 'price_1UE3KpSGA5udBfcNnAqb54o1',
+    type: 'Premium',
+  },
+};
+
 /**
  * Candidate URLs used in Development mode:
  * - USB/ADB Reverse Debugging: 'http://localhost:5000'

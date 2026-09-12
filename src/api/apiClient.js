@@ -14,7 +14,7 @@ const resolveWorkingBaseUrl = async () => {
   if (isResolving) return getBaseUrl();
   isResolving = true;
 
-  const candidateList = [NETWORK_URL, LOCAL_URL, EMULATOR_URL, LIVE_URL];
+  const candidateList = __DEV__ ? [LOCAL_URL, EMULATOR_URL, NETWORK_URL, LIVE_URL] : [LIVE_URL, LOCAL_URL, EMULATOR_URL, NETWORK_URL];
 
   for (const candidate of candidateList) {
     try {
@@ -159,16 +159,17 @@ const request = async (url, options = {}, isRetry = false) => {
       }
     }
 
-    // Auto-fallback to local backend candidates if remote backend returns 404
-    if (!response.ok && response.status === 404 && currentBase === LIVE_URL && !isRetry) {
-      console.warn(`[apiClient] Remote LIVE_URL returned 404 for ${url}. Trying local backend candidates...`);
-      for (const fallbackUrl of [LOCAL_URL, EMULATOR_URL, NETWORK_URL]) {
+    // Auto-fallback to candidate backend URLs if current backend returns 404
+    if (!response.ok && response.status === 404 && !isRetry) {
+      console.warn(`[apiClient] Current backend (${currentBase}) returned 404 for ${url}. Trying candidate backend URLs...`);
+      for (const fallbackUrl of [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]) {
+        if (fallbackUrl === currentBase) continue;
         try {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 2000);
           const testRes = await fetch(`${fallbackUrl}${url}`, { ...options, headers, signal: controller.signal });
           clearTimeout(timeoutId);
-          if (testRes.ok || testRes.status < 500) {
+          if (testRes.ok || (testRes.status < 500 && testRes.status !== 404)) {
             activeResolvedUrl = fallbackUrl;
             setBaseUrl(fallbackUrl);
             const responseText = await testRes.text();
@@ -753,6 +754,70 @@ export const apiClient = {
     return await request('/api/profile/gallery-preview', {
       method: 'GET',
     });
+  },
+
+  // Subscription API endpoints with dual route fallback (plural & singular)
+  getSubscriptionPlans: async () => {
+    try {
+      return await request('/api/subscriptions/plans', { method: 'GET' });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        return await request('/api/subscription/plans', { method: 'GET' });
+      }
+      throw err;
+    }
+  },
+  createSubscriptionCheckout: async (planType) => {
+    try {
+      return await request('/api/subscriptions/create-checkout-session', {
+        method: 'POST',
+        body: JSON.stringify({ planType }),
+      });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        return await request('/api/subscription/create-checkout-session', {
+          method: 'POST',
+          body: JSON.stringify({ planType }),
+        });
+      }
+      throw err;
+    }
+  },
+  confirmSubscription: async (subscriptionId, planType) => {
+    try {
+      return await request('/api/subscriptions/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ subscriptionId, planType }),
+      });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        return await request('/api/subscription/confirm', {
+          method: 'POST',
+          body: JSON.stringify({ subscriptionId, planType }),
+        });
+      }
+      throw err;
+    }
+  },
+  getMySubscription: async () => {
+    try {
+      return await request('/api/subscriptions/my-subscription', { method: 'GET' });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        return await request('/api/subscription/my-subscription', { method: 'GET' });
+      }
+      throw err;
+    }
+  },
+  cancelSubscription: async () => {
+    try {
+      return await request('/api/subscriptions/cancel', { method: 'POST' });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        return await request('/api/subscription/cancel', { method: 'POST' });
+      }
+      throw err;
+    }
   },
 
   logoutBackend: async () => {

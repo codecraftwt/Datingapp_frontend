@@ -25,6 +25,7 @@ import { PreviewModal } from '../components/PreviewModal';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { registerFcmToken } from '../services/notificationService';
+import { SubscriptionModal } from '../components/SubscriptionModal';
 import Video from 'react-native-video';
 
 const { width } = Dimensions.get('window');
@@ -34,28 +35,27 @@ const SUBSCRIPTION_PLANS = [
     id: 'gold',
     name: 'Spark Gold ⭐',
     badge: 'MOST POPULAR',
-    price: '$14.99/mo',
+    price: '₹999/mo',
     features: [
       '⚡ Unlimited Likes & Swipes',
       '👀 See Who Liked You First',
-      '🚀 1 Free Boost per Month',
-      '⭐ 5 Free Super Likes a Week',
-      '🔄 Unlimited Rewinds',
+      '⭐ 5 Free Super Likes Daily',
+      '✈️ Passport Location Change',
     ],
     accentColor: '#FFD700',
   },
   {
-    id: 'platinum',
-    name: 'Spark Platinum 👑',
-    badge: 'VIP ACCESS',
-    price: '$24.99/mo',
+    id: 'premium',
+    name: 'Spark Premium 👑',
+    badge: 'BEST VALUE',
+    price: '₹499/mo',
     features: [
-      '👑 Priority Likes in Match Queue',
-      '💬 Message Before Matching',
-      '🌐 Passport to Any Location',
-      '⚡ All Spark Gold Features Included',
+      '👑 All Gold Features Included',
+      '🚀 1 Free Boost per Month',
+      '🔥 Priority Likes in Match Queue',
+      '🔍 Advanced Filters Unlocked',
     ],
-    accentColor: '#E5E4E2',
+    accentColor: '#FE3C72',
   },
 ];
 
@@ -115,6 +115,16 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   // Profile Privacy & Visibility State
   const [isProfileHiddenState, setIsProfileHiddenState] = useState(!!userProfile?.isProfileHidden);
   const [visibilityLoading, setVisibilityLoading] = useState(false);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+
+  useEffect(() => {
+    apiClient.getMySubscription().then((res) => {
+      if (res && res.success && res.subscriptionTier) {
+        setActivePlan(res.subscriptionTier);
+        setProfile((prev) => (prev ? { ...prev, subscriptionTier: res.subscriptionTier } : prev));
+      }
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (userProfile && userProfile.isProfileHidden !== undefined) {
@@ -1048,20 +1058,13 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             <TouchableOpacity
               style={[
                 styles.subscribeBtn,
-                activePlan === plan.id ? styles.subscribedBtn : { backgroundColor: plan.accentColor },
+                (activePlan === plan.id || profile?.subscriptionTier?.toLowerCase() === plan.id) ? styles.subscribedBtn : { backgroundColor: plan.accentColor },
               ]}
-              onPress={() => {
-                if (activePlan === plan.id) {
-                  Alert.alert('Subscribed', `You are currently on ${plan.name}`);
-                } else {
-                  setActivePlan(plan.id);
-                  Alert.alert('Subscription Activated', `Welcome to ${plan.name}! All premium features are unlocked.`);
-                }
-              }}
+              onPress={() => setIsSubscriptionModalOpen(true)}
               activeOpacity={0.8}
             >
               <Text style={styles.subscribeBtnText}>
-                {activePlan === plan.id ? 'CURRENT PLAN' : `UPGRADE TO ${plan.name.toUpperCase()}`}
+                {(activePlan === plan.id || profile?.subscriptionTier?.toLowerCase() === plan.id) ? 'MANAGE MEMBERSHIP' : 'Subscribe'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1668,6 +1671,19 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             Alert.alert('Error', 'Could not unhide media item.');
           } finally {
             setLoading(false);
+          }
+        }}
+      />
+
+      <SubscriptionModal
+        visible={isSubscriptionModalOpen}
+        onClose={() => setIsSubscriptionModalOpen(false)}
+        currentTier={profile?.subscriptionTier || activePlan}
+        onSubscriptionUpdated={(newTier) => {
+          setActivePlan(newTier);
+          setProfile((prev) => (prev ? { ...prev, subscriptionTier: newTier } : prev));
+          if (typeof onUpdateProfile === 'function') {
+            onUpdateProfile({ subscriptionTier: newTier });
           }
         }}
       />
