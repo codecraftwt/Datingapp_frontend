@@ -758,6 +758,7 @@ export const apiClient = {
 
   // Subscription API endpoints with dual route fallback (plural & singular)
   getSubscriptionPlans: async () => {
+    console.log('📡 [API_CLIENT: GET_PLANS] Fetching plans...');
     try {
       return await request('/api/subscriptions/plans', { method: 'GET' });
     } catch (err) {
@@ -768,6 +769,7 @@ export const apiClient = {
     }
   },
   createSubscriptionCheckout: async (planType) => {
+    console.log('📡 [API_CLIENT: CREATE_CHECKOUT] Requesting session for:', planType);
     try {
       return await request('/api/subscriptions/create-checkout-session', {
         method: 'POST',
@@ -784,6 +786,7 @@ export const apiClient = {
     }
   },
   confirmSubscription: async (subscriptionId, planType) => {
+    console.log('📡 [API_CLIENT: CONFIRM_SUBSCRIPTION] Confirming sub:', subscriptionId, 'Plan:', planType);
     try {
       return await request('/api/subscriptions/confirm', {
         method: 'POST',
@@ -800,6 +803,7 @@ export const apiClient = {
     }
   },
   getMySubscription: async () => {
+    console.log('📡 [API_CLIENT: GET_MY_SUBSCRIPTION] Fetching current user subscription...');
     try {
       return await request('/api/subscriptions/my-subscription', { method: 'GET' });
     } catch (err) {
@@ -810,6 +814,7 @@ export const apiClient = {
     }
   },
   cancelSubscription: async () => {
+    console.log('📡 [API_CLIENT: CANCEL_SUBSCRIPTION] Requesting subscription cancellation...');
     try {
       return await request('/api/subscriptions/cancel', { method: 'POST' });
     } catch (err) {
