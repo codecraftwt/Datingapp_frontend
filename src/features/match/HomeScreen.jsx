@@ -2667,7 +2667,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         <View style={styles.header}>
           <View style={styles.logoContainer}>
             <View style={styles.logoIcon}>
-              <Text style={styles.logoIconText}>🔥</Text>
+              <Ionicons name="flame" size={26} color="#FE3C72" />
             </View>
             <Text style={styles.logoText}>FlameMatch</Text>
           </View>
@@ -2786,7 +2786,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 </View>
               ) : (
                 <View style={styles.noMatchesCard}>
-                  <Text style={styles.noMatchesEmoji}>🎉</Text>
+                  <Ionicons name="sparkles" size={56} color="#FFD700" style={{ marginBottom: 16 }} />
                   <Text style={styles.noMatchesTitle}>You've Swiped Everyone!</Text>
                   <Text style={styles.noMatchesSubtitle}>
                     Check back later or expand your distance preference sliders to find more candidates near you.
@@ -2889,7 +2889,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 </ScrollView>
               ) : (
                 <View style={styles.emptyLikesContainer}>
-                  <Text style={styles.emptyLikesEmoji}>❤️</Text>
+                  <Ionicons name="heart-dislike-outline" size={56} color="#FE3C72" style={{ marginBottom: 16 }} />
                   <Text style={styles.emptyLikesTitle}>No Likes Yet</Text>
                   <Text style={styles.emptyLikesSubtitle}>
                     Keep swiping! When someone likes you back, they will appear here.
@@ -3082,7 +3082,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     </ScrollView>
                   ) : (
                     <View style={styles.emptyChatsContainer}>
-                      <Text style={styles.emptyChatsEmoji}>💬</Text>
+                      <Ionicons name="chatbubbles-outline" size={56} color="#38BDF8" style={{ marginBottom: 16 }} />
                       <Text style={styles.emptyChatsTitle}>No Conversations Yet</Text>
                       <Text style={styles.emptyChatsSubtitle}>
                         Your matches will show up here. Swipe right to match and start chatting!

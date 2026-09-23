@@ -40,7 +40,6 @@ const SUBSCRIPTION_PLANS = [
       '⚡ Unlimited Likes & Swipes',
       '👀 See Who Liked You First',
       '⭐ 5 Free Super Likes Daily',
-      '✈️ Passport Location Change',
     ],
     accentColor: '#FFD700',
   },
@@ -50,9 +49,7 @@ const SUBSCRIPTION_PLANS = [
     badge: 'BEST VALUE',
     price: '₹499/mo',
     features: [
-      '👑 All Gold Features Included',
       '🚀 1 Free Boost per Month',
-      '🔥 Priority Likes in Match Queue',
       '🔍 Advanced Filters Unlocked',
     ],
     accentColor: '#FE3C72',
@@ -123,7 +120,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         setActivePlan(res.subscriptionTier);
         setProfile((prev) => (prev ? { ...prev, subscriptionTier: res.subscriptionTier } : prev));
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -269,6 +266,15 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onUpdateProfile(userData);
         }
       }
+
+      // Also sync real-time active subscription status from server
+      try {
+        const subRes = await apiClient.getMySubscription();
+        if (subRes && subRes.success && subRes.subscriptionTier) {
+          setActivePlan(subRes.subscriptionTier);
+          setProfile((prev) => (prev ? { ...prev, subscriptionTier: subRes.subscriptionTier } : prev));
+        }
+      } catch (subErr) { }
     } catch (err) {
       console.log('Error fetching user profile from API:', err);
     } finally {
@@ -954,10 +960,43 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         {displayData.gender && <Text style={styles.genderSub}>{displayData.gender}</Text>}
 
-        {/* Real-time Online Status Badge */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: 'rgba(56, 239, 125, 0.15)', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#38EF7D', marginRight: 6 }} />
-          <Text style={{ color: '#38EF7D', fontSize: 12, fontWeight: '700' }}>Online</Text>
+        {/* Real-time Online Status & Active Subscription Badge */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, flexWrap: 'wrap', justifyContent: 'center', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(56, 239, 125, 0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#38EF7D', marginRight: 6 }} />
+            <Text style={{ color: '#38EF7D', fontSize: 12, fontWeight: '700' }}>Online</Text>
+          </View>
+
+          <TouchableOpacity
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: activePlan?.toLowerCase() === 'gold' ? 'rgba(255, 215, 0, 0.18)' : activePlan?.toLowerCase() === 'premium' ? 'rgba(254, 60, 114, 0.18)' : 'rgba(255, 255, 255, 0.1)',
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : 'rgba(255, 255, 255, 0.2)',
+            }}
+            onPress={() => setIsSubscriptionModalOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name={activePlan?.toLowerCase() === 'gold' ? 'star' : activePlan?.toLowerCase() === 'premium' ? 'ribbon' : 'sparkles-outline'}
+              size={13}
+              color={activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : 'rgba(255, 255, 255, 0.7)'}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={{
+              color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#FFFFFF',
+              fontSize: 12,
+              fontWeight: '800',
+              letterSpacing: 0.5,
+            }}>
+              {activePlan && activePlan.toLowerCase() !== 'free' ? `${activePlan.toUpperCase()} MEMBER` : 'FREE PLAN'}
+            </Text>
+            <Ionicons name="chevron-forward" size={12} color="rgba(255, 255, 255, 0.5)" style={{ marginLeft: 3 }} />
+          </TouchableOpacity>
         </View>
 
         {displayData.email && (
@@ -1021,55 +1060,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         </TouchableOpacity>
       </View>
 
-      {/* Subscriptions & Premium Plans Card */}
-      <View style={styles.card}>
-        <View style={styles.subHeaderRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="diamond" size={18} color="#FFD700" style={{ marginRight: 6 }} />
-            <Text style={styles.sectionTitle}>Premium Subscriptions</Text>
-          </View>
-          {activePlan !== 'free' && (
-            <View style={styles.activePlanBadge}>
-              <Text style={styles.activePlanText}>ACTIVE</Text>
-            </View>
-          )}
-        </View>
 
-        <Text style={styles.subSubtitle}>Upgrade your Spark experience to unlock exclusive features</Text>
-
-        {SUBSCRIPTION_PLANS.map((plan) => (
-          <View key={plan.id} style={[styles.planCard, { borderColor: plan.accentColor }]}>
-            <View style={styles.planTitleRow}>
-              <Text style={[styles.planName, { color: plan.accentColor }]}>{plan.name}</Text>
-
-              <View style={[styles.planBadgeBg, { backgroundColor: plan.accentColor }]}>
-                <Text style={styles.planBadgeText}>{plan.badge}</Text>
-              </View>
-            </View>
-
-            <Text style={styles.planPrice}>{plan.price}</Text>
-
-            {plan.features.map((feat, i) => (
-              <Text key={i} style={styles.planFeatureText}>
-                {feat}
-              </Text>
-            ))}
-
-            <TouchableOpacity
-              style={[
-                styles.subscribeBtn,
-                (activePlan === plan.id || profile?.subscriptionTier?.toLowerCase() === plan.id) ? styles.subscribedBtn : { backgroundColor: plan.accentColor },
-              ]}
-              onPress={() => setIsSubscriptionModalOpen(true)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.subscribeBtnText}>
-                {(activePlan === plan.id || profile?.subscriptionTier?.toLowerCase() === plan.id) ? 'MANAGE MEMBERSHIP' : 'Subscribe'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ))}
-      </View>
 
       {/* Dating Details & Lifestyle Badges */}
       <View style={styles.card}>
@@ -1215,6 +1206,38 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
+          onPress={() => setIsSubscriptionModalOpen(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="diamond-outline"
+            size={22}
+            color="#FFD700"
+            style={{ marginRight: 10 }}
+          />
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.actionText}>Subscriptions & Membership</Text>
+            <View style={{
+              backgroundColor: activePlan?.toLowerCase() === 'gold' ? 'rgba(255, 215, 0, 0.2)' : activePlan?.toLowerCase() === 'premium' ? 'rgba(254, 60, 114, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+              paddingHorizontal: 9,
+              paddingVertical: 3,
+              borderRadius: 10,
+              marginLeft: 6,
+            }}>
+              <Text style={{
+                color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#A0A0B0',
+                fontSize: 11,
+                fontWeight: '800',
+              }}>
+                {activePlan && activePlan.toLowerCase() !== 'free' ? `${activePlan.toUpperCase()}` : 'Free'}
+              </Text>
+            </View>
+          </View>
+
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionRow}
           onPress={handleToggleProfileVisibility}
           disabled={visibilityLoading}
           activeOpacity={0.7}
@@ -1235,13 +1258,21 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               paddingVertical: 3,
               borderRadius: 8,
               marginLeft: 6,
+              flexDirection: 'row',
+              alignItems: 'center',
             }}>
+              <Ionicons
+                name={isProfileHiddenState ? "lock-closed" : "eye"}
+                size={12}
+                color={isProfileHiddenState ? '#FF9500' : '#00E676'}
+                style={{ marginRight: 4 }}
+              />
               <Text style={{
                 color: isProfileHiddenState ? '#FF9500' : '#00E676',
                 fontSize: 11,
                 fontWeight: '700',
               }}>
-                {isProfileHiddenState ? '🔒 Hidden' : '👁️ Visible'}
+                {isProfileHiddenState ? 'Hidden' : 'Visible'}
               </Text>
             </View>
           </View>
@@ -1407,7 +1438,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               </View>
             ) : reportedUsersList.length === 0 ? (
               <View style={styles.reportedEmptyContainer}>
-                <Text style={styles.reportedEmptyIcon}>🛡️</Text>
+                <Ionicons name="shield-checkmark-outline" size={48} color="rgba(255, 255, 255, 0.2)" style={{ marginBottom: 12 }} />
                 <Text style={styles.reportedEmptyTitle}>No Reported Users</Text>
                 <Text style={styles.reportedEmptySub}>You have not reported any users yet.</Text>
               </View>
@@ -1505,7 +1536,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             >
               <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
             </TouchableOpacity>
-            <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>Blocked Accounts 🔒</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="lock-closed" size={18} color="#FFD700" style={{ marginRight: 6 }} />
+              <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>Blocked Accounts</Text>
+            </View>
             <TouchableOpacity
               style={{ padding: 6 }}
               onPress={fetchBlockedUsers}
@@ -1523,7 +1557,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             </View>
           ) : blockedUsersList.length === 0 ? (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
-              <Text style={{ fontSize: 48, marginBottom: 16 }}>🛡️</Text>
+              <Ionicons name="shield-outline" size={48} color="#475569" style={{ marginBottom: 16 }} />
               <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700', textAlign: 'center' }}>
                 No Blocked Accounts
               </Text>

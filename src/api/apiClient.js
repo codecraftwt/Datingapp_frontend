@@ -109,6 +109,7 @@ const request = async (url, options = {}, isRetry = false) => {
       const reqTimeout = setTimeout(() => controller.abort(), options.timeout || defaultTimeout);
 
       const targetUrl = formatFullUrl(currentBase, url);
+      console.log(`🌐 [API_CLIENT TARGET] ${options.method || 'GET'} ${targetUrl} (Active Base: ${currentBase})`);
       response = await fetch(targetUrl, {
         ...options,
         headers,
@@ -758,69 +759,122 @@ export const apiClient = {
 
   // Subscription API endpoints with dual route fallback (plural & singular)
   getSubscriptionPlans: async () => {
-    console.log('📡 [API_CLIENT: GET_PLANS] Fetching plans...');
+    console.log('📡 [SUBSCRIPTION API CALL] GET /api/subscriptions/plans');
+    console.log('   ↳ Trigger: Fetching available subscription plans');
+    console.log('   ↳ Request Payload: None');
     try {
-      return await request('/api/subscriptions/plans', { method: 'GET' });
+      const res = await request('/api/subscriptions/plans', { method: 'GET' });
+      console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscriptions/plans SUCCESS:', res);
+      return res;
     } catch (err) {
       if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
-        return await request('/api/subscription/plans', { method: 'GET' });
+        console.warn('⚠️ [SUBSCRIPTION API RETRY] Fallback to GET /api/subscription/plans');
+        const resFallback = await request('/api/subscription/plans', { method: 'GET' });
+        console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscription/plans SUCCESS:', resFallback);
+        return resFallback;
       }
+      console.error('❌ [SUBSCRIPTION API ERROR] GET /api/subscriptions/plans ERROR:', err);
       throw err;
     }
   },
   createSubscriptionCheckout: async (planType) => {
-    console.log('📡 [API_CLIENT: CREATE_CHECKOUT] Requesting session for:', planType);
+    const payload = { planType };
+    console.log('📡 [SUBSCRIPTION API CALL] POST /api/subscriptions/create-checkout-session');
+    console.log('   ↳ Trigger: User clicked Subscribe button');
+    console.log('   ↳ Request Payload:', JSON.stringify(payload, null, 2));
     try {
-      return await request('/api/subscriptions/create-checkout-session', {
+      const res = await request('/api/subscriptions/create-checkout-session', {
         method: 'POST',
-        body: JSON.stringify({ planType }),
+        body: JSON.stringify(payload),
       });
+      console.log('✅ [SUBSCRIPTION API RESPONSE] POST /api/subscriptions/create-checkout-session SUCCESS:', res);
+      return res;
     } catch (err) {
       if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
-        return await request('/api/subscription/create-checkout-session', {
+        console.warn('⚠️ [SUBSCRIPTION API RETRY] Fallback to POST /api/subscription/create-checkout-session');
+        const resFallback = await request('/api/subscription/create-checkout-session', {
           method: 'POST',
-          body: JSON.stringify({ planType }),
+          body: JSON.stringify(payload),
         });
+        console.log('✅ [SUBSCRIPTION API RESPONSE] POST /api/subscription/create-checkout-session SUCCESS:', resFallback);
+        return resFallback;
       }
+      console.error('❌ [SUBSCRIPTION API ERROR] POST /api/subscriptions/create-checkout-session ERROR:', err);
       throw err;
     }
   },
   confirmSubscription: async (subscriptionId, planType) => {
-    console.log('📡 [API_CLIENT: CONFIRM_SUBSCRIPTION] Confirming sub:', subscriptionId, 'Plan:', planType);
+    const payload = { subscriptionId, planType };
+    console.log('📡 [SUBSCRIPTION API CALL] POST /api/subscriptions/confirm');
+    console.log('   ↳ Trigger: Payment completed (WebView auto-success or Manual "I Have Paid" click)');
+    console.log('   ↳ Request Payload:', JSON.stringify(payload, null, 2));
     try {
-      return await request('/api/subscriptions/confirm', {
+      const res = await request('/api/subscriptions/confirm', {
         method: 'POST',
-        body: JSON.stringify({ subscriptionId, planType }),
+        body: JSON.stringify(payload),
       });
+      console.log('✅ [SUBSCRIPTION API RESPONSE] POST /api/subscriptions/confirm SUCCESS:', res);
+      return res;
     } catch (err) {
       if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
-        return await request('/api/subscription/confirm', {
+        console.warn('⚠️ [SUBSCRIPTION API RETRY] Fallback to POST /api/subscription/confirm');
+        const resFallback = await request('/api/subscription/confirm', {
           method: 'POST',
-          body: JSON.stringify({ subscriptionId, planType }),
+          body: JSON.stringify(payload),
         });
+        console.log('✅ [SUBSCRIPTION API RESPONSE] POST /api/subscription/confirm SUCCESS:', resFallback);
+        return resFallback;
       }
+      console.error('❌ [SUBSCRIPTION API ERROR] POST /api/subscriptions/confirm ERROR:', err);
       throw err;
     }
   },
   getMySubscription: async () => {
-    console.log('📡 [API_CLIENT: GET_MY_SUBSCRIPTION] Fetching current user subscription...');
+    console.log('📡 [SUBSCRIPTION API CALL] GET /api/subscriptions/my-subscription');
+    console.log('   ↳ Trigger: Opening Subscription Modal / checking active tier');
+    console.log('   ↳ Request Payload: None');
     try {
-      return await request('/api/subscriptions/my-subscription', { method: 'GET' });
+      const res = await request('/api/subscriptions/my-subscription', { method: 'GET' });
+      console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscriptions/my-subscription SUCCESS:', res);
+      return res;
     } catch (err) {
       if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
-        return await request('/api/subscription/my-subscription', { method: 'GET' });
+        console.warn('⚠️ [SUBSCRIPTION API RETRY] Fallback to GET /api/subscription/my-subscription');
+        const resFallback = await request('/api/subscription/my-subscription', { method: 'GET' });
+        console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscription/my-subscription SUCCESS:', resFallback);
+        return resFallback;
       }
+      console.error('❌ [SUBSCRIPTION API ERROR] GET /api/subscriptions/my-subscription ERROR:', err);
       throw err;
     }
   },
   cancelSubscription: async () => {
-    console.log('📡 [API_CLIENT: CANCEL_SUBSCRIPTION] Requesting subscription cancellation...');
+    console.log('📡 [SUBSCRIPTION API CALL] POST /api/subscriptions/cancel');
+    console.log('   ↳ Trigger: User confirmed cancellation of active subscription');
+    console.log('   ↳ Request Payload: None (Empty body)');
     try {
-      return await request('/api/subscriptions/cancel', { method: 'POST' });
+      const res = await request('/api/subscriptions/cancel', { method: 'POST' });
+      console.log('✅ [SUBSCRIPTION API RESPONSE] POST /api/subscriptions/cancel SUCCESS:', res);
+      return res;
     } catch (err) {
       if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
-        return await request('/api/subscription/cancel', { method: 'POST' });
+        console.warn('⚠️ [SUBSCRIPTION API RETRY] Fallback to POST /api/subscription/cancel');
+        const resFallback = await request('/api/subscription/cancel', { method: 'POST' });
+        console.log('✅ [SUBSCRIPTION API RESPONSE] POST /api/subscription/cancel SUCCESS:', resFallback);
+        return resFallback;
       }
+      console.error('❌ [SUBSCRIPTION API ERROR] POST /api/subscriptions/cancel ERROR:', err);
+      throw err;
+    }
+  },
+  checkSessionStatus: async (sessionId) => {
+    console.log(`📡 [SUBSCRIPTION API CALL] GET /api/subscriptions/check-session-status?sessionId=${sessionId}`);
+    try {
+      const res = await request(`/api/subscriptions/check-session-status?sessionId=${sessionId}`, { method: 'GET' });
+      console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscriptions/check-session-status SUCCESS:', res);
+      return res;
+    } catch (err) {
+      console.error('❌ [SUBSCRIPTION API ERROR] GET /api/subscriptions/check-session-status ERROR:', err);
       throw err;
     }
   },

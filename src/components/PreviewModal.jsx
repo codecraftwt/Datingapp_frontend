@@ -612,7 +612,7 @@ export const PreviewModal = ({
                         activeOpacity={0.8}
                       >
                         <View style={styles.menuOptionIconBox}>
-                          <Text style={styles.menuOptionIcon}>👁️</Text>
+                          <Ionicons name="eye-outline" size={20} color="#00E676" />
                         </View>
                         <View style={styles.menuOptionTextCol}>
                           <Text style={styles.menuOptionText}>Unhide {isCurrentVideo ? 'Video' : 'Image'}</Text>

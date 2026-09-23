@@ -21,6 +21,7 @@ import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
 import { TopToastBanner } from '../components/TopToastBanner';
 import { registerFcmToken } from '../services/notificationService';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 export const LoginScreen = ({ onNavigate }) => {
   const { width: windowWidth } = useWindowDimensions();
@@ -289,7 +290,7 @@ export const LoginScreen = ({ onNavigate }) => {
         >
           <View style={[styles.headerContainer, { width: cardWidth }]}>
             <View style={styles.logoBadge}>
-              <Text style={styles.logoHeart}>🔥</Text>
+              <Ionicons name="flame" size={28} color="#FE3C72" />
             </View>
             <Text style={styles.title}>Spark</Text>
             <Text style={styles.subtitle}>Find your true connection today</Text>
@@ -386,7 +387,7 @@ export const LoginScreen = ({ onNavigate }) => {
             >
               <View style={styles.otpCard}>
                 <View style={styles.otpIconBadge}>
-                  <Text style={{ fontSize: 32 }}>✉️</Text>
+                  <Ionicons name="mail-unread-outline" size={32} color="#38BDF8" />
                 </View>
                 <Text style={styles.otpModalTitle}>Verify Verification OTP</Text>
                 <Text style={styles.otpModalSubtitle}>

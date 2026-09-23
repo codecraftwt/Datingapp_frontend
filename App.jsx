@@ -5,7 +5,7 @@ import { Provider, useSelector, useDispatch } from 'react-redux';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { store } from './src/redux/store';
-import { logout, selectCurrentUser, setCredentials } from './src/redux/slices/authSlice';
+import { logout, selectCurrentUser, setCredentials, updateUserSubscription } from './src/redux/slices/authSlice';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { RegisterScreen } from './src/screens/RegisterScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
@@ -234,14 +234,22 @@ function MainApp() {
   };
 
   const handleUpdateProfile = async (updatedProfile) => {
-    setUserProfile(updatedProfile);
-    if (user && (user.id || user._id)) {
-      const userId = user.id || user._id;
-      try {
-        await AsyncStorage.setItem(`profileData_${userId}`, JSON.stringify(updatedProfile));
-      } catch (err) {
-        console.log('Error saving profile data update:', err);
+    setUserProfile((prev) => {
+      const merged = { ...(prev || {}), ...(updatedProfile || {}) };
+      if (user && (user.id || user._id)) {
+        const userId = user.id || user._id;
+        AsyncStorage.setItem(`profileData_${userId}`, JSON.stringify(merged)).catch((err) => {
+          console.log('Error saving profile data update:', err);
+        });
       }
+      return merged;
+    });
+
+    if (updatedProfile && updatedProfile.subscriptionTier) {
+      dispatch(updateUserSubscription({
+        subscriptionTier: updatedProfile.subscriptionTier,
+        subscriptionStatus: updatedProfile.subscriptionStatus || 'active',
+      }));
     }
   };
 

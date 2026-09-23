@@ -1154,7 +1154,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
               {step === 3 && (
                 <>
                   {/* Education Level Question */}
-                  <Text style={styles.inputLabel}>🎓 Education Level</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="school-outline" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Education Level</Text>
+                  </View>
                   <View style={styles.wrapRow}>
                     {educationLevelsList.map((edu) => (
                       <TouchableOpacity
@@ -1171,7 +1174,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   </View>
 
                   {/* Height Question */}
-                  <Text style={styles.inputLabel}>📏 Height</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="resize-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Height</Text>
+                  </View>
                   <View style={styles.wrapRow}>
                     {heightOptionsList.map((h) => (
                       <TouchableOpacity
@@ -1193,7 +1199,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   />
 
                   {/* Weight Question */}
-                  <Text style={styles.inputLabel}>⚖️ Weight</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="fitness-outline" size={16} color="#38BDF8" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Weight</Text>
+                  </View>
                   <View style={styles.wrapRow}>
                     {weightOptionsList.map((w) => (
                       <TouchableOpacity
@@ -1215,7 +1224,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   />
 
                   {/* Job / Occupation Question */}
-                  <Text style={styles.inputLabel}>💼 Job / Occupation</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="briefcase-outline" size={16} color="#A855F7" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Job / Occupation</Text>
+                  </View>
                   <View style={styles.wrapRow}>
                     {jobExamplesList.map((j) => {
                       const titleOnly = j.replace(/^[^\s]+\s/, '');
@@ -1242,7 +1254,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
                   {/* College / University Question */}
                   <CustomInput
-                    label="🏛️ College / University"
+                    label="College / University"
                     placeholder="e.g. Harvard University, Stanford, MIT..."
                     value={college}
                     onChangeText={setCollege}
@@ -1270,7 +1282,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     style={styles.bioInput}
                   />
 
-                  <Text style={styles.inputLabel}>🗣️ Languages Spoken</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="chatbubbles-outline" size={16} color="#38BDF8" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Languages Spoken</Text>
+                  </View>
                   <View style={styles.interestsWrap}>
                     {languageOptionsList.map((lang) => {
                       const isSelected = selectedLanguages.includes(lang);
@@ -1321,7 +1336,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
               {step === 5 && (
                 <>
                   {/* Maximum Distance Preference */}
-                  <Text style={styles.inputLabel}>📍 Maximum Distance Preference: {distanceRange} km</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="location-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Maximum Distance Preference: {distanceRange} km</Text>
+                  </View>
                   <View style={styles.sliderRow}>
                     <TouchableOpacity
                       style={styles.stepBtn}
@@ -1356,9 +1374,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   </View>
 
                   {/* Age Range Preference */}
-                  <Text style={styles.inputLabel}>
-                    🎂 Preferred Age Range: {ageRangeMin} - {ageRangeMax} years old
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="calendar-outline" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>
+                      Preferred Age Range: {ageRangeMin} - {ageRangeMax} years old
+                    </Text>
+                  </View>
 
                   {/* Minimum Preferred Age */}
                   <Text style={styles.subInputLabel}>Min Age Preference: ({ageRangeMin} yrs)</Text>
@@ -1431,7 +1452,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   </View>
 
                   {/* Zodiac Sign Question */}
-                  <Text style={styles.inputLabel}>⭐ Zodiac Sign</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="star-outline" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Zodiac Sign</Text>
+                  </View>
                   <View style={styles.wrapRow}>
                     {zodiacSignsList.map((z) => (
                       <TouchableOpacity

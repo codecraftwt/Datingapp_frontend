@@ -36,24 +36,33 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
   const [stripeUrl, setStripeUrl] = useState('');
   const [pendingSubId, setPendingSubId] = useState('');
 
+  const pendingSubIdRef = React.useRef('');
+  const selectedPlanRef = React.useRef('Gold');
+  const isConfirmingRef = React.useRef(false);
+
+  useEffect(() => {
+    selectedPlanRef.current = selectedPlan;
+  }, [selectedPlan]);
+
   useEffect(() => {
     if (visible) {
-      console.log('📌 [FRONTEND SUBSCRIPTION STEP 1: MODAL_OPENED] Subscription Modal opened. Current tier:', currentTier);
+      console.log('📌 [STEP 1: MODAL_OPENED] Subscription Modal opened. Current tier:', currentTier);
+      isConfirmingRef.current = false;
       fetchMySubscription();
     }
   }, [visible]);
 
   const fetchMySubscription = async () => {
     try {
-      console.log('📌 [FRONTEND SUBSCRIPTION STEP 1.1: FETCH_INFO] Calling apiClient.getMySubscription()...');
+      console.log('📡 [STEP 1.1: FETCH_INFO_REQUEST] Calling API: GET /api/subscriptions/my-subscription...');
       setIsFetchingInfo(true);
       const res = await apiClient.getMySubscription();
-      console.log('✅ [FRONTEND SUBSCRIPTION STEP 1.2: FETCH_INFO_RESULT] Response:', res);
+      console.log('✅ [STEP 1.2: FETCH_INFO_RESPONSE] Received user subscription details:', JSON.stringify(res, null, 2));
       if (res && res.success) {
         setSubscriptionInfo(res);
       }
     } catch (err) {
-      console.error('❌ [FRONTEND SUBSCRIPTION STEP 1.3: FETCH_INFO_ERROR] Error fetching subscription info:', err);
+      console.error('❌ [STEP 1.3: FETCH_INFO_ERROR] Error fetching subscription info:', err);
     } finally {
       setIsFetchingInfo(false);
     }
@@ -62,134 +71,248 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
   const activeTier = subscriptionInfo?.subscriptionTier || currentTier || 'Free';
 
   const handleSubscribe = async () => {
-    console.log(`📌 [FRONTEND SUBSCRIPTION STEP 2: SUBSCRIBE_CLICKED] Selected Plan: "${selectedPlan}", Active Tier: "${activeTier}"`);
+    console.log(`\n==================================================`);
+    console.log(`💳 [STEP 1: SUBSCRIBE_CLICKED] User clicked Subscribe button.`);
+    console.log(`   ↳ Selected Plan: "${selectedPlan}"`);
+    console.log(`   ↳ Active Tier: "${activeTier}"`);
+    console.log(`==================================================\n`);
+
+    // POPUP STEP 1: Initiating Checkout Request
+    Alert.alert(
+      '📌 Step 1/5: Requesting Checkout',
+      `Sending request to initialize Stripe Checkout for ${selectedPlan} Plan...`
+    );
+
     try {
       setIsLoading(true);
+      isConfirmingRef.current = false;
 
       // 1. Create Hosted Checkout Session with Stripe Backend
-      console.log(`🚀 [FRONTEND SUBSCRIPTION STEP 3: CREATE_SESSION_REQUEST] Requesting checkout session for plan "${selectedPlan}"...`);
+      const checkoutPayload = { planType: selectedPlan };
+      console.log(`🚀 [STEP 2: CREATE_SESSION_REQUEST] Calling API: POST /api/subscriptions/create-checkout-session`);
+      console.log(`   ↳ Payload:`, JSON.stringify(checkoutPayload, null, 2));
+
       const checkoutRes = await apiClient.createSubscriptionCheckout(selectedPlan);
-      console.log('✅ [FRONTEND SUBSCRIPTION STEP 4: CREATE_SESSION_RESPONSE] Received backend response:', checkoutRes);
+      console.log('✅ [STEP 2: CREATE_SESSION_RESPONSE] Backend returned checkout session:', JSON.stringify(checkoutRes, null, 2));
 
       if (!checkoutRes || !checkoutRes.success || !checkoutRes.checkoutUrl) {
-        console.error('❌ [FRONTEND SUBSCRIPTION STEP 4.1: INVALID_RESPONSE] Missing checkoutUrl or success flag!');
-        Alert.alert('Checkout Session Error', checkoutRes?.message || 'Failed to initialize subscription session.');
+        console.error('❌ [STEP 2.1: CREATE_SESSION_FAILED] Missing checkoutUrl or success flag in response!', checkoutRes);
+        Alert.alert('❌ Step 2 Error: Checkout Failed', checkoutRes?.message || 'Failed to initialize subscription session.');
         throw new Error(checkoutRes?.message || 'Failed to initialize subscription checkout.');
       }
 
-      setPendingSubId(checkoutRes.subscriptionId || '');
+      const generatedSubId = checkoutRes.subscriptionId || checkoutRes.sessionId || '';
+      pendingSubIdRef.current = generatedSubId;
+      selectedPlanRef.current = selectedPlan;
+
+      setPendingSubId(generatedSubId);
       setStripeUrl(checkoutRes.checkoutUrl);
 
-      // Alert Popup: Session Created Successfully
+      console.log(`🔗 [STEP 2.2: CHECKOUT_URL_READY] Target Payment URL: ${checkoutRes.checkoutUrl}`);
+      console.log(`🆔 [STEP 2.3: PENDING_SUB_ID] Generated Subscription ID: ${generatedSubId}`);
+
+      // POPUP STEP 2: Checkout Session Created
       Alert.alert(
-        '💳 Stripe Checkout Ready',
-        `Session Created for ${selectedPlan} Plan!\nOpening Stripe Checkout page...`,
-        [{ text: 'Continue to Payment', onPress: () => {} }]
+        '✅ Step 2/5: Session Created',
+        `Stripe Checkout Session initialized!\n\nPlan: ${selectedPlan}\nSession ID: ${generatedSubId}\n\nLoading payment page...`,
+        [
+          {
+            text: 'Proceed to Payment',
+            onPress: () => {
+              if (isWebViewAvailable) {
+                console.log(`📱 [STEP 3: LAUNCH_IN_APP_WEBVIEW] RNCWebViewModule available. Opening in-app WebView Modal...`);
+                Alert.alert(
+                  '💳 Step 3/5: Stripe Payment Page',
+                  'Loading Stripe Checkout page in app...\n\nUse Test Card: 4242 4242 4242 4242 (Exp: 12/30, CVC: 123)'
+                );
+                setShowWebView(true);
+              } else {
+                console.log('🌐 [STEP 3: LAUNCH_SYSTEM_BROWSER] Native RNCWebViewModule not compiled. Opening via Linking.openURL()...');
+                launchSystemBrowser(checkoutRes, generatedSubId);
+              }
+            },
+          },
+        ]
       );
 
-      // 2. If Native WebView Module is compiled in APK, open WebView. Else fallback to browser.
       if (isWebViewAvailable) {
-        console.log(`📱 [FRONTEND SUBSCRIPTION STEP 5: OPEN_WEBVIEW] RNCWebViewModule available. Opening in-app WebView for URL: ${checkoutRes.checkoutUrl}`);
         setShowWebView(true);
       } else {
-        console.log('🌐 [FRONTEND SUBSCRIPTION STEP 5: OPEN_BROWSER] Native RNCWebViewModule not compiled. Falling back to Linking.openURL()...');
-        try {
-          await Linking.openURL(checkoutRes.checkoutUrl);
-          console.log(`✅ [FRONTEND SUBSCRIPTION STEP 5.1: BROWSER_OPENED] Browser launched successfully.`);
-        } catch (linkErr) {
-          console.warn('⚠️ [FRONTEND SUBSCRIPTION STEP 5.2: BROWSER_OPEN_FAILED] Could not open Stripe Checkout URL:', linkErr);
-          Alert.alert('Browser Link Error', 'Failed to launch system browser for payment: ' + linkErr.message);
-        }
-
-        Alert.alert(
-          '💳 Stripe Payment Page Opened',
-          'Enter test card (4000 0027 6000 3184, exp 12/30, CVC 123, Country: India) on the Stripe checkout page, then click "Complete" on 3DS screen.',
-          [
-            {
-              text: 'Cancel',
-              style: 'cancel',
-              onPress: () => console.log('🔴 [FRONTEND SUBSCRIPTION STEP 5.3: MANUAL_CANCEL] User pressed Cancel on Alert.'),
-            },
-            {
-              text: 'I Have Paid',
-              onPress: async () => {
-                console.log('⚡ [FRONTEND SUBSCRIPTION STEP 8: MANUAL_CONFIRM_CLICKED] User pressed "I Have Paid" button!');
-                try {
-                  setIsLoading(true);
-                  const confirmRes = await apiClient.confirmSubscription(
-                    checkoutRes.subscriptionId,
-                    selectedPlan
-                  );
-                  console.log('✅ [FRONTEND SUBSCRIPTION STEP 8.1: CONFIRM_RESPONSE] Confirm response:', confirmRes);
-
-                  if (confirmRes && confirmRes.success) {
-                    console.log('🎉 [FRONTEND SUBSCRIPTION STEP 9: ACTIVATED_SUCCESS] Upgrade complete!');
-                    Alert.alert(
-                      '🎉 Subscription Activated!',
-                      `Congratulations! You are now subscribed to ${selectedPlan} Membership!`,
-                      [
-                        {
-                          text: 'Awesome!',
-                          onPress: () => {
-                            if (typeof onSubscriptionUpdated === 'function') {
-                              onSubscriptionUpdated(selectedPlan);
-                            }
-                            onClose();
-                          },
-                        },
-                      ]
-                    );
-                  }
-                } catch (confirmErr) {
-                  console.error('❌ [FRONTEND SUBSCRIPTION STEP 8.2: CONFIRM_ERROR] Confirmation error:', confirmErr);
-                  Alert.alert('Activation Error', confirmErr.message || 'Failed to confirm subscription activation.');
-                } finally {
-                  setIsLoading(false);
-                }
-              },
-            },
-          ]
-        );
+        launchSystemBrowser(checkoutRes, generatedSubId);
       }
     } catch (err) {
-      console.error('❌ [FRONTEND SUBSCRIPTION STEP 3/4 ERROR] Subscription error:', err);
-      Alert.alert('Payment Error', err.message || 'Something went wrong while processing your subscription.');
+      console.error('❌ [STEP 2/3 FATAL ERROR] Failed during handleSubscribe:', err);
+      Alert.alert('❌ Payment Request Error', err.message || 'Something went wrong while creating checkout session.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleWebViewNavigation = async (navState) => {
-    const { url } = navState;
-    console.log('🌐 [FRONTEND SUBSCRIPTION STEP 6: WEBVIEW_NAVIGATED] Navigated URL:', url);
+  const launchSystemBrowser = async (checkoutRes, generatedSubId) => {
+    try {
+      await Linking.openURL(checkoutRes.checkoutUrl);
+      console.log(`✅ [STEP 3.1: SYSTEM_BROWSER_OPENED] System browser launched successfully.`);
+    } catch (linkErr) {
+      console.warn('⚠️ [STEP 3.2: BROWSER_OPEN_FAILED] Could not launch system browser:', linkErr);
+      Alert.alert('Browser Link Error', 'Failed to launch system browser for payment: ' + linkErr.message);
+    }
 
-    if (url && (
+    // POPUP STEP 3 Fallback Dialog: Instructions & Manual Confirmation
+    Alert.alert(
+      '💳 Step 3/5: Complete Payment on Stripe',
+      '1. Enter test card: 4242 4242 4242 4242 (Exp: 12/30, CVC: 123)\n2. Click "Subscribe" on Stripe page\n3. Tap "I Have Paid" below once done.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => console.log('🔴 [STEP 3.3: MANUAL_CANCEL] User pressed Cancel on Alert.'),
+        },
+        {
+          text: 'I Have Paid',
+          onPress: async () => {
+            console.log('⚡ [STEP 4: MANUAL_CONFIRM_TRIGGERED] User pressed "I Have Paid" button!');
+            try {
+              setIsLoading(true);
+              const subToConfirm = pendingSubIdRef.current || checkoutRes.subscriptionId;
+              const planToConfirm = selectedPlanRef.current || selectedPlan;
+
+              // POPUP STEP 4: Confirming Payment with Backend
+              Alert.alert('🚀 Step 4/5: Verifying Payment', `Confirming ${planToConfirm} membership with server...`);
+
+              console.log(`🚀 [STEP 4.1: CONFIRM_REQUEST] Calling API: POST /api/subscriptions/confirm`);
+              console.log(`   ↳ Payload:`, JSON.stringify({ subscriptionId: subToConfirm, planType: planToConfirm }));
+
+              const confirmRes = await apiClient.confirmSubscription(subToConfirm, planToConfirm);
+              console.log('✅ [STEP 4.2: CONFIRM_RESPONSE] Backend confirm response:', JSON.stringify(confirmRes, null, 2));
+
+              if (confirmRes && confirmRes.success) {
+                console.log('🎉 [STEP 5: ACTIVATION_COMPLETE] Subscription successfully activated!');
+                // POPUP STEP 5: Activation Complete
+                Alert.alert(
+                  '👑 Step 5/5: Subscription Activated!',
+                  `Congratulations! You are now subscribed to ${planToConfirm} Membership!`,
+                  [
+                    {
+                      text: 'Awesome!',
+                      onPress: () => {
+                        if (typeof onSubscriptionUpdated === 'function') {
+                          onSubscriptionUpdated(planToConfirm);
+                        }
+                        onClose();
+                      },
+                    },
+                  ]
+                );
+              } else {
+                console.warn('⚠️ [STEP 4.3: MANUAL_CONFIRM_NOTE] Confirm response returned note:', confirmRes);
+                Alert.alert('Activation Note', confirmRes?.message || 'Subscription process returned note.');
+              }
+            } catch (confirmErr) {
+              console.error('❌ [STEP 4.4: CONFIRM_ERROR] Subscription confirmation error:', confirmErr);
+              Alert.alert('Activation Error', confirmErr.message || 'Failed to confirm subscription activation.');
+            } finally {
+              setIsLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleWebViewNavigation = async (navState) => {
+    const { url, title, loading, canGoBack } = navState || {};
+    console.log(`\n🌐 [STEP 4: WEBVIEW_NAVIGATED] Page Transition Log:`);
+    console.log(`   ↳ URL: ${url}`);
+    console.log(`   ↳ Title: "${title || 'N/A'}" | Loading: ${loading} | CanGoBack: ${canGoBack}`);
+
+    if (!url) return;
+
+    // Check if URL indicates payment completion
+    const isSuccessUrl =
       url.includes('success-page') ||
       url.includes('checkout.stripe.dev/success') ||
       url.includes('status=success') ||
-      url.includes('/success')
-    )) {
-      console.log('🎉 [FRONTEND SUBSCRIPTION STEP 7: PAYMENT_SUCCESS_DETECTED] Success URL reached! Initiating auto-activation...');
+      url.includes('/success');
+
+    const isCancelUrl =
+      url.includes('cancel-page') ||
+      url.includes('checkout.stripe.dev/cancel') ||
+      url.includes('/cancel');
+
+    if (!isSuccessUrl && !isCancelUrl) {
+      console.log(`ℹ️ [STEP 4.1: EVALUATION_NOTE] URL transition does not match success/cancel endpoints yet.`);
+      return;
+    }
+
+    if (isCancelUrl) {
+      console.log('🔴 [STEP 4.2: CANCEL_URL_DETECTED] Cancel URL reached in WebView.');
       setShowWebView(false);
+      Alert.alert('❌ Checkout Cancelled', 'Your subscription checkout process was cancelled.');
+      return;
+    }
+
+    if (isSuccessUrl) {
+      if (isConfirmingRef.current) {
+        console.log('⚠️ [STEP 4.3: DUPLICATE_CONFIRM_BLOCKED] Success URL hit again, but confirm call is already in progress.');
+        return;
+      }
+      isConfirmingRef.current = true;
+
+      // Extract dynamically from URL if available
+      let targetSubId = pendingSubIdRef.current || pendingSubId;
+      let targetPlan = selectedPlanRef.current || selectedPlan;
+
+      if (url.includes('planType=')) {
+        const matchPlan = url.match(/planType=([^&]+)/);
+        if (matchPlan && matchPlan[1]) targetPlan = decodeURIComponent(matchPlan[1]);
+      }
+      if (url.includes('subscriptionId=')) {
+        const matchSub = url.match(/subscriptionId=([^&]+)/);
+        if (matchSub && matchSub[1]) targetSubId = decodeURIComponent(matchSub[1]);
+      } else if (url.includes('session_id=')) {
+        const matchSes = url.match(/session_id=([^&]+)/);
+        if (matchSes && matchSes[1] && !targetSubId) targetSubId = decodeURIComponent(matchSes[1]);
+      }
+
+      console.log(`\n==================================================`);
+      console.log('🎉 [STEP 4: SUCCESS_URL_DETECTED] Success URL matched in WebView!');
+      console.log(`   ↳ Matched URL: ${url}`);
+      console.log(`   ↳ Target Subscription ID: ${targetSubId}`);
+      console.log(`   ↳ Target Plan: ${targetPlan}`);
+      console.log(`==================================================\n`);
+
       setIsLoading(true);
 
-      Alert.alert('🎉 Payment Success Detected', `Processing your ${selectedPlan} plan activation...`);
+      // Display the HTML Success Page inside the WebView for 3 seconds before closing modal
+      setTimeout(() => {
+        setShowWebView(false);
+      }, 3000);
+
+      // POPUP STEP 4: Payment Completed & Confirmation Starting
+      Alert.alert(
+        '🎉 Step 4/5: Payment Successful!',
+        `Stripe payment completed for ${targetPlan} Plan!\n\nActivating membership now...`
+      );
 
       try {
-        console.log(`🚀 [FRONTEND SUBSCRIPTION STEP 8: AUTO_CONFIRM] Calling apiClient.confirmSubscription for sub ${pendingSubId}, plan ${selectedPlan}...`);
-        const confirmRes = await apiClient.confirmSubscription(pendingSubId, selectedPlan);
-        console.log('✅ [FRONTEND SUBSCRIPTION STEP 8.1: AUTO_CONFIRM_RESPONSE]:', confirmRes);
+        console.log(`🚀 [STEP 5: AUTO_CONFIRM_REQUEST] Invoking API: POST /api/subscriptions/confirm`);
+        console.log(`   ↳ Payload:`, JSON.stringify({ subscriptionId: targetSubId, planType: targetPlan }, null, 2));
+
+        const confirmRes = await apiClient.confirmSubscription(targetSubId, targetPlan);
+        console.log('✅ [STEP 5.1: AUTO_CONFIRM_RESPONSE] Backend response:', JSON.stringify(confirmRes, null, 2));
+
         if (confirmRes && confirmRes.success) {
-          console.log(`🎉 [FRONTEND SUBSCRIPTION STEP 9: ACTIVATION_COMPLETE] Successfully upgraded to ${selectedPlan}!`);
+          console.log(`🎉 [STEP 5.2: ACTIVATION_COMPLETE] Successfully upgraded user to ${targetPlan}!`);
+          // POPUP STEP 5: Final Activation Success
           Alert.alert(
-            '🎉 Subscription Activated!',
-            `Congratulations! You are now subscribed to ${selectedPlan} Membership!`,
+            '👑 Step 5/5: Subscription Activated!',
+            `Congratulations! You are now subscribed to ${targetPlan} Membership!`,
             [
               {
                 text: 'Awesome!',
                 onPress: () => {
                   if (typeof onSubscriptionUpdated === 'function') {
-                    onSubscriptionUpdated(selectedPlan);
+                    onSubscriptionUpdated(targetPlan);
                   }
                   onClose();
                 },
@@ -197,46 +320,46 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
             ]
           );
         } else {
+          console.warn('⚠️ [STEP 5.3: AUTO_CONFIRM_NOTE] Response returned note:', confirmRes);
           Alert.alert('Activation Note', confirmRes?.message || 'Subscription processed!');
         }
       } catch (err) {
-        console.warn('⚠️ [FRONTEND SUBSCRIPTION STEP 8.2: AUTO_CONFIRM_WARNING] Confirmation error:', err.message);
-        Alert.alert('Activation Warning', err.message || 'Subscription completed.');
+        console.error('❌ [STEP 5.4: AUTO_CONFIRM_ERROR] Error calling confirmSubscription API:', err);
+        console.error('   ↳ Error Message:', err.message || err);
+        console.error('   ↳ Error Stack/Data:', JSON.stringify(err.data || err, null, 2));
+        Alert.alert('Activation Error', err?.data?.message || err.message || 'Subscription confirm API error.');
       } finally {
         setIsLoading(false);
       }
-    } else if (url && (url.includes('cancel-page') || url.includes('checkout.stripe.dev/cancel') || url.includes('/cancel'))) {
-      console.log('🔴 [FRONTEND SUBSCRIPTION STEP 7: PAYMENT_CANCEL_DETECTED] Cancel URL reached.');
-      setShowWebView(false);
-      Alert.alert('Checkout Cancelled', 'Your checkout process was cancelled.');
     }
   };
 
   const handleCancelSubscription = async () => {
-    console.log('📌 [FRONTEND SUBSCRIPTION CANCEL STEP: INITIATED] Prompting user to confirm cancellation...');
+    console.log('📌 [STEP 6: CANCEL_SUBSCRIPTION_INITIATED] User requested to cancel active subscription.');
     Alert.alert(
       'Cancel Subscription',
       'Are you sure you want to cancel your auto-renewal? You will revert to the Free tier at period end.',
       [
-        { text: 'Keep Membership', style: 'cancel' },
+        { text: 'Keep Membership', style: 'cancel', onPress: () => console.log('🔴 [STEP 6.1: CANCEL_ABORTED] User kept membership.') },
         {
           text: 'Cancel Subscription',
           style: 'destructive',
           onPress: async () => {
-            console.log('🔴 [FRONTEND SUBSCRIPTION CANCEL STEP: CONFIRMED] Sending cancel request...');
+            console.log('🔴 [STEP 6.2: CANCEL_CONFIRMED] User confirmed cancellation. Calling API: POST /api/subscriptions/cancel...');
             try {
               setIsLoading(true);
               const res = await apiClient.cancelSubscription();
-              console.log('✅ [FRONTEND SUBSCRIPTION CANCEL STEP: RESULT]', res);
+              console.log('✅ [STEP 6.3: CANCEL_RESPONSE] Backend response:', JSON.stringify(res, null, 2));
               if (res && res.success) {
-                Alert.alert('Subscription Cancelled', 'Your subscription auto-renewal has been cancelled.');
+                // POPUP STEP 6: Cancelled Success
+                Alert.alert('ℹ️ Step 6/6: Subscription Cancelled', 'Your subscription auto-renewal has been cancelled.');
                 if (typeof onSubscriptionUpdated === 'function') {
                   onSubscriptionUpdated('Free');
                 }
                 fetchMySubscription();
               }
             } catch (err) {
-              console.error('❌ [FRONTEND SUBSCRIPTION CANCEL STEP: ERROR]', err);
+              console.error('❌ [STEP 6.4: CANCEL_ERROR] Error cancelling subscription:', err);
               Alert.alert('Error', err.message || 'Failed to cancel subscription.');
             } finally {
               setIsLoading(false);
@@ -262,7 +385,7 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           {/* Banner Hero */}
           <View style={styles.heroSection}>
-            <Text style={styles.heroEmoji}>👑</Text>
+            <Ionicons name="ribbon-outline" size={52} color="#FFD700" style={{ marginBottom: 8 }} />
             <Text style={styles.heroTitle}>Unlock Your Dating Superpowers</Text>
             <Text style={styles.heroSubtitle}>
               Get 5x more matches, see who likes you, and stand out from the crowd.
@@ -270,9 +393,12 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
 
             {activeTier !== 'Free' && (
               <View style={styles.activeBadgeContainer}>
-                <Text style={styles.activeBadgeText}>
-                  ✨ CURRENT PLAN: {activeTier.toUpperCase()} MEMBER
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="sparkles" size={14} color="#FFD700" style={{ marginRight: 6 }} />
+                  <Text style={styles.activeBadgeText}>
+                    CURRENT PLAN: {activeTier.toUpperCase()} MEMBER
+                  </Text>
+                </View>
               </View>
             )}
           </View>
@@ -295,27 +421,23 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                   <Text style={styles.goldBadgeText}>MOST POPULAR</Text>
                 </View>
                 <Text style={styles.planNameGold}>GOLD</Text>
-                <Text style={styles.planPrice}>₹999 <Text style={styles.perMonth}>/ month</Text></Text>
+                <Text style={styles.planPrice}>$9.99 <Text style={styles.perMonth}>/ month</Text></Text>
               </View>
 
               <View style={styles.divider} />
 
               <View style={styles.featureList}>
                 <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>💛</Text>
+                  <Ionicons name="heart" size={18} color="#FFD700" style={{ marginRight: 10 }} />
                   <Text style={styles.featureText}>Unlimited Likes & Swipes</Text>
                 </View>
                 <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>👁️</Text>
+                  <Ionicons name="eye" size={18} color="#FFD700" style={{ marginRight: 10 }} />
                   <Text style={styles.featureText}>See Who Liked Your Profile</Text>
                 </View>
                 <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>⭐</Text>
+                  <Ionicons name="star" size={18} color="#FFD700" style={{ marginRight: 10 }} />
                   <Text style={styles.featureText}>5 Super Likes Every Day</Text>
-                </View>
-                <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>✈️</Text>
-                  <Text style={styles.featureText}>Passport Location Teleport</Text>
                 </View>
               </View>
             </TouchableOpacity>
@@ -336,31 +458,23 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                   <Text style={styles.premiumBadgeText}>BEST VALUE</Text>
                 </View>
                 <Text style={styles.planNamePremium}>PREMIUM</Text>
-                <Text style={styles.planPrice}>₹499 <Text style={styles.perMonth}>/ month</Text></Text>
+                <Text style={styles.planPrice}>$4.99 <Text style={styles.perMonth}>/ month</Text></Text>
               </View>
 
               <View style={styles.divider} />
 
               <View style={styles.featureList}>
                 <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>💎</Text>
+                  <Ionicons name="diamond" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
                   <Text style={styles.featureText}>All Gold Tier Features Included</Text>
                 </View>
                 <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>🚀</Text>
+                  <Ionicons name="rocket" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
                   <Text style={styles.featureText}>1 Free Monthly Profile Boost</Text>
                 </View>
                 <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>🔥</Text>
-                  <Text style={styles.featureText}>Priority Likes in Deck</Text>
-                </View>
-                <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>🔍</Text>
+                  <Ionicons name="search" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
                   <Text style={styles.featureText}>Advanced Search Filters Unlocked</Text>
-                </View>
-                <View style={styles.featureItem}>
-                  <Text style={styles.checkIcon}>✨</Text>
-                  <Text style={styles.featureText}>Ad-Free Experience</Text>
                 </View>
               </View>
             </TouchableOpacity>
@@ -419,16 +533,19 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
             borderBottomWidth: 1,
             borderBottomColor: 'rgba(255,255,255,0.1)'
           }}>
-            <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }}>
-              💳 Secure Stripe Checkout
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="card" size={20} color="#38BDF8" style={{ marginRight: 8 }} />
+              <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }}>
+                Secure Stripe Checkout
+              </Text>
+            </View>
             <TouchableOpacity onPress={() => setShowWebView(false)}>
               <Ionicons name="close" size={24} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
           {/* Test Mode Step-by-Step Helper Banner */}
-          <View style={{
+          {/* <View style={{
             backgroundColor: '#1E1B4B',
             paddingVertical: 10,
             paddingHorizontal: 14,
@@ -436,91 +553,117 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
             borderBottomColor: '#4338CA',
           }}>
             <Text style={{ color: '#A5B4FC', fontSize: 13, fontWeight: '600', lineHeight: 18 }}>
-              🧪 <Text style={{ fontWeight: '800', color: '#E0E7FF' }}>Test Mode Steps:</Text>{'\n'}
-              1. Card: <Text style={{ color: '#FDE047', fontWeight: '800' }}>4242 4242 4242 4242</Text> | Exp: <Text style={{ color: '#FDE047', fontWeight: '800' }}>12/30</Text> | CVC: <Text style={{ color: '#FDE047', fontWeight: '800' }}>123</Text>{'\n'}
-              2. Country: <Text style={{ color: '#FDE047', fontWeight: '800' }}>India</Text> (or US) ➔ Tap <Text style={{ color: '#38BDF8', fontWeight: '800' }}>Subscribe</Text>{'\n'}
+              🧪 <Text style={{ fontWeight: '800', color: '#E0E7FF' }}>Indian Test Mode Card:</Text>{'\n'}
+              1. Card: <Text style={{ color: '#FDE047', fontWeight: '800' }}>4000 0027 6000 3184</Text> | Exp: <Text style={{ color: '#FDE047', fontWeight: '800' }}>12/30</Text> | CVC: <Text style={{ color: '#FDE047', fontWeight: '800' }}>123</Text>{'\n'}
+              2. Country: <Text style={{ color: '#FDE047', fontWeight: '800' }}>India</Text> | PIN: <Text style={{ color: '#FDE047', fontWeight: '800' }}>400001</Text> ➔ Tap <Text style={{ color: '#38BDF8', fontWeight: '800' }}>Subscribe</Text>{'\n'}
               3. Payment completes instantly & auto-activates! 🎉
             </Text>
-          </View>
+          </View>*/}
 
           {stripeUrl ? (
             <WebView
               source={{ uri: stripeUrl }}
               onNavigationStateChange={handleWebViewNavigation}
               onShouldStartLoadWithRequest={(request) => {
-                console.log('🔍 [WEBVIEW LOAD REQUEST]:', request.url);
+                console.log('🔍 [WEBVIEW STEP 6.1: LOAD_REQUEST] Target URL:', request.url);
                 if (request.url && (
                   request.url.includes('success-page') ||
                   request.url.includes('checkout.stripe.dev/success') ||
                   request.url.includes('status=success') ||
                   request.url.includes('/success')
                 )) {
+                  console.log('🎉 [WEBVIEW STEP 6.1: SUCCESS_INTERCEPTED] Intercepted success URL in load request!');
                   handleWebViewNavigation(request);
-                  return false;
+                  return true;
                 }
                 return true;
               }}
               onError={(syntheticEvent) => {
                 const { nativeEvent } = syntheticEvent;
-                console.warn('🔴 [WEBVIEW ERROR LOG]:', nativeEvent);
+                console.warn('🔴 [WEBVIEW STEP 6.2: ERROR_LOG] WebView error event:', nativeEvent);
                 if (nativeEvent && nativeEvent.url && (
                   nativeEvent.url.includes('success-page') ||
                   nativeEvent.url.includes('checkout.stripe.dev/success') ||
                   nativeEvent.url.includes('status=success') ||
                   nativeEvent.url.includes('/success')
                 )) {
-                  console.log('⚡ [WEBVIEW ERROR RECOVERY] Connection error on success URL (e.g. localhost unreachable), auto-activating subscription anyway!');
+                  console.log('⚡ [WEBVIEW STEP 6.2: ERROR_RECOVERY] Connection error on success URL (e.g. host unreachable), triggering success auto-activation anyway!');
                   handleWebViewNavigation(nativeEvent);
                 }
               }}
               onHttpError={(syntheticEvent) => {
                 const { nativeEvent } = syntheticEvent;
-                console.warn('🔴 [WEBVIEW HTTP ERROR LOG]:', nativeEvent.statusCode, nativeEvent.url);
+                console.warn('🔴 [WEBVIEW STEP 6.3: HTTP_ERROR_LOG] Status:', nativeEvent.statusCode, 'URL:', nativeEvent.url);
                 if (nativeEvent && nativeEvent.url && (
                   nativeEvent.url.includes('success-page') ||
                   nativeEvent.url.includes('checkout.stripe.dev/success') ||
                   nativeEvent.url.includes('status=success') ||
                   nativeEvent.url.includes('/success')
                 )) {
-                  console.log('⚡ [WEBVIEW HTTP ERROR RECOVERY] HTTP status error on success URL, auto-activating subscription anyway!');
+                  console.log('⚡ [WEBVIEW STEP 6.3: HTTP_RECOVERY] HTTP error status on success URL, triggering success auto-activation anyway!');
                   handleWebViewNavigation(nativeEvent);
                 }
               }}
               onLoadEnd={(syntheticEvent) => {
                 const { nativeEvent } = syntheticEvent;
-                console.log('🏁 [WEBVIEW LOAD END]:', nativeEvent.url);
+                console.log('🏁 [WEBVIEW STEP 6.4: LOAD_END] Finished loading URL:', nativeEvent.url);
                 if (nativeEvent && nativeEvent.url) {
                   handleWebViewNavigation(nativeEvent);
                 }
               }}
               injectedJavaScript={`
                 (function() {
-                  // Intercept button clicks for log tracking and 3DS completion
-                  document.addEventListener('click', function(e) {
-                    var target = e.target || e.srcElement;
-                    var text = target ? (target.innerText || target.value || target.textContent || '') : '';
-                    if (text.includes('Complete') || text.includes('Authorize')) {
-                      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'STRIPE_COMPLETE_CLICKED', buttonText: text }));
-                    } else if (text.includes('Subscribe') || text.includes('Pay') || text.includes('Submit')) {
-                      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'STRIPE_SUBSCRIBE_CLICKED', buttonText: text, url: window.location.href }));
-                    }
-                  }, true);
+                  try {
+                    window.addEventListener('click', function(e) {
+                      var target = e.target;
+                      var text = target ? (target.innerText || target.value || target.textContent || '') : '';
+                      if (text) {
+                        if (text.includes('Complete') || text.includes('Authorize')) {
+                          window.ReactNativeWebView.postMessage(JSON.stringify({ 
+                            type: 'STRIPE_COMPLETE_CLICKED', 
+                            buttonText: text.trim() 
+                          }));
+                        } else if (text.includes('Pay') || text.includes('Subscribe') || text.includes('Submit')) {
+                          window.ReactNativeWebView.postMessage(JSON.stringify({ 
+                            type: 'STRIPE_SUBSCRIBE_CLICKED', 
+                            buttonText: text.trim() 
+                          }));
+                        }
+                      }
+                    }, false);
+                  } catch(err) {}
                 })();
                 true;
               `}
               onMessage={(event) => {
                 try {
                   const data = JSON.parse(event.nativeEvent.data);
-                  if (data && data.type === 'STRIPE_SUBSCRIBE_CLICKED') {
+                  if (data && data.type === 'STRIPE_COMPLETE_CLICKED') {
+                    console.log('⚡ [AUTO-DETECTED COMPLETE CLICK] User clicked 3DS Complete button! Immediately triggering activation...');
+                    handleWebViewNavigation({ url: 'https://checkout.stripe.dev/success' });
+                  } else if (data && data.type === 'STRIPE_SUBSCRIBE_CLICKED') {
                     console.log(`💳 [STRIPE UI LOG] User clicked "${data.buttonText}" button on Stripe Checkout Page! Processing payment...`);
-                  } else if (data && data.type === 'STRIPE_COMPLETE_CLICKED') {
-                    console.log('⚡ [AUTO-DETECTED COMPLETE CLICK] Proceeding to activate subscription...');
-                    setTimeout(() => {
-                      handleWebViewNavigation({ url: 'https://checkout.stripe.dev/success' });
-                    }, 1200);
+                    const targetSubId = pendingSubIdRef.current || pendingSubId;
+                    setTimeout(async () => {
+                      if (targetSubId) {
+                        try {
+                          console.log(`🔍 [AUTO STATUS CHECK] Checking Stripe status for ${targetSubId}...`);
+                          const statusRes = await apiClient.checkSessionStatus(targetSubId);
+                          console.log('📊 [AUTO STATUS CHECK RESULT]:', JSON.stringify(statusRes, null, 2));
+                          if (statusRes && statusRes.lastError) {
+                            Alert.alert('⚠️ Stripe Payment Error', statusRes.lastError);
+                          } else if (statusRes && statusRes.paymentStatus === 'paid') {
+                            handleWebViewNavigation({ url: 'https://checkout.stripe.dev/success' });
+                          }
+                        } catch (errStatus) {
+                          console.warn('⚠️ Auto status check warning:', errStatus.message);
+                        }
+                      }
+                    }, 3500);
                   }
-                } catch (e) {}
+                } catch (e) { }
               }}
+              injectedJavaScriptForMainFrameOnly={false}
               javaScriptEnabled={true}
               domStorageEnabled={true}
               originWhitelist={['*']}
@@ -539,6 +682,8 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
               style={{ flex: 1 }}
             />
           ) : null}
+
+
         </SafeAreaView>
       </Modal>
     </Modal>

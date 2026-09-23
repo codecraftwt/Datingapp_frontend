@@ -45,11 +45,35 @@ const safeString = (val, fallback = '') => {
   return String(val);
 };
 
-export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBack, onBack }) {
+export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBack, onBack, onOpenSubscriptionModal }) {
   const insets = useSafeAreaInsets();
 
-  const activeUser = currentUser || userProfile;
+  const activeUser = userProfile || currentUser;
   const userInterestedIn = activeUser?.interestedIn || 'Everyone';
+  const userTierStr = userProfile?.subscriptionTier || currentUser?.subscriptionTier || 'Free';
+  const isFreeUser = !userTierStr || userTierStr.toLowerCase() === 'free';
+
+  const handleOpenAdvancedFilter = (openModalFn) => {
+    if (isFreeUser) {
+      Alert.alert(
+        '🔒 Premium Feature',
+        'Advanced Search Filters (Profession, Languages, Lifestyle) are exclusive to Premium members. Upgrade now to unlock!',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Upgrade Now',
+            onPress: () => {
+              if (typeof onOpenSubscriptionModal === 'function') {
+                onOpenSubscriptionModal();
+              }
+            },
+          },
+        ]
+      );
+      return;
+    }
+    openModalFn();
+  };
 
   // Search Bar State
   const [searchKeyword, setSearchKeyword] = useState('');
@@ -383,8 +407,23 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
       }
     } catch (err) {
       console.log('Error liking profile from search:', err);
-      setActionStatusMap((prev) => ({ ...prev, [targetId]: actionType === 'superlike' ? 'superliked' : 'liked' }));
-      Alert.alert('Liked!', `You liked ${targetProfile.firstName || targetProfile.name}!`);
+      const errMsg = err?.response?.data?.message || err?.data?.message || err?.message || 'Your super likes limit have reached';
+
+      Alert.alert(
+        '🔒 Limit Reached',
+        errMsg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Upgrade Now',
+            onPress: () => {
+              if (typeof onOpenSubscriptionModal === 'function') {
+                onOpenSubscriptionModal();
+              }
+            },
+          },
+        ]
+      );
     } finally {
       setSelectedProfileModal(null);
     }
@@ -489,7 +528,7 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
         </View>
 
         {/* Filter Modal Toggle Button */}
-        <TouchableOpacity style={styles.filterToggleBtn} onPress={() => setShowFilterModal(true)}>
+        <TouchableOpacity style={styles.filterToggleBtn} onPress={() => handleOpenAdvancedFilter(() => setShowFilterModal(true))}>
           <Ionicons name="options-outline" size={20} color="#FE3C72" />
         </TouchableOpacity>
       </View>
@@ -500,15 +539,18 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
           {/* Profession Quick Filter */}
           <TouchableOpacity
             style={[styles.quickFilterChip, selectedProfession && selectedProfession !== 'All' && styles.quickFilterChipActive]}
-            onPress={() => {
+            onPress={() => handleOpenAdvancedFilter(() => {
               setProfessionSearchQuery('');
               setShowProfessionModal(true);
-            }}
+            })}
             activeOpacity={0.8}
           >
-            <Text style={[styles.quickFilterChipText, selectedProfession && selectedProfession !== 'All' && styles.quickFilterChipTextActive]} numberOfLines={1}>
-              {selectedProfession && selectedProfession !== 'All' ? `💼 ${selectedProfession}` : '💼 Profession'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name={isFreeUser ? "lock-closed" : "briefcase-outline"} size={13} color={isFreeUser ? "#FFD700" : selectedProfession && selectedProfession !== 'All' ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 4 }} />
+              <Text style={[styles.quickFilterChipText, selectedProfession && selectedProfession !== 'All' && styles.quickFilterChipTextActive]} numberOfLines={1}>
+                {isFreeUser ? 'Profession 🔒' : selectedProfession && selectedProfession !== 'All' ? selectedProfession : 'Profession'}
+              </Text>
+            </View>
             <Text style={styles.quickFilterChevron}>▼</Text>
           </TouchableOpacity>
 
@@ -518,9 +560,12 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
             onPress={() => setShowAgeModal(true)}
             activeOpacity={0.8}
           >
-            <Text style={[styles.quickFilterChipText, (ageMin !== 18 || ageMax !== 50) && styles.quickFilterChipTextActive]}>
-              🎂 Age: {ageMin}-{ageMax}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="calendar-outline" size={13} color={(ageMin !== 18 || ageMax !== 50) ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 4 }} />
+              <Text style={[styles.quickFilterChipText, (ageMin !== 18 || ageMax !== 50) && styles.quickFilterChipTextActive]}>
+                Age: {ageMin}-{ageMax}
+              </Text>
+            </View>
             <Text style={styles.quickFilterChevron}>▼</Text>
           </TouchableOpacity>
 
@@ -1737,7 +1782,10 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
         {matchedCelebrationUser && (
           <View style={styles.matchDialogOverlay}>
             <View style={styles.matchDialogContainer}>
-              <Text style={styles.matchDialogTitle}>It's a Match! 🎉</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="sparkles" size={24} color="#FFD700" style={{ marginRight: 8 }} />
+                <Text style={styles.matchDialogTitle}>It's a Match!</Text>
+              </View>
               <Text style={styles.matchDialogSubtitle}>
                 You and {matchedCelebrationUser.firstName || matchedCelebrationUser.name} liked each other!
               </Text>
@@ -1763,7 +1811,10 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
                   Alert.alert('Match Created!', `You can now chat with ${matchedUser.firstName || matchedUser.name} in the Chat tab!`);
                 }}
               >
-                <Text style={styles.matchDialogChatBtnText}>Send Message 💬</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.matchDialogChatBtnText}>Send Message</Text>
+                </View>
               </TouchableOpacity>
 
               <TouchableOpacity

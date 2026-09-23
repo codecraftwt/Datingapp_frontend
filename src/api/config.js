@@ -5,17 +5,17 @@ export const LOCAL_URL = 'http://localhost:5000';
 export const EMULATOR_URL = 'http://10.0.2.2:5000';
 export const NETWORK_URL = 'http://10.0.3.64:5000';
 
-export const STRIPE_PUBLISHABLE_KEY = 'pk_test_51OrZdzSGA5udBfcN8rWWXOK535E24Fp5njj3n1ccrwNROQKrcljjKvo7HpTNK8EwaaznhKLwZ777OfUgWwCmbB0w00lnqqp0HL';
+export const STRIPE_PUBLISHABLE_KEY = 'pk_test_51UIPtESNVBh57Ub9dg7BgWRA8KgUvVfkFtyov0Etl0OCG3Uh3Xjrj39wr5C3FhO60Zes39Ioi9kDAROGYP3PPqpD00oCTzeHvY';
 
 export const SUBSCRIPTION_PLANS = {
   GOLD: {
-    productId: 'prod_VEWOERRHV3EsTS',
-    priceId: 'price_1UE3LnSGA5udBfcNKNBvbHv8',
+    productId: 'prod_VJ21gIU9Hsv76n',
+    priceId: 'price_1UIPxoSNVBh57Ub94bpA7rtZ',
     type: 'Gold',
   },
   PREMIUM: {
-    productId: 'prod_VEWNuxpAsnKkZm',
-    priceId: 'price_1UE3KpSGA5udBfcNnAqb54o1',
+    productId: 'prod_VJ211jsXBEFLpr',
+    priceId: 'price_1UIPxESNVBh57Ub9JgqAyuuy',
     type: 'Premium',
   },
 };
@@ -31,7 +31,8 @@ export const CANDIDATE_URLS = __DEV__
   ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
   : [LIVE_URL];
 
-let workingBaseUrl = __DEV__ ? LOCAL_URL : LIVE_URL;
+// Set to EMULATOR_URL (http://10.0.2.2:5000) for Android emulator local dev, or LOCAL_URL for ADB reverse
+let workingBaseUrl = EMULATOR_URL;
 
 
 export const getBaseUrl = () => workingBaseUrl;

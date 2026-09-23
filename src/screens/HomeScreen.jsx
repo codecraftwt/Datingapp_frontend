@@ -41,6 +41,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Profile } from './Profile';
 import { SearchScreen } from './SearchScreen';
 import { PreviewModal } from '../components/PreviewModal';
+import { SubscriptionModal } from '../components/SubscriptionModal';
 import Video from 'react-native-video';
 import { useDispatch, useSelector } from 'react-redux';
 import { apiClient, getIsManualLogoutInProgress } from '../api/apiClient';
@@ -449,7 +450,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
-  // Run fetches on mount and when currentUser is available
+  // Run fetches once on mount and sync subscription
+  const curUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+  const initialFetchDoneRef = useRef(false);
+
   useEffect(() => {
     fetchQuestionnaires();
     fetchMessages();
@@ -458,13 +462,27 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     fetchMatchesList();
     fetchSwipedIds();
     fetchBlockedUsers();
+    initialFetchDoneRef.current = true;
+
+    // Sync active subscription status once on mount if tier differs
+    apiClient.getMySubscription()
+      .then((res) => {
+        if (res && res.success && res.subscriptionTier) {
+          const currentTier = userProfile?.subscriptionTier || currentUser?.subscriptionTier;
+          if (res.subscriptionTier !== currentTier && typeof onUpdateProfile === 'function') {
+            onUpdateProfile({ subscriptionTier: res.subscriptionTier, subscriptionStatus: res.subscriptionStatus || 'active' });
+          }
+        }
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Refetch only if the actual logged-in user ID changes (e.g. account switch)
+  const prevUserIdRef = useRef(curUserId);
   useEffect(() => {
-    const curId = currentUser ? (currentUser.id || currentUser._id) : (userProfile ? (userProfile.id || userProfile._id) : null);
-    const uId = curId ? curId.toString() : null;
-    if (uId) {
+    if (curUserId && initialFetchDoneRef.current && curUserId !== prevUserIdRef.current) {
+      prevUserIdRef.current = curUserId;
       fetchQuestionnaires();
       fetchSwipedIds();
       fetchMessages();
@@ -473,7 +491,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       fetchLikes();
       fetchBlockedUsers();
     }
-  }, [currentUser, userProfile]);
+  }, [curUserId]);
 
   useEffect(() => {
     const badgeSyncInterval = setInterval(async () => {
@@ -751,6 +769,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [activeWarningData, setActiveWarningData] = useState(null);
   const [showAdminWarningModal, setShowAdminWarningModal] = useState(false);
   const [warningAckLoading, setWarningAckLoading] = useState(false);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
 
   const checkActiveWarning = async () => {
     try {
@@ -786,6 +805,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setShowAdminWarningModal(true);
       return;
     }
+
+    if (tabName === 'search') {
+      const activeUserObj = userProfile || currentUser;
+      const tier = activeUserObj?.subscriptionTier || 'Free';
+      if (!tier || tier.toLowerCase() === 'free') {
+        Alert.alert(
+          '🔒 Premium Feature',
+          'Advanced Search is exclusive to Premium subscribers. Upgrade now to search profiles and use custom filters!',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Upgrade to Premium',
+              onPress: () => setIsSubscriptionModalOpen(true),
+            },
+          ]
+        );
+        return;
+      }
+    }
+
     setActiveTab(tabName);
     if (tabName !== 'chat') {
       setActiveChat(null);
@@ -1379,11 +1418,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (swipeIndex < MOCK_MATCHES.length) {
       const candidate = MOCK_MATCHES[swipeIndex];
       const targetId = candidate?.id || candidate?._id;
-      setSwipeHistory((prev) => [...prev, { candidate, action: 'like' }]);
 
       try {
         const result = await apiClient.likeUser({ likedId: targetId });
 
+        setSwipeHistory((prev) => [...prev, { candidate, action: 'like' }]);
         if (targetId && !likedByMe.includes(targetId)) {
           setLikedByMe([...likedByMe, targetId]);
         }
@@ -1396,15 +1435,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         } else {
           Alert.alert(
             '❤️ Liked!',
-            `You liked ${candidate.name}! If they like you back, it's a match!`,
+            `You liked ${candidate.name || candidate.firstName}! If they like you back, it's a match!`,
             [{ text: 'OK' }]
           );
         }
+        setSwipeIndex((prev) => prev + 1);
       } catch (err) {
         console.error('Error saving like to backend:', err);
-      }
 
-      setSwipeIndex(swipeIndex + 1);
+        // Reset card smoothly back to center on deck so card is not lost off-screen
+        Animated.spring(position, {
+          toValue: { x: 0, y: 0 },
+          friction: 5,
+          tension: 40,
+          useNativeDriver: false,
+        }).start();
+
+        const errMsg = err?.data?.message || err?.message || '';
+        Alert.alert(
+          '🔒 Daily Like Limit Reached',
+          errMsg || 'You have reached your daily limit of 2 likes! Upgrade to Gold or Premium for Unlimited Swipes.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Upgrade to Unlimited',
+              onPress: () => setIsSubscriptionModalOpen(true),
+            },
+          ]
+        );
+      }
     }
   };
 
@@ -1454,7 +1513,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         setLikedByMe([...likedByMe, targetId]);
       }
 
-      if (result.isMatch || result.message.includes('match') || result.message.includes('Match')) {
+      if (result.isMatch || result.message?.includes('match') || result.message?.includes('Match')) {
         setMatchedUser(user);
         setShowMatchPopup(true);
       }
@@ -1464,6 +1523,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       refetchSwipedIds();
     } catch (err) {
       console.error('Error matching from Likes tab:', err);
+      const errMsg = err?.data?.message || err?.message || '';
+      Alert.alert(
+        '🔒 Daily Like Limit Reached',
+        errMsg || 'You have reached your daily limit of 2 likes! Upgrade to Gold or Premium for Unlimited Swipes.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Upgrade to Unlimited',
+            onPress: () => setIsSubscriptionModalOpen(true),
+          },
+        ]
+      );
     }
   };
 
@@ -3514,8 +3585,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setSwipeIndex((prev) => prev + 1);
     } catch (err) {
       console.log('Superlike swipe error:', err);
-      const msg = err?.data?.message || err?.message || 'Daily Super Like limit reached (1 per day)!';
-      Alert.alert('Super Like Limit', msg);
+
+      Animated.spring(position, {
+        toValue: { x: 0, y: 0 },
+        friction: 5,
+        tension: 40,
+        useNativeDriver: false,
+      }).start();
+
+      const msg = err?.response?.data?.message || err?.data?.message || err?.message || 'Your super likes limit have reached';
+      Alert.alert(
+        '⭐ Limit Reached',
+        msg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Upgrade Now',
+            onPress: () => setIsSubscriptionModalOpen(true),
+          },
+        ]
+      );
     }
   };
 
@@ -4109,7 +4198,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         <View style={styles.header}>
           <View style={styles.logoContainer}>
             <View style={styles.logoIcon}>
-              <Text style={styles.logoIconText}>🔥</Text>
+              <Ionicons name="flame" size={26} color="#FE3C72" />
             </View>
             <Text style={styles.logoText}>FlameMatch</Text>
           </View>
@@ -4147,6 +4236,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             <SearchScreen
               currentUser={currentUser}
               userProfile={userProfile}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
               onSelectProfile={(profile) => {
                 console.log('Selected Profile from Search:', profile);
               }}
@@ -4287,7 +4377,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 </View>
               ) : (
                 <View style={styles.noMatchesCard}>
-                  <Text style={styles.noMatchesEmoji}>🎉</Text>
+                  <Ionicons name="sparkles" size={56} color="#FFD700" style={{ marginBottom: 16 }} />
                   <Text style={styles.noMatchesTitle}>You've Swiped Everyone!</Text>
                   <Text style={styles.noMatchesSubtitle}>
                     Check back later or expand your distance preference sliders to find more candidates near you.
@@ -4361,81 +4451,131 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               {likesList.length > 0 ? (
                 <ScrollView style={styles.likesGridScroll} showsVerticalScrollIndicator={false}>
                   <View style={styles.likesListContainer}>
-                    {likesList.map((item) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={[styles.instaRowCard, item.isSuperLike && { borderColor: '#3897F0', borderWidth: 1.5 }]}
-                        activeOpacity={0.85}
-                        onPress={() => {
-                          setSelectedLikesProfile(item);
-                          setLikesActivePhotoIndex(0);
-                        }}
-                      >
-                        {/* Left: Avatar with Online Dot */}
-                        <View style={styles.instaAvatarWrapper}>
-                          <Image
-                            source={{
-                              uri: item.profileImage
-                                ? getImageUrl(item.profileImage)
-                                : getImageUrl(item.image)
-                            }}
-                            style={styles.instaAvatar}
-                          />
-                          {!!onlineUsersMap[item.id.toString()] && (
-                            <View style={styles.instaOnlineDot} />
-                          )}
-                        </View>
-
-                        {/* Middle: Name, Age, Subtitle */}
-                        <View style={styles.instaInfoCol}>
-                          <View style={styles.instaNameRow}>
-                            <Text style={styles.instaNameText} numberOfLines={1}>
-                              {item.name}{item.age ? `, ${item.age}` : ''}
-                            </Text>
-                            {item.isSuperLike && (
-                              <Text style={styles.instaSuperStar}>⭐</Text>
+                    {likesList.map((item) => {
+                      const activeUserObj = userProfile || currentUser;
+                      const currentTierStr = activeUserObj?.subscriptionTier || 'Free';
+                      const isUserFree = !currentTierStr || currentTierStr.toLowerCase() === 'free';
+                      const isItemBlurred = item.isBlurred || isUserFree;
+                      return (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={[
+                            styles.instaRowCard,
+                            item.isSuperLike && { borderColor: '#3897F0', borderWidth: 1.5 },
+                            isItemBlurred && { borderColor: 'rgba(255, 215, 0, 0.4)', borderWidth: 1, backgroundColor: 'rgba(255, 215, 0, 0.04)' }
+                          ]}
+                          activeOpacity={0.85}
+                          onPress={() => {
+                            if (isItemBlurred) {
+                              setIsSubscriptionModalOpen(true);
+                            } else {
+                              setSelectedLikesProfile(item);
+                              setLikesActivePhotoIndex(0);
+                            }
+                          }}
+                        >
+                          {/* Left: Avatar with Online Dot or Blur */}
+                          <View style={styles.instaAvatarWrapper}>
+                            <Image
+                              source={{
+                                uri: item.profileImage
+                                  ? getImageUrl(item.profileImage)
+                                  : getImageUrl(item.image)
+                              }}
+                              style={styles.instaAvatar}
+                              blurRadius={isItemBlurred ? (Platform.OS === 'ios' ? 14 : 22) : 0}
+                            />
+                            {!isItemBlurred && !!onlineUsersMap[item.id.toString()] && (
+                              <View style={styles.instaOnlineDot} />
+                            )}
+                            {isItemBlurred && (
+                              <View style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                backgroundColor: 'rgba(15, 18, 26, 0.4)',
+                                borderRadius: 25,
+                              }}>
+                                <Ionicons name="lock-closed" size={16} color="#FFD700" />
+                              </View>
                             )}
                           </View>
-                          <Text style={styles.instaSubtitleText} numberOfLines={1}>
-                            {item.isSuperLike
-                              ? '⭐ Super Liked you!'
-                              : item.distance
-                              ? `📍 ${item.distance}`
-                              : 'Liked your profile'}
-                          </Text>
-                        </View>
 
-                        {/* Right: Instagram-Style Action Buttons (Pass ✖ & Like ♥) */}
-                        <View style={styles.instaActionsGroup}>
-                          <TouchableOpacity
-                            style={styles.instaPassBtn}
-                            onPress={(e) => {
-                              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-                              handleRejectLike(item);
-                            }}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.instaPassText}>✖</Text>
-                          </TouchableOpacity>
+                          {/* Middle: Name, Age, Subtitle */}
+                          <View style={styles.instaInfoCol}>
+                            <View style={styles.instaNameRow}>
+                              <Text style={[styles.instaNameText, isItemBlurred && { color: '#FFD700' }]} numberOfLines={1}>
+                                {isItemBlurred ? 'Someone Liked You' : `${item.name}${item.age ? `, ${item.age}` : ''}`}
+                              </Text>
+                              {!isItemBlurred && item.isSuperLike && (
+                                <Ionicons name="star" size={12} color="#FFD700" style={{ marginLeft: 4 }} />
+                              )}
+                            </View>
+                            <Text style={styles.instaSubtitleText} numberOfLines={1}>
+                              {isItemBlurred
+                                ? '✨ Upgrade to Gold to unblur'
+                                : item.isSuperLike
+                                ? '⭐ Super Liked you!'
+                                : item.distance
+                                ? `📍 ${item.distance}`
+                                : 'Liked your profile'}
+                            </Text>
+                          </View>
 
-                          <TouchableOpacity
-                            style={styles.instaLikeBtn}
-                            onPress={(e) => {
-                              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-                              handleLikeMatch(item);
-                            }}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.instaLikeIcon}>♥</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
+                          {/* Right: Action Buttons or UNBLUR Lock Badge */}
+                          {isItemBlurred ? (
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: '#FFD700',
+                                paddingHorizontal: 12,
+                                paddingVertical: 6,
+                                borderRadius: 14,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                              }}
+                              onPress={() => setIsSubscriptionModalOpen(true)}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="lock-closed" size={12} color="#0F121A" style={{ marginRight: 4 }} />
+                              <Text style={{ color: '#0F121A', fontSize: 11, fontWeight: '900' }}>UNBLUR</Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <View style={styles.instaActionsGroup}>
+                              <TouchableOpacity
+                                style={styles.instaPassBtn}
+                                onPress={(e) => {
+                                  if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+                                  handleRejectLike(item);
+                                }}
+                                activeOpacity={0.7}
+                              >
+                                <Text style={styles.instaPassText}>✖</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.instaLikeBtn}
+                                onPress={(e) => {
+                                  if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+                                  handleLikeMatch(item);
+                                }}
+                                activeOpacity={0.7}
+                              >
+                                <Text style={styles.instaLikeIcon}>♥</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </ScrollView>
               ) : (
                 <View style={styles.emptyLikesContainer}>
-                  <Text style={styles.emptyLikesEmoji}>❤️</Text>
+                  <Ionicons name="heart-dislike-outline" size={56} color="#FE3C72" style={{ marginBottom: 16 }} />
                   <Text style={styles.emptyLikesTitle}>No Likes Yet</Text>
                   <Text style={styles.emptyLikesSubtitle}>
                     Keep swiping! When someone likes you back, they will appear here.
@@ -5219,7 +5359,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     </ScrollView>
                   ) : (
                     <View style={styles.emptyChatsContainer}>
-                      <Text style={styles.emptyChatsEmoji}>💬</Text>
+                      <Ionicons name="chatbubbles-outline" size={56} color="#38BDF8" style={{ marginBottom: 16 }} />
                       <Text style={styles.emptyChatsTitle}>No Conversations Yet</Text>
                       <Text style={styles.emptyChatsSubtitle}>
                         Your matches will show up here. Swipe right to match and start chatting!
@@ -5267,12 +5407,27 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             style={[styles.navigationTab, activeTab === 'search' && styles.navigationTabActive]}
             onPress={() => handleTabPress('search')}
           >
-            <Ionicons
-              name={activeTab === 'search' ? "search" : "search-outline"}
-              size={24}
-              color={activeTab === 'search' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
-              style={{ marginBottom: 2 }}
-            />
+            <View style={{ position: 'relative' }}>
+              <Ionicons
+                name={activeTab === 'search' ? "search" : "search-outline"}
+                size={24}
+                color={activeTab === 'search' ? "#FE3C72" : "rgba(255, 255, 255, 0.6)"}
+                style={{ marginBottom: 2 }}
+              />
+              {(!userProfile?.subscriptionTier || userProfile?.subscriptionTier?.toLowerCase() === 'free') && (
+                <View style={{
+                  position: 'absolute',
+                  top: -3,
+                  right: -6,
+                  backgroundColor: '#FFD700',
+                  borderRadius: 6,
+                  paddingHorizontal: 3,
+                  paddingVertical: 1,
+                }}>
+                  <Ionicons name="lock-closed" size={9} color="#0F121A" />
+                </View>
+              )}
+            </View>
             <Text style={[styles.navigationLabel, activeTab === 'search' && styles.navigationLabelActive]}>
               Search
             </Text>
@@ -6496,6 +6651,20 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           onClose={activeWarningData && !activeWarningData.isAcknowledged ? null : () => setShowAdminWarningModal(false)}
           loading={warningAckLoading}
           isMandatory={!!(activeWarningData && !activeWarningData.isAcknowledged)}
+        />
+
+        {/* Global Subscription Modal Triggered from Likes Tab / Advanced Search / Swipes */}
+        <SubscriptionModal
+          visible={isSubscriptionModalOpen}
+          onClose={() => setIsSubscriptionModalOpen(false)}
+          currentTier={userProfile?.subscriptionTier || currentUser?.subscriptionTier || 'Free'}
+          onSubscriptionUpdated={(newTier) => {
+            if (typeof onUpdateProfile === 'function') {
+              onUpdateProfile({ subscriptionTier: newTier, subscriptionStatus: 'active' });
+            }
+            fetchLikes();
+            fetchQuestionnaires();
+          }}
         />
       </View>
     </View>

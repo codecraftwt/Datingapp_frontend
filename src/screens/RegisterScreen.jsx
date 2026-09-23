@@ -221,7 +221,7 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
 
           <View style={[styles.headerContainer, { width: cardWidth }]}>
             <View style={styles.logoBadge}>
-              <Text style={styles.logoHeart}>✨</Text>
+              <Ionicons name="sparkles" size={24} color="#FE3C72" />
             </View>
             <Text style={styles.title}>Create Account</Text>
             <Text style={styles.subtitle}>Join Spark and discover awesome matches</Text>
@@ -280,18 +280,23 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
             />
 
             {confirmPassword.length > 0 && (
-              <Text
-                style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  marginTop: -8,
-                  marginBottom: 14,
-                  marginLeft: 6,
-                  color: password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FF5252',
-                }}
-              >
-                {password.trim() === confirmPassword.trim() ? '✅ Passwords match' : '❌ Passwords do not match'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: -8, marginBottom: 14, marginLeft: 6 }}>
+                <Ionicons
+                  name={password.trim() === confirmPassword.trim() ? "checkmark-circle" : "close-circle"}
+                  size={14}
+                  color={password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FF5252'}
+                  style={{ marginRight: 4 }}
+                />
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: '700',
+                    color: password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FF5252',
+                  }}
+                >
+                  {password.trim() === confirmPassword.trim() ? 'Passwords match' : 'Passwords do not match'}
+                </Text>
+              </View>
             )}
 
             {/* Gender Selection */}
@@ -323,7 +328,10 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
 
             {/* Temporary Address / Current Location (Optional) */}
             <View style={styles.sectionDivider}>
-              <Text style={styles.sectionTitle}>🎯 Temporary Address (Optional)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="location-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>Temporary Address (Optional)</Text>
+              </View>
             </View>
 
             <TouchableOpacity

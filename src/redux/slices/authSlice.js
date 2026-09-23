@@ -20,6 +20,15 @@ const authSlice = createSlice({
         setAuthToken(token);
       }
     },
+    updateUserSubscription: (state, action) => {
+      const { subscriptionTier, subscriptionStatus } = action.payload;
+      if (state.user) {
+        state.user.subscriptionTier = subscriptionTier;
+        if (subscriptionStatus) {
+          state.user.subscriptionStatus = subscriptionStatus;
+        }
+      }
+    },
     logout: (state) => {
       state.user = null;
       state.token = null;
@@ -29,7 +38,7 @@ const authSlice = createSlice({
   },
 });
 
-export const { setCredentials, logout } = authSlice.actions;
+export const { setCredentials, updateUserSubscription, logout } = authSlice.actions;
 export default authSlice.reducer;
 
 export const selectCurrentUser = (state) => state.auth.user;
