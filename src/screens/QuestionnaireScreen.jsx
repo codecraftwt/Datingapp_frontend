@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   useWindowDimensions,
   PermissionsAndroid,
+  ToastAndroid,
 } from 'react-native';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { apiClient } from '../api/apiClient';
@@ -363,9 +364,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     const localUri = asset.uri;
     const isVideo = asset.type?.startsWith('video/') || isVideoUrl(asset.fileName || localUri);
 
-    // If video is longer than 15s, backend Cloudinary transformation automatically trims to first 15s
+    // Even if user selected a video longer than 15s, system captures only first 15s
     if (isVideo && asset.duration && asset.duration > 15) {
-      console.log('[QuestionnaireScreen] Selected video > 15s. Cloudinary will automatically trim to first 15s.');
+      console.log(`[QuestionnaireScreen] Video is ${Math.round(asset.duration)}s. Automatically capturing first 15 seconds.`);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Video trimmed to first 15 seconds ⏱️', ToastAndroid.SHORT);
+      }
     }
 
     console.log(`[QuestionnaireScreen] Selected asset for Slot #${slotIndex + 1}:`, {
@@ -373,6 +377,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       type: asset.type,
       fileName: asset.fileName,
       fileSize: asset.fileSize,
+      duration: asset.duration,
       isVideo,
     });
 
@@ -385,12 +390,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       return;
     }
 
-    // 500MB video limit
-    const maxVideoSizeBytes = 500 * 1024 * 1024; // 500 MB
+    // 50MB max video limit for fast upload
+    const maxVideoSizeBytes = 50 * 1024 * 1024; // 50 MB
     if (isVideo && asset.fileSize && asset.fileSize > maxVideoSizeBytes) {
       Alert.alert(
         'Video Size Exceeded 📹',
-        `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video clip under 500MB (or 15 seconds or less) for optimal performance.`
+        `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video under 50MB (max 15s) for fast profile loading.`
       );
       return;
     }
@@ -405,26 +410,70 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     // Upload file (Photo or Video) to Backend & Cloudinary
     try {
       setUploadingSlotIndex(slotIndex);
-      const formData = new FormData();
       const ext = isVideo ? 'mp4' : 'jpg';
       const mime = asset.type || (isVideo ? 'video/mp4' : 'image/jpeg');
-
       const safeName = asset.fileName ? asset.fileName.replace(/[^a-zA-Z0-9._-]/g, '_') : `media_${Date.now()}_slot${slotIndex + 1}.${ext}`;
+      const uploadUri = Platform.OS === 'android' ? localUri : localUri.replace('file://', '');
 
-      formData.append('photo', {
-        uri: Platform.OS === 'android' ? localUri : localUri.replace('file://', ''),
-        type: mime,
-        name: safeName,
-      });
+      let cloudinaryUrl = null;
+      let uploadRes = null;
 
-      console.log(`[QuestionnaireScreen] Uploading slot media (Slot #${slotIndex + 1})...`, { mime, ext });
-      const uploadRes = slotIndex === 0
-        ? await apiClient.uploadMainPhoto(formData)
-        : await apiClient.uploadGalleryMedia(formData, slotIndex);
+      // 1. Direct Cloudinary upload (bypasses server payload limits like Vercel's 4.5MB limit)
+      try {
+        const cloudFormData = new FormData();
+        cloudFormData.append('file', {
+          uri: uploadUri,
+          type: mime,
+          name: safeName,
+        });
+        cloudFormData.append('upload_preset', 'Dating_Profiles');
+
+        const cloudEndpoint = `https://api.cloudinary.com/v1_1/dwwykeft2/${isVideo ? 'video' : 'image'}/upload`;
+        console.log(`[QuestionnaireScreen] Direct Cloudinary upload to ${cloudEndpoint}...`);
+        const cloudController = new AbortController();
+        const cloudTimeout = setTimeout(() => cloudController.abort(), isVideo ? 120000 : 30000);
+        const cloudFetchRes = await fetch(cloudEndpoint, {
+          method: 'POST',
+          body: cloudFormData,
+          signal: cloudController.signal,
+        });
+        clearTimeout(cloudTimeout);
+        const cloudJson = await cloudFetchRes.json();
+        if (cloudJson && (cloudJson.secure_url || cloudJson.url)) {
+          cloudinaryUrl = cloudJson.secure_url || cloudJson.url;
+          if (isVideo && cloudinaryUrl.includes('cloudinary.com') && cloudinaryUrl.includes('/video/upload/')) {
+            if (!cloudinaryUrl.includes('/so_0,eo_15/') && !cloudinaryUrl.includes('/eo_15/')) {
+              cloudinaryUrl = cloudinaryUrl.replace('/video/upload/', '/video/upload/so_0,eo_15/');
+            }
+          }
+          console.log('[QuestionnaireScreen] Direct Cloudinary upload success:', cloudinaryUrl);
+        } else if (cloudJson?.error) {
+          console.warn('[QuestionnaireScreen] Cloudinary direct response error:', cloudJson.error.message);
+        }
+      } catch (cloudErr) {
+        console.warn('[QuestionnaireScreen] Direct Cloudinary upload error, trying backend fallback:', cloudErr.message);
+      }
+
+      // 2. Sync to Backend Database (JSON if Cloudinary URL obtained, otherwise full multipart fallback)
+      if (cloudinaryUrl) {
+        uploadRes = slotIndex === 0
+          ? await apiClient.uploadMainPhoto({ photo: cloudinaryUrl, imageUrl: cloudinaryUrl })
+          : await apiClient.uploadGalleryMedia({ mediaUrl: cloudinaryUrl, slotIndex }, slotIndex);
+      } else {
+        const formData = new FormData();
+        formData.append('photo', {
+          uri: uploadUri,
+          type: mime,
+          name: safeName,
+        });
+        console.log(`[QuestionnaireScreen] Uploading slot media (Slot #${slotIndex + 1}) to backend...`, { mime, ext });
+        uploadRes = slotIndex === 0
+          ? await apiClient.uploadMainPhoto(formData)
+          : await apiClient.uploadGalleryMedia(formData, slotIndex);
+        cloudinaryUrl = uploadRes?.profileImage || uploadRes?.mediaUrl || uploadRes?.url || uploadRes?.data?.url || uploadRes?.secure_url;
+      }
 
       console.log('[QuestionnaireScreen] Upload response:', uploadRes);
-
-      const cloudinaryUrl = uploadRes?.profileImage || uploadRes?.mediaUrl || uploadRes?.url || uploadRes?.data?.url || uploadRes?.secure_url;
       console.log('[QuestionnaireScreen] Cloudinary URL for slot:', cloudinaryUrl);
 
       if (cloudinaryUrl) {
@@ -444,11 +493,20 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       }
     } catch (uploadErr) {
       console.error('[QuestionnaireScreen] Backend upload error:', uploadErr);
-      const errorMsg =
-        uploadErr?.data?.message ||
-        uploadErr?.message ||
-        'Upload encountered an issue. Please try again.';
-      Alert.alert('Upload Error', errorMsg);
+      // Revert optimistic slot preview on error
+      setPhotos((prevPhotos) => {
+        const updated = [...prevPhotos];
+        if (updated[slotIndex] === localUri) {
+          updated[slotIndex] = null;
+        }
+        return updated;
+      });
+
+      const isAbort = uploadErr?.name === 'AbortError' || uploadErr?.message?.includes('Aborted') || uploadErr?.message?.includes('abort');
+      const errorMsg = isAbort
+        ? 'Video upload timed out. Please check your network connection and try again.'
+        : uploadErr?.data?.message || uploadErr?.message || 'Upload encountered an issue. Please try again.';
+      Alert.alert('Upload Error 📹', errorMsg);
     } finally {
       setUploadingSlotIndex(null);
     }
@@ -614,6 +672,8 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       const pickerOptions = {
         mediaType: effectiveType,
         quality: 0.7,
+        videoQuality: 'low',
+        durationLimit: 15,
         maxWidth: 1080,
         maxHeight: 1080,
         selectionLimit: 1,
@@ -708,16 +768,45 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           const isVid = isVideoUrl(photoUri);
           const ext = isVid ? 'mp4' : 'jpg';
           const mime = isVid ? 'video/mp4' : 'image/jpeg';
-          const formData = new FormData();
-          formData.append('photo', {
-            uri: Platform.OS === 'android' ? photoUri : photoUri.replace('file://', ''),
-            type: mime,
-            name: `media_${Date.now()}_slot${index}.${ext}`,
-          });
-          console.log(`[QuestionnaireScreen] Uploading local media URI for slot #${index + 1}:`, photoUri);
-          const uploadRes = await apiClient.uploadImage(formData);
-          console.log(`[QuestionnaireScreen] Cloudinary response for slot #${index + 1}:`, uploadRes);
-          const cloudUrl = uploadRes?.url || uploadRes?.secure_url || uploadRes?.data?.url;
+          const uploadUri = Platform.OS === 'android' ? photoUri : photoUri.replace('file://', '');
+          const safeName = `media_${Date.now()}_slot${index}.${ext}`;
+
+          let cloudUrl = null;
+          try {
+            const cloudFormData = new FormData();
+            cloudFormData.append('file', {
+              uri: uploadUri,
+              type: mime,
+              name: safeName,
+            });
+            cloudFormData.append('upload_preset', 'Dating_Profiles');
+            const cloudEndpoint = `https://api.cloudinary.com/v1_1/dwwykeft2/${isVid ? 'video' : 'image'}/upload`;
+            const cloudRes = await fetch(cloudEndpoint, { method: 'POST', body: cloudFormData });
+            const cloudData = await cloudRes.json();
+            if (cloudData && (cloudData.secure_url || cloudData.url)) {
+              cloudUrl = cloudData.secure_url || cloudData.url;
+              if (isVid && cloudUrl.includes('cloudinary.com') && cloudUrl.includes('/video/upload/')) {
+                if (!cloudUrl.includes('/so_0,eo_15/') && !cloudUrl.includes('/eo_15/')) {
+                  cloudUrl = cloudUrl.replace('/video/upload/', '/video/upload/so_0,eo_15/');
+                }
+              }
+            }
+          } catch (cErr) {
+            console.warn('[QuestionnaireScreen] Direct Cloudinary upload in handleSubmit failed, falling back to backend:', cErr.message);
+          }
+
+          if (!cloudUrl) {
+            const formData = new FormData();
+            formData.append('photo', {
+              uri: uploadUri,
+              type: mime,
+              name: safeName,
+            });
+            console.log(`[QuestionnaireScreen] Uploading local media URI for slot #${index + 1}:`, photoUri);
+            const uploadRes = await apiClient.uploadImage(formData);
+            cloudUrl = uploadRes?.url || uploadRes?.secure_url || uploadRes?.data?.url;
+          }
+
           if (cloudUrl && cloudUrl.startsWith('http')) {
             uploadedPhotosList.push(cloudUrl);
             latestMediaTimestamps[cloudUrl] = new Date().toISOString();
@@ -1497,7 +1586,17 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                           style={styles.storyRing}
                         >
                           <View style={styles.circularThumbContainer}>
-                            <Image source={{ uri: thumb }} style={styles.storyThumb} />
+                            {!url?.startsWith('http') && isVid ? (
+                              <Video
+                                source={{ uri: url }}
+                                style={styles.storyThumb}
+                                resizeMode="cover"
+                                paused={true}
+                                muted={true}
+                              />
+                            ) : (
+                              <Image source={{ uri: thumb }} style={styles.storyThumb} />
+                            )}
                             {isVid && (
                               <View style={styles.playIconOverlay}>
                                 <Text style={styles.playIconText}>▶</Text>
@@ -1528,7 +1627,17 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                             >
                               {isVid ? (
                                 <View style={{ width: '100%', height: '100%', position: 'relative' }}>
-                                  <Image source={{ uri: thumbUri }} style={styles.slotImage} resizeMode="cover" />
+                                  {!photoUri?.startsWith('http') ? (
+                                    <Video
+                                      source={{ uri: photoUri }}
+                                      style={styles.slotImage}
+                                      resizeMode="cover"
+                                      paused={true}
+                                      muted={true}
+                                    />
+                                  ) : (
+                                    <Image source={{ uri: thumbUri }} style={styles.slotImage} resizeMode="cover" />
+                                  )}
                                   <View style={{
                                     position: 'absolute',
                                     top: 0,
@@ -1556,8 +1665,22 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                                 </View>
                               ) : null}
                               {uploadingSlotIndex === index && (
-                                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', borderRadius: 12 }}>
+                                <View style={{
+                                  position: 'absolute',
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  backgroundColor: 'rgba(0,0,0,0.65)',
+                                  justifyContent: 'center',
+                                  alignItems: 'center',
+                                  borderRadius: 12,
+                                  padding: 4,
+                                }}>
                                   <ActivityIndicator size="small" color="#FE3C72" />
+                                  <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '700', marginTop: 4, textAlign: 'center' }}>
+                                    {isVid ? 'Uploading\nVideo...' : 'Uploading...'}
+                                  </Text>
                                 </View>
                               )}
                               <TouchableOpacity

@@ -484,9 +484,15 @@ export const PreviewModal = ({
                     }
                   }}
                   onProgress={(data) => {
+                    if (data && data.currentTime >= 15) {
+                      progressAnim.stopAnimation();
+                      handleNextStory();
+                      return;
+                    }
                     if (!isPaused && data && data.seekableDuration && data.seekableDuration > 0) {
                       const totalDurMs = Math.min(15000, data.seekableDuration * 1000);
-                      const ratio = data.currentTime / data.seekableDuration;
+                      const maxSec = Math.min(15, data.seekableDuration);
+                      const ratio = maxSec > 0 ? Math.min(1, data.currentTime / maxSec) : 0;
                       if (!isAnimatingRef.current || Math.abs(currentAnimValueRef.current - ratio) > 0.2) {
                         startAnimation(ratio, totalDurMs);
                       }

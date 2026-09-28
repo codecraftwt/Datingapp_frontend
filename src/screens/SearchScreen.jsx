@@ -45,23 +45,33 @@ const safeString = (val, fallback = '') => {
   return String(val);
 };
 
-export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBack, onBack, onOpenSubscriptionModal }) {
+export function SearchScreen({ currentUser, userProfile, subscriptionPermissions: propPerms, onSelectProfile, onGoBack, onBack, onOpenSubscriptionModal }) {
   const insets = useSafeAreaInsets();
 
   const activeUser = userProfile || currentUser;
   const userInterestedIn = activeUser?.interestedIn || 'Everyone';
-  const userTierStr = userProfile?.subscriptionTier || currentUser?.subscriptionTier || 'Free';
-  const isFreeUser = !userTierStr || userTierStr.toLowerCase() === 'free';
+  const perms = propPerms || userProfile?.subscriptionPermissions || currentUser?.subscriptionPermissions;
+  const isSearchAllowed = Boolean(perms?.search?.isAllowed);
 
-  const handleOpenAdvancedFilter = (openModalFn) => {
-    if (isFreeUser) {
+  const handleOpenAdvancedFilter = async (openModalFn) => {
+    let allowed = isSearchAllowed;
+    if (!allowed) {
+      try {
+        const fresh = await apiClient.getMySubscription();
+        if (fresh && fresh.success && fresh.permissions) {
+          allowed = Boolean(fresh.permissions?.search?.isAllowed);
+        }
+      } catch (_) {}
+    }
+
+    if (!allowed) {
       Alert.alert(
-        '🔒 Premium Feature',
-        'Advanced Search Filters (Profession, Languages, Lifestyle) are exclusive to Premium members. Upgrade now to unlock!',
+        '🔒 Feature Not Included',
+        'Advanced Search Filters are not included in your current subscription plan. Upgrade to a plan that includes Search to unlock!',
         [
           { text: 'Cancel', style: 'cancel' },
           {
-            text: 'Upgrade Now',
+            text: 'View Plans',
             onPress: () => {
               if (typeof onOpenSubscriptionModal === 'function') {
                 onOpenSubscriptionModal();
@@ -473,15 +483,19 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
           text: 'Block User 🚫',
           style: 'destructive',
           onPress: async () => {
+            const targetIdVal = (targetProfile._id || targetProfile.id)?.toString();
             try {
               await apiClient.blockUser({
-                targetUserId: targetProfile._id || targetProfile.id,
+                targetUserId: targetIdVal,
+                targetId: targetIdVal,
+                userId: targetIdVal,
               });
-              setActionStatusMap((prev) => ({ ...prev, [targetProfile._id || targetProfile.id]: 'passed' }));
-              Alert.alert('Blocked', `${targetProfile.firstName || targetProfile.name} has been blocked.`);
+              setActionStatusMap((prev) => ({ ...prev, [targetIdVal]: 'passed' }));
+              Alert.alert('Blocked 🔒', `${targetProfile.firstName || targetProfile.name || 'User'} has been blocked.`);
               setSelectedProfileModal(null);
             } catch (err) {
-              Alert.alert('Blocked', 'User blocked.');
+              const errMsg = err?.data?.message || (err?.message && err.message !== 'Aborted' ? err.message : 'User blocked.');
+              Alert.alert('Blocked', errMsg);
               setSelectedProfileModal(null);
             }
           },
@@ -546,9 +560,9 @@ export function SearchScreen({ currentUser, userProfile, onSelectProfile, onGoBa
             activeOpacity={0.8}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name={isFreeUser ? "lock-closed" : "briefcase-outline"} size={13} color={isFreeUser ? "#FFD700" : selectedProfession && selectedProfession !== 'All' ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 4 }} />
+              <Ionicons name={!isSearchAllowed ? "lock-closed" : "briefcase-outline"} size={13} color={!isSearchAllowed ? "#FFD700" : selectedProfession && selectedProfession !== 'All' ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 4 }} />
               <Text style={[styles.quickFilterChipText, selectedProfession && selectedProfession !== 'All' && styles.quickFilterChipTextActive]} numberOfLines={1}>
-                {isFreeUser ? 'Profession 🔒' : selectedProfession && selectedProfession !== 'All' ? selectedProfession : 'Profession'}
+                {!isSearchAllowed ? 'Profession 🔒' : selectedProfession && selectedProfession !== 'All' ? selectedProfession : 'Profession'}
               </Text>
             </View>
             <Text style={styles.quickFilterChevron}>▼</Text>

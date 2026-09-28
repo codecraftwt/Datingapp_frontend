@@ -981,17 +981,13 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             onPress={() => setIsSubscriptionModalOpen(true)}
             activeOpacity={0.8}
           >
-            <Ionicons
-              name={activePlan?.toLowerCase() === 'gold' ? 'star' : activePlan?.toLowerCase() === 'premium' ? 'ribbon' : 'sparkles-outline'}
-              size={13}
-              color={activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : 'rgba(255, 255, 255, 0.7)'}
-              style={{ marginRight: 5 }}
-            />
+
             <Text style={{
               color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#FFFFFF',
               fontSize: 12,
               fontWeight: '800',
               letterSpacing: 0.5,
+              marginRight: 4,
             }}>
               {activePlan && activePlan.toLowerCase() !== 'free' ? `${activePlan.toUpperCase()} MEMBER` : 'FREE PLAN'}
             </Text>
@@ -1206,7 +1202,12 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
-          onPress={() => setIsSubscriptionModalOpen(true)}
+          onPress={() => {
+            if (typeof apiClient.resetResolvedUrl === 'function') {
+              apiClient.resetResolvedUrl();
+            }
+            setIsSubscriptionModalOpen(true);
+          }}
           activeOpacity={0.7}
         >
           <Ionicons
@@ -1215,14 +1216,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             color="#FFD700"
             style={{ marginRight: 10 }}
           />
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ flex: 1, flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center' }}>
             <Text style={styles.actionText}>Subscriptions & Membership</Text>
             <View style={{
               backgroundColor: activePlan?.toLowerCase() === 'gold' ? 'rgba(255, 215, 0, 0.2)' : activePlan?.toLowerCase() === 'premium' ? 'rgba(254, 60, 114, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-              paddingHorizontal: 9,
-              paddingVertical: 3,
-              borderRadius: 10,
-              marginLeft: 6,
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+              borderRadius: 6,
+              marginTop: 4,
             }}>
               <Text style={{
                 color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#A0A0B0',
@@ -1711,13 +1712,48 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
       <SubscriptionModal
         visible={isSubscriptionModalOpen}
-        onClose={() => setIsSubscriptionModalOpen(false)}
+        onClose={async () => {
+          setIsSubscriptionModalOpen(false);
+          try {
+            const subRes = await apiClient.getMySubscription();
+            if (subRes && subRes.success) {
+              const freshTier = subRes.subscriptionTier;
+              setActivePlan(freshTier);
+              setProfile((prev) => (prev ? { ...prev, subscriptionTier: freshTier, subscriptionStatus: subRes.subscriptionStatus || 'active' } : prev));
+              if (typeof onUpdateProfile === 'function') {
+                onUpdateProfile({
+                  subscriptionTier: freshTier,
+                  subscriptionStatus: subRes.subscriptionStatus || 'active',
+                  subscriptionPermissions: subRes.permissions,
+                });
+              }
+            }
+          } catch (_) { }
+        }}
         currentTier={profile?.subscriptionTier || activePlan}
-        onSubscriptionUpdated={(newTier) => {
+        onSubscriptionUpdated={async (newTier) => {
           setActivePlan(newTier);
-          setProfile((prev) => (prev ? { ...prev, subscriptionTier: newTier } : prev));
-          if (typeof onUpdateProfile === 'function') {
-            onUpdateProfile({ subscriptionTier: newTier });
+          setProfile((prev) => (prev ? { ...prev, subscriptionTier: newTier, subscriptionStatus: 'active' } : prev));
+          try {
+            const subRes = await apiClient.getMySubscription();
+            if (subRes && subRes.success) {
+              const freshTier = subRes.subscriptionTier || newTier;
+              setActivePlan(freshTier);
+              setProfile((prev) => (prev ? { ...prev, subscriptionTier: freshTier, subscriptionStatus: subRes.subscriptionStatus || 'active' } : prev));
+              if (typeof onUpdateProfile === 'function') {
+                onUpdateProfile({
+                  subscriptionTier: freshTier,
+                  subscriptionStatus: subRes.subscriptionStatus || 'active',
+                  subscriptionPermissions: subRes.permissions,
+                });
+              }
+            } else if (typeof onUpdateProfile === 'function') {
+              onUpdateProfile({ subscriptionTier: newTier, subscriptionStatus: 'active' });
+            }
+          } catch (e) {
+            if (typeof onUpdateProfile === 'function') {
+              onUpdateProfile({ subscriptionTier: newTier, subscriptionStatus: 'active' });
+            }
           }
         }}
       />

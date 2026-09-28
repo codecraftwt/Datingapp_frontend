@@ -9,17 +9,19 @@ export const resetResolvedUrl = () => {
   activeResolvedUrl = null;
 };
 
-const resolveWorkingBaseUrl = async () => {
-  if (activeResolvedUrl) return activeResolvedUrl;
+const resolveWorkingBaseUrl = async (forceRecheck = false) => {
+  if (activeResolvedUrl && !forceRecheck && (!__DEV__ || activeResolvedUrl !== LIVE_URL)) {
+    return activeResolvedUrl;
+  }
   if (isResolving) return getBaseUrl();
   isResolving = true;
 
-  const candidateList = __DEV__ ? [LOCAL_URL, EMULATOR_URL, NETWORK_URL, LIVE_URL] : [LIVE_URL, LOCAL_URL, EMULATOR_URL, NETWORK_URL];
+  const candidateList = __DEV__ ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL] : [LIVE_URL, LOCAL_URL, NETWORK_URL, EMULATOR_URL];
 
   for (const candidate of candidateList) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const timeoutId = setTimeout(() => controller.abort(), 1200);
       const res = await fetch(`${candidate}/health`, { method: 'GET', signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok || res.status < 500) {
@@ -102,10 +104,10 @@ const request = async (url, options = {}, isRetry = false) => {
       return `${b}${p}`;
     };
 
+    const defaultTimeout = isFormData ? 180000 : 15000;
     let response;
     try {
       const controller = new AbortController();
-      const defaultTimeout = isFormData ? 180000 : 15000;
       const reqTimeout = setTimeout(() => controller.abort(), options.timeout || defaultTimeout);
 
       const targetUrl = formatFullUrl(currentBase, url);
@@ -142,7 +144,8 @@ const request = async (url, options = {}, isRetry = false) => {
       currentBase = await resolveWorkingBaseUrl();
       try {
         const retryController = new AbortController();
-        const retryTimeout = setTimeout(() => retryController.abort(), 15000);
+        const retryTimeoutMs = options.timeout || defaultTimeout;
+        const retryTimeout = setTimeout(() => retryController.abort(), retryTimeoutMs);
         const retryUrl = formatFullUrl(currentBase, url);
         response = await fetch(retryUrl, {
           ...options,
@@ -200,7 +203,7 @@ const request = async (url, options = {}, isRetry = false) => {
     } catch (jsonErr) {
       console.error(`[apiClient] Non-JSON response received from ${url} (status ${response.status}):`, responseText.substring(0, 150));
       if (response.status === 413) {
-        throw new Error('File Size Limit Exceeded: The uploaded file is too large (max 500MB allowed).');
+        throw new Error('File Size Limit Exceeded: The uploaded video file is too large (max 1GB allowed). Please select a video clip under 1GB.');
       }
       if (response.status === 404) {
         throw new Error(`Endpoint Not Found (404): ${url}`);
@@ -241,7 +244,10 @@ const request = async (url, options = {}, isRetry = false) => {
   } catch (error) {
     if (error?.name === 'AbortError' || error?.message?.includes('Aborted') || error?.message?.includes('abort')) {
       console.warn(`[apiClient] Request to ${url} was aborted or timed out.`);
-      throw error;
+      const timeoutError = new Error('Request timed out. Please check your network connection and try again.');
+      timeoutError.name = 'TimeoutError';
+      timeoutError.status = 408;
+      throw timeoutError;
     }
     if (!isRetry && (error?.data?.message?.includes('Server error') || error?.message?.includes('500'))) {
       console.warn(`[apiClient] Retrying failed API call on ${url}...`);
@@ -613,10 +619,27 @@ export const apiClient = {
     });
   },
   blockUser: async (body) => {
-    return await request('/api/match/block', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    try {
+      return await request('/api/match/block', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
+        try {
+          return await request('/api/profile/block', {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+        } catch (err2) {
+          return await request('/api/user/block', {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+        }
+      }
+      throw err;
+    }
   },
   getBlockedUsers: async (userId) => {
     try {
@@ -713,16 +736,20 @@ export const apiClient = {
     });
   },
   // Main Profile Photo endpoints (Slot #1)
-  uploadMainPhoto: async (formData) => {
+  uploadMainPhoto: async (data) => {
+    const isForm = data instanceof FormData || (data && data._parts) || typeof data?.append === 'function';
     return await request('/api/profile/main-photo', {
       method: 'POST',
-      body: formData,
+      body: isForm ? data : JSON.stringify(data),
+      timeout: 180000,
     });
   },
-  updateMainPhoto: async (formData) => {
+  updateMainPhoto: async (data) => {
+    const isForm = data instanceof FormData || (data && data._parts) || typeof data?.append === 'function';
     return await request('/api/profile/main-photo', {
       method: 'PUT',
-      body: formData,
+      body: isForm ? data : JSON.stringify(data),
+      timeout: 180000,
     });
   },
   removeMainPhoto: async () => {
@@ -732,18 +759,22 @@ export const apiClient = {
   },
 
   // Gallery & Preview Media endpoints (Slots #2 - #9)
-  uploadGalleryMedia: async (formData, slotIndex) => {
+  uploadGalleryMedia: async (data, slotIndex) => {
     const query = slotIndex !== undefined ? `?slotIndex=${slotIndex}` : '';
+    const isForm = data instanceof FormData || (data && data._parts) || typeof data?.append === 'function';
     return await request(`/api/profile/gallery-media${query}`, {
       method: 'POST',
-      body: formData,
+      body: isForm ? data : JSON.stringify(data),
+      timeout: 180000,
     });
   },
-  updateGalleryMedia: async (formData, slotIndex) => {
+  updateGalleryMedia: async (data, slotIndex) => {
     const query = slotIndex !== undefined ? `?slotIndex=${slotIndex}` : '';
+    const isForm = data instanceof FormData || (data && data._parts) || typeof data?.append === 'function';
     return await request(`/api/profile/gallery-media${query}`, {
       method: 'PUT',
-      body: formData,
+      body: isForm ? data : JSON.stringify(data),
+      timeout: 180000,
     });
   },
   removeGalleryMedia: async (slotIndex) => {
@@ -762,6 +793,9 @@ export const apiClient = {
     console.log('📡 [SUBSCRIPTION API CALL] GET /api/subscriptions/plans');
     console.log('   ↳ Trigger: Fetching available subscription plans');
     console.log('   ↳ Request Payload: None');
+    if (__DEV__ && activeResolvedUrl === LIVE_URL) {
+      await resolveWorkingBaseUrl(true);
+    }
     try {
       const res = await request('/api/subscriptions/plans', { method: 'GET' });
       console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscriptions/plans SUCCESS:', res);
@@ -833,6 +867,9 @@ export const apiClient = {
     console.log('📡 [SUBSCRIPTION API CALL] GET /api/subscriptions/my-subscription');
     console.log('   ↳ Trigger: Opening Subscription Modal / checking active tier');
     console.log('   ↳ Request Payload: None');
+    if (__DEV__ && activeResolvedUrl === LIVE_URL) {
+      await resolveWorkingBaseUrl(true);
+    }
     try {
       const res = await request('/api/subscriptions/my-subscription', { method: 'GET' });
       console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscriptions/my-subscription SUCCESS:', res);

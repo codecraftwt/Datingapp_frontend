@@ -31,8 +31,8 @@ export const CANDIDATE_URLS = __DEV__
   ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
   : [LIVE_URL];
 
-// Set to EMULATOR_URL (http://10.0.2.2:5000) for Android emulator local dev, or LOCAL_URL for ADB reverse
-let workingBaseUrl = EMULATOR_URL;
+// Default to LOCAL_URL (http://localhost:5000) with ADB reverse
+let workingBaseUrl = LOCAL_URL;
 
 
 export const getBaseUrl = () => workingBaseUrl;
@@ -43,23 +43,38 @@ export const setBaseUrl = (url) => {
 
 export const BASE_URL = getBaseUrl();
 
+export const get15SecVideoUrl = (url) => {
+  if (!url || typeof url !== 'string') return url;
+  const lower = url.toLowerCase();
+  if (lower.includes('cloudinary.com') && (lower.includes('/video/upload/') || lower.includes('/video/'))) {
+    if (!url.includes('/so_0,eo_15/') && !url.includes('/eo_15/') && !url.includes('/du_15/')) {
+      return url.replace('/video/upload/', '/video/upload/so_0,eo_15/');
+    }
+  }
+  return url;
+};
+
 export const getImageUrl = (url) => {
   if (!url) return '';
+  let resolvedUrl = url;
   if (
-    typeof url !== 'string' ||
-    url.startsWith('http://') ||
-    url.startsWith('https://') ||
-    url.startsWith('file://') ||
-    url.startsWith('content://') ||
-    url.startsWith('data:')
+    typeof url === 'string' &&
+    !url.startsWith('http://') &&
+    !url.startsWith('https://') &&
+    !url.startsWith('file://') &&
+    !url.startsWith('content://') &&
+    !url.startsWith('data:')
   ) {
-    return url;
+    const currentBase = getBaseUrl();
+    resolvedUrl = url.startsWith('/') ? `${currentBase}${url}` : `${currentBase}/${url}`;
   }
-  const currentBase = getBaseUrl();
-  if (url.startsWith('/')) {
-    return `${currentBase}${url}`;
+
+  // Ensure Cloudinary video URLs are strictly trimmed to 15 seconds (so_0,eo_15)
+  if (typeof resolvedUrl === 'string' && resolvedUrl.includes('cloudinary.com') && resolvedUrl.includes('/video/upload/')) {
+    resolvedUrl = get15SecVideoUrl(resolvedUrl);
   }
-  return `${currentBase}/${url}`;
+
+  return resolvedUrl;
 };
 
 export const isVideoUrl = (url) => {

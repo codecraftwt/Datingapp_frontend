@@ -81,7 +81,7 @@ export const LoginScreen = ({ onNavigate }) => {
         try {
           ToastAndroid.showWithGravityAndOffset(
             'Logged in successfully.',
-            ToastAndroid.LONG,
+            ToastAndroid.SHORT,
             ToastAndroid.TOP,
             0,
             120
@@ -94,9 +94,9 @@ export const LoginScreen = ({ onNavigate }) => {
 
       if (onNavigate) {
         if (isReturningUser) {
-          await onNavigate('HOME', user);
+          onNavigate('HOME', user);
         } else {
-          await onNavigate('QUESTIONNAIRE', user);
+          onNavigate('QUESTIONNAIRE', user);
         }
       }
     }

@@ -25,16 +25,41 @@ const isWebViewAvailable = !!(
   NativeModules.RNCCustomWebView
 );
 
+const getFeatureIcon = (text) => {
+  const lower = (text || '').toLowerCase();
+  if (lower.includes('super like')) {
+    return <Ionicons name="star" size={18} color="#FFD700" style={{ marginRight: 10 }} />;
+  }
+  if (lower.includes('swipe') || lower.includes('like')) {
+    return <Ionicons name="heart" size={18} color="#FE3C72" style={{ marginRight: 10 }} />;
+  }
+  if (lower.includes('see who') || lower.includes('liked your profile')) {
+    return <Ionicons name="eye" size={18} color="#FFD700" style={{ marginRight: 10 }} />;
+  }
+  if (lower.includes('search')) {
+    return <Ionicons name="search" size={18} color="#FE3C72" style={{ marginRight: 10 }} />;
+  }
+  if (lower.includes('boost')) {
+    return <Ionicons name="rocket" size={18} color="#FE3C72" style={{ marginRight: 10 }} />;
+  }
+  return <Ionicons name="sparkles" size={18} color="#FFD700" style={{ marginRight: 10 }} />;
+};
+
 export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, currentTier = 'Free' }) => {
   const [selectedPlan, setSelectedPlan] = useState('Gold');
   const [isLoading, setIsLoading] = useState(false);
   const [subscriptionInfo, setSubscriptionInfo] = useState(null);
   const [isFetchingInfo, setIsFetchingInfo] = useState(false);
 
+  // Dynamic Plans State from Backend API
+  const [availablePlans, setAvailablePlans] = useState([]);
+  const [isFetchingPlans, setIsFetchingPlans] = useState(false);
+
   // In-App Stripe WebView State
   const [showWebView, setShowWebView] = useState(false);
   const [stripeUrl, setStripeUrl] = useState('');
   const [pendingSubId, setPendingSubId] = useState('');
+  const [isWebViewLoading, setIsWebViewLoading] = useState(true);
 
   const pendingSubIdRef = React.useRef('');
   const selectedPlanRef = React.useRef('Gold');
@@ -49,8 +74,58 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
       console.log('📌 [STEP 1: MODAL_OPENED] Subscription Modal opened. Current tier:', currentTier);
       isConfirmingRef.current = false;
       fetchMySubscription();
+      fetchSubscriptionPlans();
     }
   }, [visible]);
+
+  const fetchSubscriptionPlans = async () => {
+    try {
+      console.log('📡 [FETCH_PLANS_REQUEST] Calling API: GET /api/subscriptions/plans...');
+      setIsFetchingPlans(true);
+      if (typeof apiClient.resetResolvedUrl === 'function') {
+        apiClient.resetResolvedUrl();
+      }
+      const res = await apiClient.getSubscriptionPlans();
+      console.log('✅ [FETCH_PLANS_RESPONSE] Received available plans from API:', JSON.stringify(res, null, 2));
+
+      if (res && res.success) {
+        let list = res.plansList || [];
+        if (!list || list.length === 0) {
+          if (res.plans) {
+            list = Object.values(res.plans);
+          }
+        }
+
+        // Filter for paid subscription plans:
+        // - All active plans (isActive !== false)
+        // - If a plan is hidden by admin, ONLY show it if it is the user's CURRENT active plan ("keep as current, blurred")
+        const currentTierUpper = (activeTier || currentTier || '').toUpperCase();
+        const paidPlans = (list || []).filter((p) => {
+          const tierKey = (p.planKey || p.tier || '').toUpperCase();
+          const priceNum = parseFloat(p.price !== undefined ? p.price : (p.priceAmount ? String(p.priceAmount).replace('$', '') : '0'));
+          const isPaid = tierKey !== 'FREE' && priceNum > 0;
+          if (!isPaid) return false;
+
+          const isPlanActive = p.isActive !== false;
+          const isUserCurrent = tierKey === currentTierUpper;
+          return isPlanActive || isUserCurrent;
+        });
+
+        if (paidPlans.length > 0) {
+          setAvailablePlans(paidPlans);
+          const hasSelected = paidPlans.find((p) => (p.planKey || p.tier) === selectedPlanRef.current);
+          if (!hasSelected) {
+            const hasGold = paidPlans.find((p) => (p.planKey || p.tier) === 'Gold');
+            setSelectedPlan(hasGold ? 'Gold' : (paidPlans[0].planKey || paidPlans[0].tier));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('❌ [FETCH_PLANS_ERROR] Error fetching subscription plans:', err);
+    } finally {
+      setIsFetchingPlans(false);
+    }
+  };
 
   const fetchMySubscription = async () => {
     try {
@@ -72,33 +147,21 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
 
   const handleSubscribe = async () => {
     console.log(`\n==================================================`);
-    console.log(`💳 [STEP 1: SUBSCRIBE_CLICKED] User clicked Subscribe button.`);
-    console.log(`   ↳ Selected Plan: "${selectedPlan}"`);
-    console.log(`   ↳ Active Tier: "${activeTier}"`);
+    console.log(`💳 [SUBSCRIBE_CLICKED] User clicked Subscribe for "${selectedPlan}"`);
     console.log(`==================================================\n`);
-
-    // POPUP STEP 1: Initiating Checkout Request
-    Alert.alert(
-      '📌 Step 1/5: Requesting Checkout',
-      `Sending request to initialize Stripe Checkout for ${selectedPlan} Plan...`
-    );
 
     try {
       setIsLoading(true);
       isConfirmingRef.current = false;
 
-      // 1. Create Hosted Checkout Session with Stripe Backend
-      const checkoutPayload = { planType: selectedPlan };
-      console.log(`🚀 [STEP 2: CREATE_SESSION_REQUEST] Calling API: POST /api/subscriptions/create-checkout-session`);
-      console.log(`   ↳ Payload:`, JSON.stringify(checkoutPayload, null, 2));
-
+      // Create Hosted Checkout Session with Stripe Backend
       const checkoutRes = await apiClient.createSubscriptionCheckout(selectedPlan);
-      console.log('✅ [STEP 2: CREATE_SESSION_RESPONSE] Backend returned checkout session:', JSON.stringify(checkoutRes, null, 2));
 
       if (!checkoutRes || !checkoutRes.success || !checkoutRes.checkoutUrl) {
-        console.error('❌ [STEP 2.1: CREATE_SESSION_FAILED] Missing checkoutUrl or success flag in response!', checkoutRes);
-        Alert.alert('❌ Step 2 Error: Checkout Failed', checkoutRes?.message || 'Failed to initialize subscription session.');
-        throw new Error(checkoutRes?.message || 'Failed to initialize subscription checkout.');
+        console.error('❌ Missing checkoutUrl in response!', checkoutRes);
+        Alert.alert('Checkout Error', checkoutRes?.message || 'Failed to initialize subscription checkout.');
+        setIsLoading(false);
+        return;
       }
 
       const generatedSubId = checkoutRes.subscriptionId || checkoutRes.sessionId || '';
@@ -107,33 +170,7 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
 
       setPendingSubId(generatedSubId);
       setStripeUrl(checkoutRes.checkoutUrl);
-
-      console.log(`🔗 [STEP 2.2: CHECKOUT_URL_READY] Target Payment URL: ${checkoutRes.checkoutUrl}`);
-      console.log(`🆔 [STEP 2.3: PENDING_SUB_ID] Generated Subscription ID: ${generatedSubId}`);
-
-      // POPUP STEP 2: Checkout Session Created
-      Alert.alert(
-        '✅ Step 2/5: Session Created',
-        `Stripe Checkout Session initialized!\n\nPlan: ${selectedPlan}\nSession ID: ${generatedSubId}\n\nLoading payment page...`,
-        [
-          {
-            text: 'Proceed to Payment',
-            onPress: () => {
-              if (isWebViewAvailable) {
-                console.log(`📱 [STEP 3: LAUNCH_IN_APP_WEBVIEW] RNCWebViewModule available. Opening in-app WebView Modal...`);
-                Alert.alert(
-                  '💳 Step 3/5: Stripe Payment Page',
-                  'Loading Stripe Checkout page in app...\n\nUse Test Card: 4242 4242 4242 4242 (Exp: 12/30, CVC: 123)'
-                );
-                setShowWebView(true);
-              } else {
-                console.log('🌐 [STEP 3: LAUNCH_SYSTEM_BROWSER] Native RNCWebViewModule not compiled. Opening via Linking.openURL()...');
-                launchSystemBrowser(checkoutRes, generatedSubId);
-              }
-            },
-          },
-        ]
-      );
+      setIsWebViewLoading(true);
 
       if (isWebViewAvailable) {
         setShowWebView(true);
@@ -141,8 +178,8 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
         launchSystemBrowser(checkoutRes, generatedSubId);
       }
     } catch (err) {
-      console.error('❌ [STEP 2/3 FATAL ERROR] Failed during handleSubscribe:', err);
-      Alert.alert('❌ Payment Request Error', err.message || 'Something went wrong while creating checkout session.');
+      console.error('❌ Failed during handleSubscribe:', err);
+      Alert.alert('Payment Error', err.message || 'Something went wrong while creating checkout session.');
     } finally {
       setIsLoading(false);
     }
@@ -187,6 +224,9 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
 
               if (confirmRes && confirmRes.success) {
                 console.log('🎉 [STEP 5: ACTIVATION_COMPLETE] Subscription successfully activated!');
+                if (typeof onSubscriptionUpdated === 'function') {
+                  onSubscriptionUpdated(planToConfirm, confirmRes?.permissions);
+                }
                 // POPUP STEP 5: Activation Complete
                 Alert.alert(
                   '👑 Step 5/5: Subscription Activated!',
@@ -195,9 +235,6 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                     {
                       text: 'Awesome!',
                       onPress: () => {
-                        if (typeof onSubscriptionUpdated === 'function') {
-                          onSubscriptionUpdated(planToConfirm);
-                        }
                         onClose();
                       },
                     },
@@ -281,53 +318,20 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
       console.log(`   ↳ Target Plan: ${targetPlan}`);
       console.log(`==================================================\n`);
 
-      setIsLoading(true);
-
-      // Display the HTML Success Page inside the WebView for 3 seconds before closing modal
-      setTimeout(() => {
-        setShowWebView(false);
-      }, 3000);
-
-      // POPUP STEP 4: Payment Completed & Confirmation Starting
-      Alert.alert(
-        '🎉 Step 4/5: Payment Successful!',
-        `Stripe payment completed for ${targetPlan} Plan!\n\nActivating membership now...`
-      );
-
+      // Silently confirm and activate subscription in background without overlapping popups
       try {
-        console.log(`🚀 [STEP 5: AUTO_CONFIRM_REQUEST] Invoking API: POST /api/subscriptions/confirm`);
-        console.log(`   ↳ Payload:`, JSON.stringify({ subscriptionId: targetSubId, planType: targetPlan }, null, 2));
-
+        console.log(`🚀 [AUTO_CONFIRM_REQUEST] Invoking API: POST /api/subscriptions/confirm`);
         const confirmRes = await apiClient.confirmSubscription(targetSubId, targetPlan);
-        console.log('✅ [STEP 5.1: AUTO_CONFIRM_RESPONSE] Backend response:', JSON.stringify(confirmRes, null, 2));
+        console.log('✅ [AUTO_CONFIRM_RESPONSE] Backend response:', JSON.stringify(confirmRes, null, 2));
 
         if (confirmRes && confirmRes.success) {
-          console.log(`🎉 [STEP 5.2: ACTIVATION_COMPLETE] Successfully upgraded user to ${targetPlan}!`);
-          // POPUP STEP 5: Final Activation Success
-          Alert.alert(
-            '👑 Step 5/5: Subscription Activated!',
-            `Congratulations! You are now subscribed to ${targetPlan} Membership!`,
-            [
-              {
-                text: 'Awesome!',
-                onPress: () => {
-                  if (typeof onSubscriptionUpdated === 'function') {
-                    onSubscriptionUpdated(targetPlan);
-                  }
-                  onClose();
-                },
-              },
-            ]
-          );
-        } else {
-          console.warn('⚠️ [STEP 5.3: AUTO_CONFIRM_NOTE] Response returned note:', confirmRes);
-          Alert.alert('Activation Note', confirmRes?.message || 'Subscription processed!');
+          console.log(`🎉 [ACTIVATION_COMPLETE] Successfully upgraded user to ${targetPlan}!`);
+          if (typeof onSubscriptionUpdated === 'function') {
+            onSubscriptionUpdated(targetPlan, confirmRes?.permissions);
+          }
         }
       } catch (err) {
-        console.error('❌ [STEP 5.4: AUTO_CONFIRM_ERROR] Error calling confirmSubscription API:', err);
-        console.error('   ↳ Error Message:', err.message || err);
-        console.error('   ↳ Error Stack/Data:', JSON.stringify(err.data || err, null, 2));
-        Alert.alert('Activation Error', err?.data?.message || err.message || 'Subscription confirm API error.');
+        console.warn('⚠️ Silent auto-confirm warning:', err?.message || err);
       } finally {
         setIsLoading(false);
       }
@@ -403,81 +407,171 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
             )}
           </View>
 
-          {/* Plan Selector Cards */}
+          {/* Dynamic Plan Selector Cards */}
           <View style={styles.plansContainer}>
-            {/* Gold Card */}
-            <TouchableOpacity
-              style={[
-                styles.planCard,
-                styles.goldPlanCard,
-                selectedPlan === 'Gold' && styles.selectedGoldCard,
-              ]}
-              onPress={() => setSelectedPlan('Gold')}
-              activeOpacity={0.9}
-            >
-              {selectedPlan === 'Gold' && <View style={styles.radioSelectedDot} />}
-              <View style={styles.planCardHeader}>
-                <View style={styles.goldBadge}>
-                  <Text style={styles.goldBadgeText}>MOST POPULAR</Text>
-                </View>
-                <Text style={styles.planNameGold}>GOLD</Text>
-                <Text style={styles.planPrice}>$9.99 <Text style={styles.perMonth}>/ month</Text></Text>
+            {isFetchingPlans && availablePlans.length === 0 ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#FE3C72" />
+                <Text style={{ color: 'rgba(255, 255, 255, 0.7)', marginTop: 12, fontSize: 14 }}>
+                  Loading membership plans...
+                </Text>
               </View>
+            ) : availablePlans.length > 0 ? (
+              availablePlans.map((plan) => {
+                const planKey = plan.planKey || plan.tier;
+                const isSelected = selectedPlan === planKey;
+                const upperKey = (planKey || '').toUpperCase();
+                const isCurrent = upperKey === (activeTier || currentTier || '').toUpperCase();
+                const isHidden = plan.isActive === false;
+                const isGold = upperKey === 'GOLD';
+                const isDiamond = upperKey.includes('DIAMOND') || upperKey.includes('VIP');
+                const accentColor = isHidden ? '#94A3B8' : isDiamond ? '#00E5FF' : isGold ? '#FFD700' : '#FE3C72';
 
-              <View style={styles.divider} />
+                return (
+                  <TouchableOpacity
+                    key={plan._id || planKey}
+                    style={[
+                      styles.planCard,
+                      isDiamond ? styles.diamondPlanCard : isGold ? styles.goldPlanCard : styles.premiumPlanCard,
+                      isSelected && (isDiamond ? styles.selectedDiamondCard : isGold ? styles.selectedGoldCard : styles.selectedPremiumCard),
+                      isHidden && styles.blurredPlanCard,
+                    ]}
+                    onPress={() => setSelectedPlan(planKey)}
+                    activeOpacity={0.85}
+                  >
+                    {isSelected && (
+                      <View style={[styles.radioSelectedDot, { backgroundColor: accentColor }]} />
+                    )}
 
-              <View style={styles.featureList}>
-                <View style={styles.featureItem}>
-                  <Ionicons name="heart" size={18} color="#FFD700" style={{ marginRight: 10 }} />
-                  <Text style={styles.featureText}>Unlimited Likes & Swipes</Text>
-                </View>
-                <View style={styles.featureItem}>
-                  <Ionicons name="eye" size={18} color="#FFD700" style={{ marginRight: 10 }} />
-                  <Text style={styles.featureText}>See Who Liked Your Profile</Text>
-                </View>
-                <View style={styles.featureItem}>
-                  <Ionicons name="star" size={18} color="#FFD700" style={{ marginRight: 10 }} />
-                  <Text style={styles.featureText}>5 Super Likes Every Day</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
+                    <View style={styles.planCardHeader}>
+                      {isHidden ? (
+                        <View style={styles.hiddenBadge}>
+                          <Ionicons name="eye-off-outline" size={12} color="#CBD5E1" style={{ marginRight: 5 }} />
+                          <Text style={styles.hiddenBadgeText}>
+                            {isCurrent ? 'CURRENT PLAN (ARCHIVED)' : 'HIDDEN PLAN'}
+                          </Text>
+                        </View>
+                      ) : plan.highlightBadge ? (
+                        <View style={isDiamond ? styles.diamondBadge : isGold ? styles.goldBadge : styles.premiumBadge}>
+                          <Text style={isDiamond ? styles.diamondBadgeText : isGold ? styles.goldBadgeText : styles.premiumBadgeText}>
+                            {plan.highlightBadge.toUpperCase()}
+                          </Text>
+                        </View>
+                      ) : null}
 
-            {/* Premium Card */}
-            <TouchableOpacity
-              style={[
-                styles.planCard,
-                styles.premiumPlanCard,
-                selectedPlan === 'Premium' && styles.selectedPremiumCard,
-              ]}
-              onPress={() => setSelectedPlan('Premium')}
-              activeOpacity={0.9}
-            >
-              {selectedPlan === 'Premium' && <View style={styles.radioSelectedDot} />}
-              <View style={styles.planCardHeader}>
-                <View style={styles.premiumBadge}>
-                  <Text style={styles.premiumBadgeText}>BEST VALUE</Text>
-                </View>
-                <Text style={styles.planNamePremium}>PREMIUM</Text>
-                <Text style={styles.planPrice}>$4.99 <Text style={styles.perMonth}>/ month</Text></Text>
-              </View>
+                      <Text style={[isDiamond ? styles.planNameDiamond : isGold ? styles.planNameGold : styles.planNamePremium, isHidden && { color: '#CBD5E1' }]}>
+                        {plan.name ? plan.name.toUpperCase() : planKey.toUpperCase()}
+                      </Text>
 
-              <View style={styles.divider} />
+                      <Text style={[styles.planPrice, isHidden && { color: '#94A3B8' }]}>
+                        {plan.priceDisplay || (plan.priceAmount ? `${plan.priceAmount} / month` : `$${plan.price} / month`)}
+                      </Text>
 
-              <View style={styles.featureList}>
-                <View style={styles.featureItem}>
-                  <Ionicons name="diamond" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
-                  <Text style={styles.featureText}>All Gold Tier Features Included</Text>
-                </View>
-                <View style={styles.featureItem}>
-                  <Ionicons name="rocket" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
-                  <Text style={styles.featureText}>1 Free Monthly Profile Boost</Text>
-                </View>
-                <View style={styles.featureItem}>
-                  <Ionicons name="search" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
-                  <Text style={styles.featureText}>Advanced Search Filters Unlocked</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
+                      {isHidden && isCurrent && (
+                        <View style={styles.blurredNoticeContainer}>
+                          <Text style={styles.blurredNoticeText}>
+                            🔒 Kept as your current plan. All features remain fully active!
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.featureList}>
+                      {plan.features && plan.features.length > 0 ? (
+                        plan.features.map((featStr, idx) => (
+                          <View key={idx} style={styles.featureItem}>
+                            {getFeatureIcon(featStr)}
+                            <Text style={styles.featureText}>{featStr}</Text>
+                          </View>
+                        ))
+                      ) : (
+                        <View style={styles.featureItem}>
+                          <Ionicons name="sparkles" size={18} color={accentColor} style={{ marginRight: 10 }} />
+                          <Text style={styles.featureText}>Full Member Privileges</Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              /* Fallback Static Cards */
+              <>
+                <TouchableOpacity
+                  style={[
+                    styles.planCard,
+                    styles.goldPlanCard,
+                    selectedPlan === 'Gold' && styles.selectedGoldCard,
+                  ]}
+                  onPress={() => setSelectedPlan('Gold')}
+                  activeOpacity={0.9}
+                >
+                  {selectedPlan === 'Gold' && <View style={styles.radioSelectedDot} />}
+                  <View style={styles.planCardHeader}>
+                    <View style={styles.goldBadge}>
+                      <Text style={styles.goldBadgeText}>MOST POPULAR</Text>
+                    </View>
+                    <Text style={styles.planNameGold}>GOLD</Text>
+                    <Text style={styles.planPrice}>$9.99 <Text style={styles.perMonth}>/ month</Text></Text>
+                  </View>
+
+                  <View style={styles.divider} />
+
+                  <View style={styles.featureList}>
+                    <View style={styles.featureItem}>
+                      <Ionicons name="heart" size={18} color="#FFD700" style={{ marginRight: 10 }} />
+                      <Text style={styles.featureText}>Unlimited Likes & Swipes</Text>
+                    </View>
+                    <View style={styles.featureItem}>
+                      <Ionicons name="eye" size={18} color="#FFD700" style={{ marginRight: 10 }} />
+                      <Text style={styles.featureText}>See Who Liked Your Profile</Text>
+                    </View>
+                    <View style={styles.featureItem}>
+                      <Ionicons name="star" size={18} color="#FFD700" style={{ marginRight: 10 }} />
+                      <Text style={styles.featureText}>5 Super Likes Every Day</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.planCard,
+                    styles.premiumPlanCard,
+                    selectedPlan === 'Premium' && styles.selectedPremiumCard,
+                  ]}
+                  onPress={() => setSelectedPlan('Premium')}
+                  activeOpacity={0.9}
+                >
+                  {selectedPlan === 'Premium' && <View style={styles.radioSelectedDot} />}
+                  <View style={styles.planCardHeader}>
+                    <View style={styles.premiumBadge}>
+                      <Text style={styles.premiumBadgeText}>BEST VALUE</Text>
+                    </View>
+                    <Text style={styles.planNamePremium}>PREMIUM</Text>
+                    <Text style={styles.planPrice}>$4.99 <Text style={styles.perMonth}>/ month</Text></Text>
+                  </View>
+
+                  <View style={styles.divider} />
+
+                  <View style={styles.featureList}>
+                    <View style={styles.featureItem}>
+                      <Ionicons name="diamond" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
+                      <Text style={styles.featureText}>All Gold Tier Features Included</Text>
+                    </View>
+                    <View style={styles.featureItem}>
+                      <Ionicons name="rocket" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
+                      <Text style={styles.featureText}>1 Free Monthly Profile Boost</Text>
+                    </View>
+                    <View style={styles.featureItem}>
+                      <Ionicons name="search" size={18} color="#FE3C72" style={{ marginRight: 10 }} />
+                      <Text style={styles.featureText}>Advanced Search Filters Unlocked</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </ScrollView>
 
@@ -513,6 +607,28 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
               <Text style={styles.cancelLinkText}>Cancel Active Subscription</Text>
             </TouchableOpacity>
           )}
+
+          {isLoading && (
+            <View style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(15, 18, 26, 0.92)',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 99999,
+            }}>
+              <ActivityIndicator size="large" color="#FE3C72" />
+              <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700', marginTop: 16 }}>
+                Connecting to Stripe...
+              </Text>
+              <Text style={{ color: '#94A3B8', fontSize: 13, marginTop: 8 }}>
+                Preparing your secure checkout session
+              </Text>
+            </View>
+          )}
         </View>
       </SafeAreaView>
 
@@ -520,7 +636,12 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
       <Modal
         visible={showWebView}
         animationType="slide"
-        onRequestClose={() => setShowWebView(false)}
+        onRequestClose={() => {
+          setShowWebView(false);
+          if (isConfirmingRef.current) {
+            onClose();
+          }
+        }}
       >
         <SafeAreaView style={{ flex: 1, backgroundColor: '#0F121A' }}>
           <View style={{
@@ -539,151 +660,110 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                 Secure Stripe Checkout
               </Text>
             </View>
-            <TouchableOpacity onPress={() => setShowWebView(false)}>
+            <TouchableOpacity onPress={() => {
+              setShowWebView(false);
+              if (isConfirmingRef.current) {
+                onClose();
+              }
+            }}>
               <Ionicons name="close" size={24} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
-          {/* Test Mode Step-by-Step Helper Banner */}
-          {/* <View style={{
-            backgroundColor: '#1E1B4B',
-            paddingVertical: 10,
-            paddingHorizontal: 14,
-            borderBottomWidth: 1,
-            borderBottomColor: '#4338CA',
-          }}>
-            <Text style={{ color: '#A5B4FC', fontSize: 13, fontWeight: '600', lineHeight: 18 }}>
-              🧪 <Text style={{ fontWeight: '800', color: '#E0E7FF' }}>Indian Test Mode Card:</Text>{'\n'}
-              1. Card: <Text style={{ color: '#FDE047', fontWeight: '800' }}>4000 0027 6000 3184</Text> | Exp: <Text style={{ color: '#FDE047', fontWeight: '800' }}>12/30</Text> | CVC: <Text style={{ color: '#FDE047', fontWeight: '800' }}>123</Text>{'\n'}
-              2. Country: <Text style={{ color: '#FDE047', fontWeight: '800' }}>India</Text> | PIN: <Text style={{ color: '#FDE047', fontWeight: '800' }}>400001</Text> ➔ Tap <Text style={{ color: '#38BDF8', fontWeight: '800' }}>Subscribe</Text>{'\n'}
-              3. Payment completes instantly & auto-activates! 🎉
-            </Text>
-          </View>*/}
-
-          {stripeUrl ? (
-            <WebView
-              source={{ uri: stripeUrl }}
-              onNavigationStateChange={handleWebViewNavigation}
-              onShouldStartLoadWithRequest={(request) => {
-                console.log('🔍 [WEBVIEW STEP 6.1: LOAD_REQUEST] Target URL:', request.url);
-                if (request.url && (
-                  request.url.includes('success-page') ||
-                  request.url.includes('checkout.stripe.dev/success') ||
-                  request.url.includes('status=success') ||
-                  request.url.includes('/success')
-                )) {
-                  console.log('🎉 [WEBVIEW STEP 6.1: SUCCESS_INTERCEPTED] Intercepted success URL in load request!');
-                  handleWebViewNavigation(request);
-                  return true;
-                }
-                return true;
-              }}
-              onError={(syntheticEvent) => {
-                const { nativeEvent } = syntheticEvent;
-                console.warn('🔴 [WEBVIEW STEP 6.2: ERROR_LOG] WebView error event:', nativeEvent);
-                if (nativeEvent && nativeEvent.url && (
-                  nativeEvent.url.includes('success-page') ||
-                  nativeEvent.url.includes('checkout.stripe.dev/success') ||
-                  nativeEvent.url.includes('status=success') ||
-                  nativeEvent.url.includes('/success')
-                )) {
-                  console.log('⚡ [WEBVIEW STEP 6.2: ERROR_RECOVERY] Connection error on success URL (e.g. host unreachable), triggering success auto-activation anyway!');
-                  handleWebViewNavigation(nativeEvent);
-                }
-              }}
-              onHttpError={(syntheticEvent) => {
-                const { nativeEvent } = syntheticEvent;
-                console.warn('🔴 [WEBVIEW STEP 6.3: HTTP_ERROR_LOG] Status:', nativeEvent.statusCode, 'URL:', nativeEvent.url);
-                if (nativeEvent && nativeEvent.url && (
-                  nativeEvent.url.includes('success-page') ||
-                  nativeEvent.url.includes('checkout.stripe.dev/success') ||
-                  nativeEvent.url.includes('status=success') ||
-                  nativeEvent.url.includes('/success')
-                )) {
-                  console.log('⚡ [WEBVIEW STEP 6.3: HTTP_RECOVERY] HTTP error status on success URL, triggering success auto-activation anyway!');
-                  handleWebViewNavigation(nativeEvent);
-                }
-              }}
-              onLoadEnd={(syntheticEvent) => {
-                const { nativeEvent } = syntheticEvent;
-                console.log('🏁 [WEBVIEW STEP 6.4: LOAD_END] Finished loading URL:', nativeEvent.url);
-                if (nativeEvent && nativeEvent.url) {
-                  handleWebViewNavigation(nativeEvent);
-                }
-              }}
-              injectedJavaScript={`
-                (function() {
-                  try {
-                    window.addEventListener('click', function(e) {
-                      var target = e.target;
-                      var text = target ? (target.innerText || target.value || target.textContent || '') : '';
-                      if (text) {
-                        if (text.includes('Complete') || text.includes('Authorize')) {
-                          window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                            type: 'STRIPE_COMPLETE_CLICKED', 
-                            buttonText: text.trim() 
-                          }));
-                        } else if (text.includes('Pay') || text.includes('Subscribe') || text.includes('Submit')) {
-                          window.ReactNativeWebView.postMessage(JSON.stringify({ 
-                            type: 'STRIPE_SUBSCRIBE_CLICKED', 
-                            buttonText: text.trim() 
-                          }));
-                        }
-                      }
-                    }, false);
-                  } catch(err) {}
-                })();
-                true;
-              `}
-              onMessage={(event) => {
-                try {
-                  const data = JSON.parse(event.nativeEvent.data);
-                  if (data && data.type === 'STRIPE_COMPLETE_CLICKED') {
-                    console.log('⚡ [AUTO-DETECTED COMPLETE CLICK] User clicked 3DS Complete button! Immediately triggering activation...');
-                    handleWebViewNavigation({ url: 'https://checkout.stripe.dev/success' });
-                  } else if (data && data.type === 'STRIPE_SUBSCRIBE_CLICKED') {
-                    console.log(`💳 [STRIPE UI LOG] User clicked "${data.buttonText}" button on Stripe Checkout Page! Processing payment...`);
-                    const targetSubId = pendingSubIdRef.current || pendingSubId;
-                    setTimeout(async () => {
-                      if (targetSubId) {
-                        try {
-                          console.log(`🔍 [AUTO STATUS CHECK] Checking Stripe status for ${targetSubId}...`);
-                          const statusRes = await apiClient.checkSessionStatus(targetSubId);
-                          console.log('📊 [AUTO STATUS CHECK RESULT]:', JSON.stringify(statusRes, null, 2));
-                          if (statusRes && statusRes.lastError) {
-                            Alert.alert('⚠️ Stripe Payment Error', statusRes.lastError);
-                          } else if (statusRes && statusRes.paymentStatus === 'paid') {
-                            handleWebViewNavigation({ url: 'https://checkout.stripe.dev/success' });
-                          }
-                        } catch (errStatus) {
-                          console.warn('⚠️ Auto status check warning:', errStatus.message);
-                        }
-                      }
-                    }, 3500);
+          <View style={{ flex: 1, position: 'relative' }}>
+            {stripeUrl ? (
+              <WebView
+                source={{ uri: stripeUrl }}
+                onLoadStart={() => setIsWebViewLoading(true)}
+                onLoadEnd={() => setIsWebViewLoading(false)}
+                onNavigationStateChange={handleWebViewNavigation}
+                onShouldStartLoadWithRequest={(request) => {
+                  console.log('🔍 [WEBVIEW LOAD_REQUEST]:', request.url);
+                  if (request.url && (request.url.includes('back-to-app') || request.url.includes('datingapp://'))) {
+                    console.log('🎉 [BACK_TO_APP] Intercepted Back to App redirect!');
+                    setShowWebView(false);
+                    onClose();
+                    return false;
                   }
-                } catch (e) { }
-              }}
-              injectedJavaScriptForMainFrameOnly={false}
-              javaScriptEnabled={true}
-              domStorageEnabled={true}
-              originWhitelist={['*']}
-              mixedContentMode="always"
-              thirdPartyCookiesEnabled={true}
-              allowFileAccess={true}
-              setSupportMultipleWindows={false}
-              javaScriptCanOpenWindowsAutomatically={true}
-              startInLoadingState={true}
-              renderLoading={() => (
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F121A' }}>
-                  <ActivityIndicator size="large" color="#FE3C72" />
-                  <Text style={{ color: '#94A3B8', marginTop: 12 }}>Loading Stripe Checkout...</Text>
-                </View>
-              )}
-              style={{ flex: 1 }}
-            />
-          ) : null}
+                  if (request.url && (
+                    request.url.includes('success-page') ||
+                    request.url.includes('checkout.stripe.dev/success') ||
+                    request.url.includes('status=success') ||
+                    request.url.includes('/success')
+                  )) {
+                    handleWebViewNavigation(request);
+                    return true;
+                  }
+                  return true;
+                }}
+                onError={(syntheticEvent) => {
+                  const { nativeEvent } = syntheticEvent;
+                  if (nativeEvent && nativeEvent.url && (
+                    nativeEvent.url.includes('success-page') ||
+                    nativeEvent.url.includes('checkout.stripe.dev/success') ||
+                    nativeEvent.url.includes('status=success') ||
+                    nativeEvent.url.includes('/success')
+                  )) {
+                    handleWebViewNavigation(nativeEvent);
+                  }
+                }}
+                onHttpError={(syntheticEvent) => {
+                  const { nativeEvent } = syntheticEvent;
+                  if (nativeEvent && nativeEvent.url && (
+                    nativeEvent.url.includes('success-page') ||
+                    nativeEvent.url.includes('checkout.stripe.dev/success') ||
+                    nativeEvent.url.includes('status=success') ||
+                    nativeEvent.url.includes('/success')
+                  )) {
+                    handleWebViewNavigation(nativeEvent);
+                  }
+                }}
+                onMessage={(event) => {
+                  try {
+                    const data = JSON.parse(event.nativeEvent.data);
+                    if (data && data.type === 'BACK_TO_APP') {
+                      console.log('🎉 [BACK_TO_APP] User tapped Back to App on Success Page!');
+                      setShowWebView(false);
+                      onClose();
+                      return;
+                    }
+                  } catch (e) { }
+                }}
+                javaScriptEnabled={true}
+                domStorageEnabled={true}
+                originWhitelist={['*']}
+                mixedContentMode="always"
+                thirdPartyCookiesEnabled={true}
+                allowFileAccess={true}
+                setSupportMultipleWindows={false}
+                javaScriptCanOpenWindowsAutomatically={true}
+                style={{ flex: 1 }}
+              />
+            ) : null}
 
-
+            {/* Whole-screen loader covering entire WebView until Stripe checkout finishes loading */}
+            {isWebViewLoading && (
+              <View style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: '#0F121A',
+                justifyContent: 'center',
+                alignItems: 'center',
+                zIndex: 9999,
+              }}>
+                <ActivityIndicator size="large" color="#FE3C72" />
+                <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700', marginTop: 16 }}>
+                  Loading Stripe Checkout...
+                </Text>
+                <Text style={{ color: '#94A3B8', fontSize: 13, marginTop: 8 }}>
+                  Please wait while your secure payment session loads
+                </Text>
+              </View>
+            )}
+          </View>
         </SafeAreaView>
       </Modal>
     </Modal>
@@ -776,6 +856,17 @@ const styles = StyleSheet.create({
     borderColor: '#FFD700',
     backgroundColor: '#26281D',
   },
+  diamondPlanCard: {},
+  selectedDiamondCard: {
+    borderColor: '#00E5FF',
+    backgroundColor: '#0F2027',
+  },
+  blurredPlanCard: {
+    opacity: 0.65,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: 'rgba(20, 25, 35, 0.75)',
+  },
   premiumPlanCard: {},
   selectedPremiumCard: {
     borderColor: '#FE3C72',
@@ -817,8 +908,54 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
   },
+  hiddenBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(148, 163, 184, 0.25)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  hiddenBadgeText: {
+    color: '#CBD5E1',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  blurredNoticeContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  blurredNoticeText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  diamondBadge: {
+    backgroundColor: 'rgba(0, 229, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  diamondBadgeText: {
+    color: '#00E5FF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
   planNameGold: {
     color: '#FFD700',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  planNameDiamond: {
+    color: '#00E5FF',
     fontSize: 24,
     fontWeight: '900',
     letterSpacing: 1,

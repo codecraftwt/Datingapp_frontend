@@ -284,14 +284,14 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
                 <Ionicons
                   name={password.trim() === confirmPassword.trim() ? "checkmark-circle" : "close-circle"}
                   size={14}
-                  color={password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FF5252'}
+                  color={password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FFFF'}
                   style={{ marginRight: 4 }}
                 />
                 <Text
                   style={{
                     fontSize: 12,
                     fontWeight: '700',
-                    color: password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FF5252',
+                    color: password.trim() === confirmPassword.trim() ? '#4CAF50' : '#FFFFFF',
                   }}
                 >
                   {password.trim() === confirmPassword.trim() ? 'Passwords match' : 'Passwords do not match'}
@@ -329,8 +329,8 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
             {/* Temporary Address / Current Location (Optional) */}
             <View style={styles.sectionDivider}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="location-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                <Text style={styles.sectionTitle}>Temporary Address (Optional)</Text>
+                <Ionicons name="location-outline" size={16} color="#FFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>Current Address (Optional)</Text>
               </View>
             </View>
 
@@ -392,7 +392,7 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
 
             {sameAsPermanent ? (
               <View style={styles.autoAddressBanner}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                   <Ionicons name="checkmark-circle" size={16} color="#34C759" style={{ marginRight: 6 }} />
                   <Text style={styles.autoAddressBannerText}>
                     Permanent address will be saved identical to your Current Live Location!
@@ -825,6 +825,8 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1.5,
     borderColor: '#4CAF50',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   autoAddressBannerText: {
     color: '#FFFFFF',
@@ -832,6 +834,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     lineHeight: 18,
+    flexShrink: 1,
   },
   orDividerContainer: {
     flexDirection: 'row',

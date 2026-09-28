@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -450,8 +450,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
+  // Sync active subscription status and dynamic permissions helper
+  const syncSubscriptionStatus = useCallback(async () => {
+    try {
+      const res = await apiClient.getMySubscription();
+      if (res && res.success) {
+        if (res.permissions) {
+          setSubscriptionPermissions(res.permissions);
+        }
+        if (typeof onUpdateProfile === 'function') {
+          onUpdateProfile({
+            subscriptionTier: res.subscriptionTier,
+            subscriptionStatus: res.subscriptionStatus || 'active',
+            subscriptionPermissions: res.permissions,
+          });
+        }
+        return res;
+      }
+    } catch (err) {
+      console.log('[HomeScreen] syncSubscriptionStatus error:', err);
+    }
+    return null;
+  }, [onUpdateProfile]);
+
   // Run fetches once on mount and sync subscription
-  const curUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+  const activeLoggedInUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
   const initialFetchDoneRef = useRef(false);
 
   useEffect(() => {
@@ -464,25 +487,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     fetchBlockedUsers();
     initialFetchDoneRef.current = true;
 
-    // Sync active subscription status once on mount if tier differs
-    apiClient.getMySubscription()
-      .then((res) => {
-        if (res && res.success && res.subscriptionTier) {
-          const currentTier = userProfile?.subscriptionTier || currentUser?.subscriptionTier;
-          if (res.subscriptionTier !== currentTier && typeof onUpdateProfile === 'function') {
-            onUpdateProfile({ subscriptionTier: res.subscriptionTier, subscriptionStatus: res.subscriptionStatus || 'active' });
-          }
-        }
-      })
-      .catch(() => {});
+    // Sync active subscription status and dynamic permissions once on mount
+    syncSubscriptionStatus().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Refetch only if the actual logged-in user ID changes (e.g. account switch)
-  const prevUserIdRef = useRef(curUserId);
+  const prevUserIdRef = useRef(activeLoggedInUserId);
   useEffect(() => {
-    if (curUserId && initialFetchDoneRef.current && curUserId !== prevUserIdRef.current) {
-      prevUserIdRef.current = curUserId;
+    if (activeLoggedInUserId && initialFetchDoneRef.current && activeLoggedInUserId !== prevUserIdRef.current) {
+      prevUserIdRef.current = activeLoggedInUserId;
       fetchQuestionnaires();
       fetchSwipedIds();
       fetchMessages();
@@ -491,7 +505,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       fetchLikes();
       fetchBlockedUsers();
     }
-  }, [curUserId]);
+  }, [activeLoggedInUserId]);
 
   useEffect(() => {
     const badgeSyncInterval = setInterval(async () => {
@@ -617,7 +631,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   useEffect(() => {
     if (activeTab === 'likes') {
-      fetchLikes();
+      (async () => {
+        const freshSub = await syncSubscriptionStatus();
+        if (freshSub?.permissions) {
+          setSubscriptionPermissions(freshSub.permissions);
+        }
+        await fetchLikes();
+      })().catch(() => {
+        fetchLikes();
+      });
       setUnreadLikesCount(0);
       if (typeof apiClient.markLikesAsRead === 'function') {
         apiClient.markLikesAsRead().catch(() => {});
@@ -770,6 +792,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [showAdminWarningModal, setShowAdminWarningModal] = useState(false);
   const [warningAckLoading, setWarningAckLoading] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+  const [subscriptionPermissions, setSubscriptionPermissions] = useState(null);
 
   const checkActiveWarning = async () => {
     try {
@@ -800,7 +823,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
-  const handleTabPress = (tabName) => {
+  const handleTabPress = async (tabName) => {
     if (activeWarningData && !activeWarningData.isAcknowledged) {
       setShowAdminWarningModal(true);
       return;
@@ -808,15 +831,38 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     if (tabName === 'search') {
       const activeUserObj = userProfile || currentUser;
-      const tier = activeUserObj?.subscriptionTier || 'Free';
-      if (!tier || tier.toLowerCase() === 'free') {
+      let perms = subscriptionPermissions || activeUserObj?.subscriptionPermissions;
+      let canAccessSearch = Boolean(perms?.search?.isAllowed);
+
+      // If local state doesn't have permissions or says false, verify live immediately before blocking!
+      if (!canAccessSearch) {
+        try {
+          const freshSub = await apiClient.getMySubscription();
+          if (freshSub && freshSub.success && freshSub.permissions) {
+            perms = freshSub.permissions;
+            setSubscriptionPermissions(freshSub.permissions);
+            canAccessSearch = Boolean(freshSub.permissions?.search?.isAllowed);
+            if (typeof onUpdateProfile === 'function') {
+              onUpdateProfile({
+                subscriptionTier: freshSub.subscriptionTier,
+                subscriptionStatus: freshSub.subscriptionStatus || 'active',
+                subscriptionPermissions: freshSub.permissions,
+              });
+            }
+          }
+        } catch (subErr) {
+          console.log('[HomeScreen] Live subscription verification on tab press:', subErr);
+        }
+      }
+
+      if (!canAccessSearch) {
         Alert.alert(
-          '🔒 Premium Feature',
-          'Advanced Search is exclusive to Premium subscribers. Upgrade now to search profiles and use custom filters!',
+          '🔒 Feature Not Included',
+          'Advanced Search is not included in your current plan. Upgrade to a plan with Advanced Search to unlock!',
           [
             { text: 'Cancel', style: 'cancel' },
             {
-              text: 'Upgrade to Premium',
+              text: 'View Plans',
               onPress: () => setIsSubscriptionModalOpen(true),
             },
           ]
@@ -1454,11 +1500,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const errMsg = err?.data?.message || err?.message || '';
         Alert.alert(
           '🔒 Daily Like Limit Reached',
-          errMsg || 'You have reached your daily limit of 2 likes! Upgrade to Gold or Premium for Unlimited Swipes.',
+          errMsg || 'You have reached your daily like limit! Upgrade your plan for higher or unlimited swipes.',
           [
             { text: 'Cancel', style: 'cancel' },
             {
-              text: 'Upgrade to Unlimited',
+              text: 'View Plans',
               onPress: () => setIsSubscriptionModalOpen(true),
             },
           ]
@@ -1526,11 +1572,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const errMsg = err?.data?.message || err?.message || '';
       Alert.alert(
         '🔒 Daily Like Limit Reached',
-        errMsg || 'You have reached your daily limit of 2 likes! Upgrade to Gold or Premium for Unlimited Swipes.',
+        errMsg || 'You have reached your daily like limit! Upgrade your plan for higher or unlimited swipes.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
-            text: 'Upgrade to Unlimited',
+            text: 'View Plans',
             onPress: () => setIsSubscriptionModalOpen(true),
           },
         ]
@@ -2345,6 +2391,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
         console.log('[HomeScreen AppState] State changed to:', nextAppState);
         if (nextAppState === 'active') {
+          syncSubscriptionStatus().catch(() => {});
           if (socketRef.current) {
             if (!socketRef.current.connected) {
               socketRef.current.connect();
@@ -2798,6 +2845,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const displayName = isBlockedByOther
         ? 'Matched User'
         : (otherUser.name || otherUser.firstName || 'Matched User');
+
+      // Preserve any pending/sending messages from local state that aren't yet in messagesByOtherUser
+      const existingChatInState = (chats || []).find(
+        (c) => (c.id || c._id || c.userId)?.toString() === otherId
+      );
+      const pendingMsgs = (existingChatInState?.messages || []).filter((m) => {
+        if (!m || m.id === 'match-init') return false;
+        if (m.status === 'sending') return true;
+        if (m.tempId) {
+          return !messagesByOtherUser[otherId].some(
+            (dbM) => String(dbM.id) === String(m.id) || String(dbM.id) === String(m.tempId)
+          );
+        }
+        return false;
+      });
+
       chatsList.push({
         id: otherId,
         name: displayName,
@@ -2805,7 +2868,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         lastSeen: otherUser.lastSeen,
         isBlocked: isBlocked,
         isBlockedByOther: isBlockedByOther,
-        messages: messagesByOtherUser[otherId],
+        messages: [...messagesByOtherUser[otherId], ...pendingMsgs],
       });
     });
 
@@ -3111,7 +3174,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (!activeChat || !currentUser || isSendingMessageRef.current) return;
 
     const currentId = currentUser.id || currentUser._id;
-    const receiverId = activeChat.id;
+    const receiverId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
 
     // Set sending lock to prevent rapid double-tap duplicate triggers
     isSendingMessageRef.current = true;
@@ -3572,6 +3635,36 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const currentCandidate = MOCK_MATCHES[swipeIndex];
     const targetUserId = currentCandidate._id || currentCandidate.id;
 
+    const activeUserObj = userProfile || currentUser;
+    let perms = subscriptionPermissions || activeUserObj?.subscriptionPermissions;
+
+    if (!perms) {
+      try {
+        const freshSub = await apiClient.getMySubscription();
+        if (freshSub && freshSub.success && freshSub.permissions) {
+          perms = freshSub.permissions;
+          setSubscriptionPermissions(freshSub.permissions);
+        }
+      } catch (_) {}
+    }
+
+    const isSuperLikeAllowed = Boolean(perms?.superLikes?.isAllowed);
+
+    if (!isSuperLikeAllowed) {
+      Alert.alert(
+        '⭐ Super Likes Locked',
+        'Super Likes are not included in your current subscription. Upgrade your plan to get Super Likes!',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'View Plans',
+            onPress: () => setIsSubscriptionModalOpen(true),
+          },
+        ]
+      );
+      return;
+    }
+
     try {
       const res = await apiClient.superLikeUser({
         targetUserId,
@@ -3631,8 +3724,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           style: 'destructive',
           onPress: async () => {
             try {
-              await apiClient.blockUser({ targetUserId: targetIdStr });
-              console.log('Blocked user successfully:', targetIdStr);
+              const res = await apiClient.blockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr });
+              console.log('Blocked user successfully:', res || targetIdStr);
 
               setBlockedUsersList((prev) => [
                 ...prev,
@@ -3660,7 +3753,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               Alert.alert('User Blocked 🔒', `You have blocked ${targetUserName}.`);
             } catch (err) {
               console.error('Failed to block user:', err);
-              const errMsg = err?.data?.message || err?.message || 'Failed to block user.';
+              const errMsg = err?.data?.message || (err?.message && err.message !== 'Aborted' ? err.message : 'Request failed. Please try again.');
               Alert.alert('Block Error', errMsg);
             }
           },
@@ -4236,6 +4329,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             <SearchScreen
               currentUser={currentUser}
               userProfile={userProfile}
+              subscriptionPermissions={subscriptionPermissions}
               onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
               onSelectProfile={(profile) => {
                 console.log('Selected Profile from Search:', profile);
@@ -4453,9 +4547,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   <View style={styles.likesListContainer}>
                     {likesList.map((item) => {
                       const activeUserObj = userProfile || currentUser;
-                      const currentTierStr = activeUserObj?.subscriptionTier || 'Free';
-                      const isUserFree = !currentTierStr || currentTierStr.toLowerCase() === 'free';
-                      const isItemBlurred = item.isBlurred || isUserFree;
+                      const perms = subscriptionPermissions || activeUserObj?.subscriptionPermissions;
+                      const canSeeLikes = perms ? Boolean(perms?.likes?.isAllowed) : !item.isBlurred;
+                      const isItemBlurred = !canSeeLikes;
                       return (
                         <TouchableOpacity
                           key={item.id}
@@ -4469,7 +4563,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             if (isItemBlurred) {
                               setIsSubscriptionModalOpen(true);
                             } else {
-                              setSelectedLikesProfile(item);
+                              setSelectedLikesProfile({ ...item, isFromChat: false });
                               setLikesActivePhotoIndex(0);
                             }
                           }}
@@ -4642,7 +4736,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               console.log('Error fetching chat partner full profile by ID:', e);
                             }
 
-                            setSelectedLikesProfile(enrichedProfile);
+                            setSelectedLikesProfile({ ...enrichedProfile, isFromChat: true });
                           }}
                         >
                           <View style={styles.avatarWrapper}>
@@ -4891,7 +4985,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                     )}
                                     {isMe && msg.createdAt !== 'match-init' && (
                                       <Text style={[styles.statusTicks, msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent]}>
-                                        {msg.status === 'sending' ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                        { msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
                                       </Text>
                                     )}
                                   </View>
@@ -4978,7 +5072,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                       msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent
                                     ]}
                                   >
-                                    {msg.status === 'sending' ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                    { msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
                                   </Text>
                                 )}
                               </View>
@@ -5949,7 +6043,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   )}
 
                   {/* Safety & Moderation Actions */}
-                  <View style={{ marginTop: 24, gap: 10 }}>
+                  <View style={{ marginTop: 24, gap: 10, marginBottom: (selectedLikesProfile?.isFromChat || !!activeChat || activeTab === 'chat') ? 40 : 0 }}>
                     <TouchableOpacity
                       style={{
                         paddingVertical: 12,
@@ -6000,54 +6094,56 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     </TouchableOpacity>
                   </View>
 
-                  {/* Horizontal Pass & Like Action Option Buttons */}
-                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 24, marginBottom: 30 }}>
-                    <TouchableOpacity
-                      style={{
-                        flex: 1,
-                        height: 52,
-                        borderRadius: 26,
-                        backgroundColor: '#262630',
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        borderWidth: 1,
-                        borderColor: '#3A3A48',
-                      }}
-                      onPress={() => {
-                        const target = selectedLikesProfile;
-                        setSelectedLikesProfile(null);
-                        handleRejectLike(target);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={{ fontSize: 18, color: '#FF4A4A' }}>✖</Text>
-                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF4A4A' }}>Pass</Text>
-                    </TouchableOpacity>
+                  {/* Horizontal Pass & Like Action Option Buttons - Hidden when profile is expanded from Chat screen */}
+                  {!(selectedLikesProfile?.isFromChat || !!activeChat || activeTab === 'chat') && (
+                    <View style={{ flexDirection: 'row', gap: 12, marginTop: 24, marginBottom: 30 }}>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          height: 52,
+                          borderRadius: 26,
+                          backgroundColor: '#262630',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                          borderWidth: 1,
+                          borderColor: '#3A3A48',
+                        }}
+                        onPress={() => {
+                          const target = selectedLikesProfile;
+                          setSelectedLikesProfile(null);
+                          handleRejectLike(target);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 18, color: '#FF4A4A' }}>✖</Text>
+                        <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF4A4A' }}>Pass</Text>
+                      </TouchableOpacity>
 
-                    <TouchableOpacity
-                      style={{
-                        flex: 1,
-                        height: 52,
-                        borderRadius: 26,
-                        backgroundColor: '#FF4458',
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                      }}
-                      onPress={() => {
-                        const target = selectedLikesProfile;
-                        setSelectedLikesProfile(null);
-                        handleLikeMatch(target);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={{ fontSize: 18, color: '#FFF' }}>♥</Text>
-                      <Text style={{ fontSize: 16, fontWeight: '700', color: '#FFF' }}>Like Back</Text>
-                    </TouchableOpacity>
-                  </View>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1,
+                          height: 52,
+                          borderRadius: 26,
+                          backgroundColor: '#FF4458',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                        }}
+                        onPress={() => {
+                          const target = selectedLikesProfile;
+                          setSelectedLikesProfile(null);
+                          handleLikeMatch(target);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={{ fontSize: 18, color: '#FFF' }}>♥</Text>
+                        <Text style={{ fontSize: 16, fontWeight: '700', color: '#FFF' }}>Like Back</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               </ScrollView>
             </SafeAreaView>
@@ -6656,13 +6752,25 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         {/* Global Subscription Modal Triggered from Likes Tab / Advanced Search / Swipes */}
         <SubscriptionModal
           visible={isSubscriptionModalOpen}
-          onClose={() => setIsSubscriptionModalOpen(false)}
+          onClose={() => {
+            setIsSubscriptionModalOpen(false);
+            syncSubscriptionStatus().catch(() => {});
+          }}
           currentTier={userProfile?.subscriptionTier || currentUser?.subscriptionTier || 'Free'}
-          onSubscriptionUpdated={(newTier) => {
-            if (typeof onUpdateProfile === 'function') {
-              onUpdateProfile({ subscriptionTier: newTier, subscriptionStatus: 'active' });
+          onSubscriptionUpdated={async (newTier, newPerms) => {
+            if (newPerms) {
+              setSubscriptionPermissions(newPerms);
             }
-            fetchLikes();
+            const res = await syncSubscriptionStatus();
+            const activePerms = newPerms || res?.permissions;
+            if (typeof onUpdateProfile === 'function') {
+              onUpdateProfile({
+                subscriptionTier: newTier,
+                subscriptionStatus: 'active',
+                subscriptionPermissions: activePerms,
+              });
+            }
+            await fetchLikes();
             fetchQuestionnaires();
           }}
         />

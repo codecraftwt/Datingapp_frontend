@@ -144,25 +144,73 @@ function MainApp() {
     }
   }, [user]);
 
+  // --- REAL-TIME GLOBAL USER PRESENCE ENGINE (Online / Offline Lifecycle) ---
+  // 1. Logged in + Inside App (active) + Network ON -> Online 🟢
+  // 2. Network OFF + Inside App -> Offline 🔴
+  // 3. Background / Minimized App -> Offline 🔴
   useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener((state) => {
-      setIsConnected(!!state.isConnected);
+    const userId = user?.id || user?._id;
+    if (!userId) return;
+
+    let heartbeatTimer = null;
+
+    const evaluateAndSyncPresence = async (forcedAppState = null) => {
+      try {
+        const appStateNow = forcedAppState || AppState.currentState;
+        const netState = await NetInfo.fetch().catch(() => ({ isConnected: true, isInternetReachable: true }));
+
+        const cond1_loggedIn = !!userId;
+        const cond2_insideApp = appStateNow === 'active';
+        const cond3_networkOn = !!(netState.isConnected && netState.isInternetReachable !== false);
+
+        const shouldBeOnline = cond1_loggedIn && cond2_insideApp && cond3_networkOn;
+
+        if (shouldBeOnline) {
+          apiClient.updatePresence({ isOnline: true }).catch(() => {});
+        } else {
+          if (netState.isConnected) {
+            apiClient.updatePresence({ isOnline: false }).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.log('[GLOBAL PRESENCE] Evaluation error:', err);
+      }
+    };
+
+    // 1. Initial presence evaluation on mount / login
+    evaluateAndSyncPresence();
+
+    // 2. Continuous heartbeat every 10 seconds while logged in and active
+    heartbeatTimer = setInterval(() => {
+      if (AppState.currentState === 'active') {
+        evaluateAndSyncPresence('active');
+      }
+    }, 10000);
+
+    // 3. Listen to Network Changes (Wi-Fi / Mobile Data toggles)
+    const unsubscribeNet = NetInfo.addEventListener((netState) => {
+      setIsConnected(!!netState.isConnected);
+      if (netState.isConnected && AppState.currentState === 'active') {
+        evaluateAndSyncPresence('active');
+      }
     });
 
-    const appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active' && user) {
-        // [LOCATION SYNC DISABLED AFTER LOGIN]: Location is fetched ONLY at registration time.
-        // Location check/sync after login is intentionally commented out.
-        // console.log('📍 App foreground active. Checking location sync...');
-        // syncUserLocationService(false).catch((e) => console.log('Location sync on active error:', e));
+    // 4. Listen to AppState Changes (Active Foreground vs Background/Minimized)
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        evaluateAndSyncPresence('active');
+      } else if (nextState === 'background' || nextState === 'inactive') {
+        evaluateAndSyncPresence(nextState);
       }
     });
 
     return () => {
-      unsubscribe();
-      if (appStateSubscription && typeof appStateSubscription.remove === 'function') {
-        appStateSubscription.remove();
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      unsubscribeNet();
+      if (appStateSub && typeof appStateSub.remove === 'function') {
+        appStateSub.remove();
       }
+      apiClient.updatePresence({ isOnline: false }).catch(() => {});
     };
   }, [user]);
 
@@ -250,6 +298,16 @@ function MainApp() {
         subscriptionTier: updatedProfile.subscriptionTier,
         subscriptionStatus: updatedProfile.subscriptionStatus || 'active',
       }));
+      AsyncStorage.getItem('user').then((userStr) => {
+        if (userStr) {
+          try {
+            const parsed = JSON.parse(userStr);
+            parsed.subscriptionTier = updatedProfile.subscriptionTier;
+            parsed.subscriptionStatus = updatedProfile.subscriptionStatus || 'active';
+            AsyncStorage.setItem('user', JSON.stringify(parsed)).catch(() => {});
+          } catch (e) {}
+        }
+      }).catch(() => {});
     }
   };
 
@@ -312,23 +370,26 @@ function MainApp() {
       case 'LOGIN':
         return (
           <LoginScreen
-            onNavigate={async (nextScreen, loggedUser) => {
+            onNavigate={(nextScreen, loggedUser) => {
               if (nextScreen === 'HOME') {
-                try {
-                  const res = await apiClient.getProfile();
-                  const freshUser = res.user || res.data?.user || res;
-                  if (freshUser) {
-                    setUserProfile(freshUser);
-                  } else if (loggedUser) {
-                    setUserProfile(loggedUser);
-                  }
-                } catch (err) {
-                  console.log('Error fetching fresh profile for HOME:', err);
-                  if (loggedUser) {
-                    setUserProfile(loggedUser);
-                  }
+                // 1. Immediately navigate to HOME screen with logged-in user profile so UI transition is instant!
+                if (loggedUser) {
+                  setUserProfile(loggedUser);
                 }
                 navigateTo('HOME');
+
+                // 2. Fetch fresh profile details & unread notifications asynchronously in background without blocking screen transition
+                apiClient.getProfile()
+                  .then((res) => {
+                    const freshUser = res.user || res.data?.user || res;
+                    if (freshUser) {
+                      setUserProfile(freshUser);
+                    }
+                  })
+                  .catch((err) => {
+                    console.log('Error fetching fresh profile for HOME:', err);
+                  });
+
                 checkUnreadNotifications().catch(() => {});
                 return;
               }
