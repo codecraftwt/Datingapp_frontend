@@ -2212,6 +2212,47 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     );
   };
 
+  const handleUnblockUser = (targetUserIdParam, targetUserNameParam) => {
+    const currentCandidate = swipeIndex < MOCK_MATCHES.length ? MOCK_MATCHES[swipeIndex] : null;
+    const resolvedTargetId = targetUserIdParam || (activeChat && activeChat.id) || (currentCandidate && currentCandidate.id);
+    const targetUserName = targetUserNameParam || (activeChat && activeChat.name) || (currentCandidate && (currentCandidate.name || currentCandidate.firstName)) || 'this user';
+
+    if (!resolvedTargetId) return;
+    const targetIdStr = resolvedTargetId.toString();
+
+    Alert.alert(
+      'Unblock User 🔓',
+      `Are you sure you want to unblock ${targetUserName}? They will be able to message you and view your profile again.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unblock',
+          onPress: async () => {
+            try {
+              await apiClient.unblockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr });
+              if (activeChat && activeChat.id.toString() === targetIdStr) {
+                setActiveChat((prev) => prev ? { ...prev, isBlocked: false } : null);
+              }
+              setChats((prevChats) => prevChats.map((c) => {
+                if (c.id.toString() === targetIdStr) {
+                  return { ...c, isBlocked: false };
+                }
+                return c;
+              }));
+              if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+              if (typeof fetchMatchesList === 'function') fetchMatchesList();
+              if (typeof fetchMessages === 'function') fetchMessages();
+              Alert.alert('User Unblocked 🔓', `${targetUserName} has been unblocked.`);
+            } catch (err) {
+              console.error('Failed to unblock user:', err);
+              Alert.alert('Error', 'Failed to unblock user.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const openReportForm = (idParam, nameParam) => {
     const currentCandidate = swipeIndex < MOCK_MATCHES.length ? MOCK_MATCHES[swipeIndex] : null;
     const targetUserId = idParam || (activeChat && activeChat.id) || (currentCandidate && currentCandidate.id);
@@ -2274,48 +2315,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const handleChatMenu = () => {
     if (!activeChat) return;
-
-    Alert.alert(
-      'Chat Options',
-      'Choose an action:',
-      [
-        {
-          text: 'Clear Chat History',
-          onPress: handleClearChat,
-        },
-        {
-          text: 'Unmatch / Block User',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Unmatch or Block',
-              `Select an action for ${activeChat.name}:`,
-              [
-                {
-                  text: 'Unmatch User',
-                  style: 'destructive',
-                  onPress: () => handleUnmatch(activeChat.id, activeChat.name),
-                },
-                {
-                  text: 'Block User',
-                  style: 'destructive',
-                  onPress: () => handleBlockUser(activeChat.id, activeChat.name),
-                },
-                {
-                  text: 'Cancel',
-                  style: 'cancel',
-                },
-              ]
-            );
-          },
-        },
-        {
-          text: 'Report User ⚠️',
-          onPress: () => openReportForm(activeChat.id, activeChat.name),
-        },
-      ],
-      { cancelable: true }
-    );
+    setShowChatOptionsMenuModal(true);
   };
 
   const handleClearAllConversations = () => {
@@ -3663,25 +3663,38 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   <Text style={{ color: '#FF453A', fontSize: 16, fontWeight: '600' }}>Unmatch User</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={{
-                    paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderRadius: 12,
-                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                    marginBottom: 10,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                  }}
-                  onPress={() => {
-                    setShowChatOptionsMenuModal(false);
-                    setTimeout(() => handleBlockUser(activeChat.id, activeChat.name), 200);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text style={{ fontSize: 18, marginRight: 12 }}>🔒</Text>
-                  <Text style={{ color: '#FF453A', fontSize: 16, fontWeight: '600' }}>Block User</Text>
-                </TouchableOpacity>
+                {(() => {
+                  const targetActiveId = (activeChat?.id || activeChat?._id || activeChat?.userId)?.toString();
+                  const isBlocked = Boolean(activeChat?.isBlocked);
+
+                  return (
+                    <TouchableOpacity
+                      style={{
+                        paddingVertical: 14,
+                        paddingHorizontal: 16,
+                        borderRadius: 12,
+                        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                        marginBottom: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        setShowChatOptionsMenuModal(false);
+                        if (isBlocked) {
+                          setTimeout(() => handleUnblockUser(activeChat.id, activeChat.name), 200);
+                        } else {
+                          setTimeout(() => handleBlockUser(activeChat.id, activeChat.name), 200);
+                        }
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 18, marginRight: 12 }}>{isBlocked ? '🔓' : '🔒'}</Text>
+                      <Text style={{ color: isBlocked ? '#00E676' : '#FF453A', fontSize: 16, fontWeight: '600' }}>
+                        {isBlocked ? 'Unblock User' : 'Block User'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })()}
 
                 <TouchableOpacity
                   style={{

@@ -11,7 +11,7 @@ import { RegisterScreen } from './src/screens/RegisterScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
 import { QuestionnaireScreen } from './src/screens/QuestionnaireScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
-import { apiClient, setOnSessionTerminatedHandler, setAuthToken, setManualLogoutInProgress, getIsManualLogoutInProgress } from './src/api/apiClient';
+import { apiClient, setOnSessionTerminatedHandler, setAuthToken, setManualLogoutInProgress, getIsManualLogoutInProgress, getIsDeactivationAlertShowing, setIsDeactivationAlertShowing, setLastKnownUser } from './src/api/apiClient';
 import { syncUserLocationService } from './src/services/locationService';
 import { registerFcmToken, setupNotificationListeners, displayLocalSystemNotification } from './src/services/notificationService';
 import { TopToastBanner } from './src/components/TopToastBanner';
@@ -25,11 +25,66 @@ function MainApp() {
   const [topToast, setTopToast] = useState({ visible: false, message: '', type: 'info' });
 
   useEffect(() => {
-    setOnSessionTerminatedHandler((msg) => {
-      if (getIsManualLogoutInProgress()) return;
+    setOnSessionTerminatedHandler(async (terminationData) => {
+      if (getIsManualLogoutInProgress() || getIsDeactivationAlertShowing()) return;
+      setIsDeactivationAlertShowing(true);
+
+      const isDataObj = terminationData && typeof terminationData === 'object';
+      const rawMsg = isDataObj ? (terminationData.message || '') : (terminationData || '');
+      const explicitReason = isDataObj ? (terminationData.reason || '') : '';
+      let targetEmail = (isDataObj && terminationData.email) || userProfile?.email || user?.email;
+      let targetUserId = (isDataObj && terminationData.userId) || userProfile?.id || userProfile?._id || user?.id || user?._id;
+
+      if (!targetEmail) {
+        try { targetEmail = await AsyncStorage.getItem('persistent_user_email'); } catch (e) {}
+      }
+      if (!targetUserId) {
+        try { targetUserId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) {}
+      }
+      if (!targetEmail) {
+        try {
+          const uStr = await AsyncStorage.getItem('user');
+          if (uStr) {
+            const u = JSON.parse(uStr);
+            targetEmail = u.email;
+            targetUserId = targetUserId || u.id || u._id;
+          }
+        } catch (e) {}
+      }
+
+      // Query GET /api/profile/account-status to ensure latest deactivation reason is accurately retrieved from API
+      let statusRes = null;
+      try {
+        statusRes = await apiClient.checkAccountStatus({ email: targetEmail, userId: targetUserId });
+      } catch (e) {}
+      if (!statusRes) {
+        try {
+          statusRes = await apiClient.checkAccountStatus();
+        } catch (e) {}
+      }
+
+      const isDeactivated =
+        (isDataObj && (
+          terminationData.isDeactivated === true ||
+          terminationData.code === 'ACCOUNT_DEACTIVATED' ||
+          terminationData.status === 'deactivated' ||
+          terminationData.isInactive === true
+        )) ||
+        statusRes?.status === 'deactivated' ||
+        statusRes?.isDeactivated === true ||
+        statusRes?.isActive === false ||
+        (typeof rawMsg === 'string' && rawMsg.toLowerCase().includes('deactivated'));
+
+      const deactReason = statusRes?.reason || explicitReason || 'Account deactivated by admin moderation team';
+
+      const alertTitle = isDeactivated ? 'Account Deactivated 🚫' : 'Session Terminated ⚠️';
+      const alertBody = isDeactivated
+        ? `Your account has been deactivated by the admin.\n\nReason: ${deactReason}`
+        : (rawMsg || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.');
+
       Alert.alert(
-        'Session Terminated ⚠️',
-        msg || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.',
+        alertTitle,
+        alertBody,
         [
           {
             text: 'OK',
@@ -42,13 +97,16 @@ function MainApp() {
               dispatch(logout());
               setUserProfile(null);
               setScreenStack(['LOGIN']);
+              setTimeout(() => {
+                setIsDeactivationAlertShowing(false);
+              }, 1500);
             },
           },
         ],
         { cancelable: false }
       );
     });
-  }, [dispatch]);
+  }, [dispatch, user, userProfile]);
 
   const currentScreen = screenStack[screenStack.length - 1] || 'LOGIN';
 
@@ -221,6 +279,7 @@ function MainApp() {
         const storedToken = await AsyncStorage.getItem('token');
         if (storedUser && storedToken) {
           const parsedUser = JSON.parse(storedUser);
+          setLastKnownUser(parsedUser);
           console.log('--- Restored Session on Startup ---');
           console.log('JWT Token:', storedToken);
           console.log('User Profile:', JSON.stringify(parsedUser, null, 2));
@@ -325,44 +384,68 @@ function MainApp() {
     navigateTo('QUESTIONNAIRE');
   };
 
-  const handleLogout = async () => {
+  const handleLogout = async (customMessage = null, alreadyAlerted = false) => {
     setManualLogoutInProgress(true);
-    try {
-      await apiClient.logoutBackend();
-    } catch (err) {
-      console.log('Error logging out from backend:', err);
-    }
-    try {
-      await AsyncStorage.clear();
-    } catch (err) {
-      console.log('Error clearing session storage on logout:', err);
-    }
+    setAuthToken(null);
     dispatch(logout());
     setUserProfile(null);
 
-    const logoutMsg = 'Logged out successfully.';
-    if (Platform.OS === 'android') {
-      try {
-        ToastAndroid.showWithGravityAndOffset(
-          logoutMsg,
-          ToastAndroid.LONG,
-          ToastAndroid.TOP,
-          0,
-          120
-        );
-      } catch (e) {
-        ToastAndroid.show(logoutMsg, ToastAndroid.SHORT);
-      }
-    } else {
-      Alert.alert('Logged Out', 'You have been logged out successfully.');
-    }
-    setTopToast({ visible: true, message: logoutMsg, type: 'info' });
-
+    // 1. Instantly navigate to LOGIN screen so transition is immediate without network delay
     navigateTo('LOGIN');
+
+    // 2. Run backend logout API asynchronously in background
+    apiClient.logoutBackend().catch((err) => {
+      console.log('Error logging out from backend:', err);
+    });
+
+    // 3. Clear session storage asynchronously in background
+    AsyncStorage.clear().catch((err) => {
+      console.log('Error clearing session storage on logout:', err);
+    });
+
+    const isDeactivated = typeof customMessage === 'string' && customMessage.toLowerCase().includes('deactivated');
+    if (!alreadyAlerted && !getIsDeactivationAlertShowing()) {
+      if (isDeactivated) {
+        setIsDeactivationAlertShowing(true);
+        Alert.alert(
+          'Account Deactivated 🚫',
+          `Your account has been deactivated by the admin.\n\nReason: ${customMessage}`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                setTimeout(() => {
+                  setIsDeactivationAlertShowing(false);
+                }, 1500);
+              },
+            },
+          ],
+          { cancelable: false }
+        );
+      } else {
+        const logoutMsg = customMessage || 'Logged out successfully.';
+        if (Platform.OS === 'android') {
+          try {
+            ToastAndroid.showWithGravityAndOffset(
+              logoutMsg,
+              ToastAndroid.LONG,
+              ToastAndroid.TOP,
+              0,
+              120
+            );
+          } catch (e) {
+            ToastAndroid.show(logoutMsg, ToastAndroid.SHORT);
+          }
+        } else {
+          Alert.alert('Logged Out', logoutMsg);
+        }
+        setTopToast({ visible: true, message: logoutMsg, type: 'info' });
+      }
+    }
 
     setTimeout(() => {
       setManualLogoutInProgress(false);
-    }, 3000);
+    }, 2000);
   };
 
   const renderScreen = () => {

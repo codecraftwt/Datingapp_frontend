@@ -28,22 +28,22 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import Video from 'react-native-video';
 
 const INTEREST_OPTIONS = [
-  '🎵 Music',
-  '✈️ Travel',
-  '🏋️ Fitness',
-  '🎬 Movies',
-  '🎮 Gaming',
-  '🍳 Cooking',
-  '🎨 Art',
-  '📸 Photography',
-  '📚 Reading',
-  '💃 Dancing',
-  '☕ Coffee',
-  '🐕 Pets',
-  '🍷 Wine',
-  '🧘 Yoga',
-  '🍕 Foodie',
-  '🏕️ Camping',
+  ' Music',
+  ' Travel',
+  'Fitness',
+  ' Movies',
+  ' Gaming',
+  ' Cooking',
+  ' Art',
+  ' Photography',
+  ' Reading',
+  ' Dancing',
+  ' Coffee',
+  ' Pets',
+  ' Wine',
+  ' Yoga',
+  ' Foodie',
+  ' Camping',
 ];
 
 const ORIENTATIONS = ['Straight', 'Gay', 'Lesbian', 'Bisexual', 'Pansexual', 'Queer'];
@@ -53,22 +53,22 @@ const SMOKE_HABITS = ['Never', 'Socially', 'Regularly'];
 const EXERCISE_HABITS = ['Active', 'Sometimes', 'Never'];
 const PETS_OPTIONS = ['Dog', 'Cat', 'Both', 'None'];
 const EDUCATION_LEVELS = [
-  '🎓 High School',
-  '🎓 Bachelors Degree',
-  '🎓 Masters Degree',
-  '🎓 Doctorate / PhD',
-  '🛠️ Trade / Vocational',
-  '💼 Other Education',
+  ' High School',
+  ' Bachelors Degree',
+  ' Masters Degree',
+  ' Doctorate / PhD',
+  ' Trade / Vocational',
+  ' Other Education',
 ];
 const ZODIAC_SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'];
 const LANGUAGE_OPTIONS = ['English', 'Hindi', 'Spanish', 'French', 'German', 'Marathi', 'Mandarin', 'Japanese', 'Italian', 'Portuguese', 'Russian', 'Arabic'];
 
 const JOB_EXAMPLES = [
-  '💻 Software Engineer',
-  '👩‍🏫 Teacher',
-  '🩺 Doctor',
-  '🎓 Student',
-  '💼 Business Owner',
+  ' Software Engineer',
+  ' Teacher',
+  ' Doctor',
+  ' Student',
+  ' Business Owner',
 ];
 
 const HEIGHT_OPTIONS = [
@@ -198,7 +198,47 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const heightOptionsList = optionsData?.heightOptions || HEIGHT_OPTIONS;
   const weightOptionsList = optionsData?.weightOptions || WEIGHT_OPTIONS;
 
-  // Pre-fill questionnaire data if provided
+  const populatePhotosGrid = (userObj) => {
+    if (!userObj) return;
+
+    const mainImg = (userObj.profileImage && typeof userObj.profileImage === 'string' && userObj.profileImage.trim().length > 0 && userObj.profileImage !== 'null')
+      ? userObj.profileImage
+      : null;
+
+    const initialGrid = Array(9).fill(null);
+    initialGrid[0] = mainImg;
+
+    const combinedGalleryMedia = [];
+    const addMediaItem = (item) => {
+      if (
+        item &&
+        typeof item === 'string' &&
+        item.trim().length > 0 &&
+        item !== 'null' &&
+        item !== mainImg &&
+        !combinedGalleryMedia.includes(item)
+      ) {
+        combinedGalleryMedia.push(item);
+      }
+    };
+
+    if (Array.isArray(userObj.profileImages)) userObj.profileImages.forEach(addMediaItem);
+    if (Array.isArray(userObj.photos)) userObj.photos.forEach(addMediaItem);
+    if (Array.isArray(userObj.videos)) userObj.videos.forEach(addMediaItem);
+    if (Array.isArray(userObj.profileVideos)) userObj.profileVideos.forEach(addMediaItem);
+    if (Array.isArray(userObj.media)) userObj.media.forEach(addMediaItem);
+
+    for (let i = 1; i < 9; i++) {
+      const item = combinedGalleryMedia[i - 1];
+      initialGrid[i] = item || null;
+    }
+
+    if (userObj.mediaTimestamps && typeof userObj.mediaTimestamps === 'object') {
+      setMediaTimestamps(userObj.mediaTimestamps);
+    }
+    setPhotos(initialGrid);
+  };
+
   useEffect(() => {
     if (initialData) {
       if (initialData.firstName || initialData.name) setFirstName(initialData.firstName || initialData.name);
@@ -246,63 +286,25 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       if (initialData.interests && Array.isArray(initialData.interests)) setSelectedInterests(initialData.interests);
       if (initialData.languages && Array.isArray(initialData.languages)) setSelectedLanguages(initialData.languages);
 
-      // Populate 9 photos grid:
-      // Slot #1 (index 0) is strictly for main profile photo (profileImage).
-      // Slots #2 through #9 (indices 1 to 8) are for gallery media (photos & videos).
-      const initialGrid = Array(9).fill(null);
-
-      const mainImg = (initialData.profileImage && typeof initialData.profileImage === 'string' && initialData.profileImage.trim().length > 0)
-        ? initialData.profileImage
-        : null;
-
-      initialGrid[0] = mainImg;
-
-      const mediaList = (
-        Array.isArray(initialData.media) && initialData.media.length > 0
-          ? initialData.media
-          : Array.isArray(initialData.profileImages) && initialData.profileImages.length > 0
-            ? initialData.profileImages
-            : Array.isArray(initialData.photos)
-              ? initialData.photos
-              : []
-      ).filter(item => item && typeof item === 'string' && item.trim().length > 0 && item !== mainImg);
-
-      // Slots #2 through #9 (indices 1 to 8) read gallery items
-      for (let i = 1; i < 9; i++) {
-        const item = mediaList[i - 1];
-        if (item && typeof item === 'string' && item.trim().length > 0) {
-          initialGrid[i] = item;
-        } else {
-          initialGrid[i] = null;
-        }
-      }
-
-      if (initialData.mediaTimestamps && typeof initialData.mediaTimestamps === 'object') {
-        setMediaTimestamps(initialData.mediaTimestamps);
-      }
-      setPhotos(initialGrid);
-    } else {
-      setPhotos(Array(9).fill(null));
+      populatePhotosGrid(initialData);
     }
-  }, [initialData]);
 
-  // Fallback profile fetch if initialData is null on mount
-  useEffect(() => {
-    if (!initialData) {
-      apiClient.getProfile().then((res) => {
-        const u = res?.user || res?.data?.user || res;
-        if (u) {
-          if (u.firstName || u.name) setFirstName(u.firstName || u.name);
-          if (u.gender) setGender(u.gender);
-          if (u.bdayDay) setBdayDay(u.bdayDay);
-          if (u.bdayMonth) setBdayMonth(u.bdayMonth);
-          if (u.bdayYear) setBdayYear(u.bdayYear);
-          if (u.mediaTimestamps && typeof u.mediaTimestamps === 'object') {
-            setMediaTimestamps(u.mediaTimestamps);
-          }
-        }
-      }).catch((e) => console.log('Error fetching user profile fallback in QuestionnaireScreen:', e));
-    }
+    // Always fetch fresh profile data from backend to ensure all gallery photos/videos for slots 2-9 are up to date
+    apiClient.getProfile().then((res) => {
+      const u = res?.user || res?.data?.user || res;
+      if (u) {
+        if (u.firstName || u.name) setFirstName((prev) => prev || u.firstName || u.name);
+        if (u.gender) setGender((prev) => prev || u.gender);
+        if (u.bdayDay) setBdayDay((prev) => prev || u.bdayDay);
+        if (u.bdayMonth) setBdayMonth((prev) => prev || u.bdayMonth);
+        if (u.bdayYear) setBdayYear((prev) => prev || u.bdayYear);
+        if (u.bio) setBio((prev) => prev || u.bio);
+        if (u.interests && Array.isArray(u.interests) && u.interests.length > 0) setSelectedInterests((prev) => (prev && prev.length > 0 ? prev : u.interests));
+        if (u.languages && Array.isArray(u.languages) && u.languages.length > 0) setSelectedLanguages((prev) => (prev && prev.length > 0 ? prev : u.languages));
+
+        populatePhotosGrid(u);
+      }
+    }).catch((e) => console.log('Error fetching user profile in QuestionnaireScreen:', e));
   }, [initialData]);
 
   const calculateAge = () => {
@@ -390,12 +392,13 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       return;
     }
 
-    // 50MB max video limit for fast upload
-    const maxVideoSizeBytes = 50 * 1024 * 1024; // 50 MB
-    if (isVideo && asset.fileSize && asset.fileSize > maxVideoSizeBytes) {
+    // 35MB max video limit (supports high-quality 1080p/4K 15s mobile video clips)
+    const sizeBytes = asset.fileSize || asset.size || 0;
+    const maxVideoSizeBytes = 35 * 1024 * 1024; // 35 MB
+    if (isVideo && sizeBytes > maxVideoSizeBytes) {
       Alert.alert(
-        'Video Size Exceeded 📹',
-        `The selected video is ${(asset.fileSize / (1024 * 1024)).toFixed(1)}MB. Please choose a video under 50MB (max 15s) for fast profile loading.`
+        'Video File Size Too Large 📹',
+        `The selected video is ${(sizeBytes / (1024 * 1024)).toFixed(1)}MB. To ensure smooth uploads, please select a video clip under 35MB (up to 15 seconds).`
       );
       return;
     }
@@ -427,11 +430,17 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           name: safeName,
         });
         cloudFormData.append('upload_preset', 'Dating_Profiles');
+        cloudFormData.append('folder', 'dating_app_profiles');
+
+        if (isVideo) {
+          cloudFormData.append('eager', 'so_0,w_400,c_limit,q_auto,f_jpg|so_0,eo_15,q_auto,vc_h264');
+          cloudFormData.append('eager_async', 'true');
+        }
 
         const cloudEndpoint = `https://api.cloudinary.com/v1_1/dwwykeft2/${isVideo ? 'video' : 'image'}/upload`;
         console.log(`[QuestionnaireScreen] Direct Cloudinary upload to ${cloudEndpoint}...`);
         const cloudController = new AbortController();
-        const cloudTimeout = setTimeout(() => cloudController.abort(), isVideo ? 120000 : 30000);
+        const cloudTimeout = setTimeout(() => cloudController.abort(), isVideo ? 180000 : 90000); // 3 mins for video, 1.5 mins for image
         const cloudFetchRes = await fetch(cloudEndpoint, {
           method: 'POST',
           body: cloudFormData,
@@ -443,7 +452,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           cloudinaryUrl = cloudJson.secure_url || cloudJson.url;
           if (isVideo && cloudinaryUrl.includes('cloudinary.com') && cloudinaryUrl.includes('/video/upload/')) {
             if (!cloudinaryUrl.includes('/so_0,eo_15/') && !cloudinaryUrl.includes('/eo_15/')) {
-              cloudinaryUrl = cloudinaryUrl.replace('/video/upload/', '/video/upload/so_0,eo_15/');
+              cloudinaryUrl = cloudinaryUrl.replace('/video/upload/', '/video/upload/so_0,eo_15,q_auto,vc_h264/');
             }
           }
           console.log('[QuestionnaireScreen] Direct Cloudinary upload success:', cloudinaryUrl);
@@ -502,9 +511,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         return updated;
       });
 
-      const isAbort = uploadErr?.name === 'AbortError' || uploadErr?.message?.includes('Aborted') || uploadErr?.message?.includes('abort');
+      const isAbort = uploadErr?.name === 'AbortError' || uploadErr?.message?.includes('Aborted') || uploadErr?.message?.includes('abort') || uploadErr?.message?.includes('timeout');
       const errorMsg = isAbort
-        ? 'Video upload timed out. Please check your network connection and try again.'
+        ? 'Video upload timed out. Please select a shorter/smaller video clip (under 35MB) or check your network connection.'
         : uploadErr?.data?.message || uploadErr?.message || 'Upload encountered an issue. Please try again.';
       Alert.alert('Upload Error 📹', errorMsg);
     } finally {
@@ -748,6 +757,16 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
   const handleSubmit = async () => {
     console.log('[QuestionnaireScreen] handleSubmit initiated. Current photos array:', photos);
+
+    if (uploadingSlotIndex !== null) {
+      Alert.alert(
+        'Upload in Progress 📹',
+        'Your video/photo is still uploading to cloud storage. Please wait a few seconds for the upload to complete before saving your profile.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setLoading(true);
 
     // Guarantee all local file:// and content:// URIs are uploaded to Cloudinary sequentially before saving questionnaire
@@ -780,14 +799,22 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
               name: safeName,
             });
             cloudFormData.append('upload_preset', 'Dating_Profiles');
+            cloudFormData.append('folder', 'dating_app_profiles');
+            if (isVid) {
+              cloudFormData.append('eager', 'so_0,w_400,c_limit,q_auto,f_jpg|so_0,eo_15,q_auto,vc_h264');
+              cloudFormData.append('eager_async', 'true');
+            }
             const cloudEndpoint = `https://api.cloudinary.com/v1_1/dwwykeft2/${isVid ? 'video' : 'image'}/upload`;
-            const cloudRes = await fetch(cloudEndpoint, { method: 'POST', body: cloudFormData });
+            const cloudController = new AbortController();
+            const cloudTimeout = setTimeout(() => cloudController.abort(), isVid ? 120000 : 60000);
+            const cloudRes = await fetch(cloudEndpoint, { method: 'POST', body: cloudFormData, signal: cloudController.signal });
+            clearTimeout(cloudTimeout);
             const cloudData = await cloudRes.json();
             if (cloudData && (cloudData.secure_url || cloudData.url)) {
               cloudUrl = cloudData.secure_url || cloudData.url;
               if (isVid && cloudUrl.includes('cloudinary.com') && cloudUrl.includes('/video/upload/')) {
                 if (!cloudUrl.includes('/so_0,eo_15/') && !cloudUrl.includes('/eo_15/')) {
-                  cloudUrl = cloudUrl.replace('/video/upload/', '/video/upload/so_0,eo_15/');
+                  cloudUrl = cloudUrl.replace('/video/upload/', '/video/upload/so_0,eo_15,q_auto,vc_h264/');
                 }
               }
             }
@@ -928,56 +955,74 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           keyboardShouldPersistTaps="handled"
         >
           <View style={[styles.containerWrapper, { maxWidth: cardWidth }]}>
-            {/* Top Bar with Step Back / Log Out */}
+            {/* Top Bar with Back Button (Top Left), Save Button (Top Right), and Title (Below) */}
             <View style={styles.editModeHeader}>
-              {isEditMode || onCloseModal ? (
-                <TouchableOpacity
-                  onPress={() => {
-                    if (onCloseModal) onCloseModal();
-                    else if (onGoBack && onGoBack()) return;
-                    else if (onNavigate) onNavigate('HOME');
-                  }}
-                  style={styles.closeBtn}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="arrow-back" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={styles.closeBtnText}>Back to Profile</Text>
-                  </View>
-                </TouchableOpacity>
-              ) : step > 1 ? (
-                <TouchableOpacity
-                  onPress={() => setStep((prev) => prev - 1)}
-                  style={styles.closeBtn}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="arrow-back" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={styles.closeBtnText}>Step {step - 1}</Text>
-                  </View>
-                </TouchableOpacity>
-              ) : (
-                <View style={{ width: 75 }} />
-              )}
+              <View style={styles.topActionRow}>
+                {isEditMode || onCloseModal ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (onCloseModal) onCloseModal();
+                      else if (onGoBack && onGoBack()) return;
+                      else if (onNavigate) onNavigate('HOME');
+                    }}
+                    style={styles.closeBtn}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="arrow-back" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.closeBtnText}>Back to Profile</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : step > 1 ? (
+                  <TouchableOpacity
+                    onPress={() => setStep((prev) => prev - 1)}
+                    style={styles.closeBtn}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="arrow-back" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.closeBtnText}>Step {step - 1}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={{ width: 75 }} />
+                )}
+
+                {isEditMode || onCloseModal ? (
+                  <TouchableOpacity
+                    onPress={handleSubmit}
+                    disabled={loading}
+                    style={styles.saveHeaderBtn}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      {loading ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 4 }} />
+                      ) : (
+                        <Ionicons name="checkmark-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      )}
+                      <Text style={styles.saveHeaderBtnText}>Save</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : !onCloseModal ? (
+                  <TouchableOpacity
+                    onPress={handleLogoutPress}
+                    style={styles.logoutHeaderBtn}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="log-out-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.logoutHeaderBtnText}>Log Out</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={{ width: 75 }} />
+                )}
+              </View>
 
               <Text style={styles.editModeTitle}>
                 {isEditMode ? 'Edit Questionnaire' : 'Profile Questionnaire'}
               </Text>
-
-              {!isEditMode && !onCloseModal ? (
-                <TouchableOpacity
-                  onPress={handleLogoutPress}
-                  style={styles.logoutHeaderBtn}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="log-out-outline" size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={styles.logoutHeaderBtnText}>Log Out</Text>
-                  </View>
-                </TouchableOpacity>
-              ) : (
-                <View style={{ width: 75 }} />
-              )}
             </View>
 
             {/* Progress & Step Navigation Bar */}
@@ -1578,6 +1623,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     {validStoryPhotos.map((url, idx) => {
                       const isVid = isVideoUrl(url);
                       const thumb = getVideoThumbnailUrl(url);
+                      const isLocal = url && (url.startsWith('file://') || url.startsWith('content://'));
                       return (
                         <TouchableOpacity
                           key={idx}
@@ -1586,16 +1632,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                           style={styles.storyRing}
                         >
                           <View style={styles.circularThumbContainer}>
-                            {!url?.startsWith('http') && isVid ? (
-                              <Video
-                                source={{ uri: url }}
-                                style={styles.storyThumb}
-                                resizeMode="cover"
-                                paused={true}
-                                muted={true}
-                              />
-                            ) : (
+                            {thumb && !isLocal ? (
                               <Image source={{ uri: thumb }} style={styles.storyThumb} />
+                            ) : (
+                              <View style={[styles.storyThumb, { backgroundColor: '#1C1C24', justifyContent: 'center', alignItems: 'center' }]}>
+                                <Ionicons name={isVid ? "videocam" : "image"} size={22} color="#FFFFFF" />
+                              </View>
                             )}
                             {isVid && (
                               <View style={styles.playIconOverlay}>
@@ -1617,6 +1659,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     {photos.map((photoUri, index) => {
                       const isVid = isVideoUrl(photoUri);
                       const thumbUri = photoUri ? getVideoThumbnailUrl(photoUri) : null;
+                      const isLocal = photoUri && (photoUri.startsWith('file://') || photoUri.startsWith('content://'));
                       return (
                         <View key={index} style={[styles.gridSlot, { width: slotWidth, height: slotHeight }]}>
                           {photoUri ? (
@@ -1627,16 +1670,15 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                             >
                               {isVid ? (
                                 <View style={{ width: '100%', height: '100%', position: 'relative' }}>
-                                  {!photoUri?.startsWith('http') ? (
-                                    <Video
-                                      source={{ uri: photoUri }}
-                                      style={styles.slotImage}
-                                      resizeMode="cover"
-                                      paused={true}
-                                      muted={true}
-                                    />
-                                  ) : (
+                                  {thumbUri && !isLocal ? (
                                     <Image source={{ uri: thumbUri }} style={styles.slotImage} resizeMode="cover" />
+                                  ) : (
+                                    <View style={[styles.slotImage, { backgroundColor: '#1C1C24', justifyContent: 'center', alignItems: 'center' }]}>
+                                      <Ionicons name="videocam" size={28} color="#FE3C72" />
+                                      <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '700', marginTop: 4, textAlign: 'center' }}>
+                                        {uploadingSlotIndex === index ? 'Uploading...' : 'Video Clip'}
+                                      </Text>
+                                    </View>
                                   )}
                                   <View style={{
                                     position: 'absolute',
@@ -1653,7 +1695,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                                   </View>
                                 </View>
                               ) : (
-                                <Image source={{ uri: thumbUri }} style={styles.slotImage} resizeMode="cover" />
+                                <Image source={{ uri: thumbUri || photoUri }} style={styles.slotImage} resizeMode="cover" />
                               )}
                               {isVid ? (
                                 <View style={[styles.mainBadge, { backgroundColor: index === 0 ? '#FE3C72' : '#3897F0' }]}>
@@ -1906,10 +1948,15 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   editModeHeader: {
+    width: '100%',
+    marginBottom: 16,
+  },
+  topActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    width: '100%',
+    marginBottom: 10,
   },
   closeBtn: {
     paddingVertical: 6,
@@ -1924,8 +1971,9 @@ const styles = StyleSheet.create({
   },
   editModeTitle: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
+    textAlign: 'center',
   },
   progressContainer: {
     alignItems: 'center',
@@ -2427,6 +2475,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
     letterSpacing: 0.8,
+  },
+  saveHeaderBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: '#00E676',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#00E676',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  saveHeaderBtnText: {
+    color: '#0F121C',
+    fontSize: 13,
+    fontWeight: '800',
   },
   logoutHeaderBtn: {
     paddingVertical: 6,

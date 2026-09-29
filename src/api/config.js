@@ -29,10 +29,10 @@ export const SUBSCRIPTION_PLANS = {
  */
 export const CANDIDATE_URLS = __DEV__
   ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
-  : [LIVE_URL];
+  : [LIVE_URL, NETWORK_URL, LOCAL_URL];
 
-// Default to LOCAL_URL (http://localhost:5000) with ADB reverse
-let workingBaseUrl = LOCAL_URL;
+// Default to LOCAL_URL (http://localhost:5000) with ADB reverse in DEV, LIVE_URL in production APK
+let workingBaseUrl = __DEV__ ? LOCAL_URL : LIVE_URL;
 
 
 export const getBaseUrl = () => workingBaseUrl;
@@ -48,7 +48,7 @@ export const get15SecVideoUrl = (url) => {
   const lower = url.toLowerCase();
   if (lower.includes('cloudinary.com') && (lower.includes('/video/upload/') || lower.includes('/video/'))) {
     if (!url.includes('/so_0,eo_15/') && !url.includes('/eo_15/') && !url.includes('/du_15/')) {
-      return url.replace('/video/upload/', '/video/upload/so_0,eo_15/');
+      return url.replace(/\/video\/upload\/(?:[a-zA-Z0-9_,-]+\/)?/, '/video/upload/so_0,eo_15,q_auto,vc_h264/');
     }
   }
   return url;
@@ -97,9 +97,13 @@ export const getVideoThumbnailUrl = (url) => {
   if (typeof fullUrl !== 'string') return fullUrl;
 
   const lower = fullUrl.toLowerCase();
-  if (lower.includes('/video/upload/') || lower.includes('/video/')) {
-    // Transform Cloudinary video URL into a JPG video thumbnail frame
-    let thumbnailUrl = fullUrl.replace('/video/upload/', '/video/upload/so_0,f_jpg/');
+  if ((lower.startsWith('file://') || lower.startsWith('content://')) && isVideoUrl(lower)) {
+    return null;
+  }
+
+  if (lower.includes('cloudinary.com') && (lower.includes('/video/upload/') || lower.includes('/video/'))) {
+    // Transform Cloudinary video URL into a lightweight 20KB JPG thumbnail image frame (so_0,w_400,c_limit,q_auto,f_jpg)
+    let thumbnailUrl = fullUrl.replace(/\/video\/upload\/(?:[a-zA-Z0-9_,-]+\/)?/, '/video/upload/so_0,w_400,c_limit,q_auto,f_jpg/');
     if (/\.(mp4|mov|webm|3gp|mkv|avi|m4v|flv)($|\?|#)/i.test(thumbnailUrl)) {
       thumbnailUrl = thumbnailUrl.replace(/\.(mp4|mov|webm|3gp|mkv|avi|m4v|flv)($|\?|#)/i, '.jpg$2');
     } else if (!thumbnailUrl.endsWith('.jpg') && !thumbnailUrl.endsWith('.jpeg')) {

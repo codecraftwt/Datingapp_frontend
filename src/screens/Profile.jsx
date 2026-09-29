@@ -75,17 +75,37 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const handleFetchAndShowHiddenMedia = async () => {
     try {
       setLoading(true);
-      const res = await apiClient.getHiddenProfileMedia();
-      const list = res.hiddenMedia || res.data?.hiddenMedia || [];
+      let list = [];
+      try {
+        const res = await apiClient.getHiddenProfileMedia();
+        list = res?.hiddenMedia || res?.data?.hiddenMedia || [];
+      } catch (apiErr) {
+        console.warn('API getHiddenProfileMedia warning, checking local profile:', apiErr);
+      }
+
+      // If API returned empty or failed, fall back to displayData or userProfile
       if (!list || list.length === 0) {
-        Alert.alert('No Hidden Media 🙈', 'You do not have any hidden photos or videos.');
+        const localHidden = displayData?.hiddenMedia || profile?.hiddenMedia || userProfile?.hiddenMedia || [];
+        if (Array.isArray(localHidden) && localHidden.length > 0) {
+          list = localHidden;
+        }
+      }
+
+      if (!list || list.length === 0) {
+        Alert.alert('No Hidden Media ', 'You do not have any hidden photos or videos.');
         return;
       }
       setFetchedHiddenMediaList(list);
       setActiveHiddenStoryIndex(0);
     } catch (err) {
-      console.log('Error fetching hidden media:', err);
-      Alert.alert('Error', 'Failed to fetch hidden media list.');
+      console.log('Error in handleFetchAndShowHiddenMedia:', err);
+      const localHidden = displayData?.hiddenMedia || profile?.hiddenMedia || userProfile?.hiddenMedia || [];
+      if (Array.isArray(localHidden) && localHidden.length > 0) {
+        setFetchedHiddenMediaList(localHidden);
+        setActiveHiddenStoryIndex(0);
+      } else {
+        Alert.alert('No Hidden Media ', 'You do not have any hidden photos or videos.');
+      }
     } finally {
       setLoading(false);
     }
@@ -346,6 +366,26 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     } finally {
       setPasswordLoading(false);
     }
+  };
+
+  const handlePressLogout = () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: () => {
+            if (typeof onLogout === 'function') {
+              onLogout();
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   const handleLogoutAllDevices = () => {
@@ -643,11 +683,11 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       'Choose how you would like to update your main profile image:',
       [
         {
-          text: '📸 Take Photo (Camera)',
+          text: ' Take Photo (Camera)',
           onPress: openCameraPicker,
         },
         {
-          text: '🖼️ Choose Photo from Gallery',
+          text: ' Choose Photo from Gallery',
           onPress: openGalleryPicker,
         },
         {
@@ -744,28 +784,22 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   ).filter((p) => typeof p === 'string' && p.trim().length > 0);
 
   let rawPhotosList = [];
-  if (
-    displayData.profileImage &&
-    typeof displayData.profileImage === 'string' &&
-    displayData.profileImage.trim().length > 0
-  ) {
-    rawPhotosList.push(displayData.profileImage);
-  }
+  const mainPhotoPath = (displayData.profileImage && typeof displayData.profileImage === 'string') ? displayData.profileImage.trim() : '';
 
   validProfileImages.forEach((img) => {
-    if (!rawPhotosList.includes(img)) {
+    if (img && img !== mainPhotoPath && !rawPhotosList.includes(img)) {
       rawPhotosList.push(img);
     }
   });
 
   validPhotos.forEach((img) => {
-    if (!rawPhotosList.includes(img)) {
+    if (img && img !== mainPhotoPath && !rawPhotosList.includes(img)) {
       rawPhotosList.push(img);
     }
   });
 
   validVideos.forEach((vid) => {
-    if (!rawPhotosList.includes(vid)) {
+    if (vid && vid !== mainPhotoPath && !rawPhotosList.includes(vid)) {
       rawPhotosList.push(vid);
     }
   });
@@ -1328,7 +1362,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         <TouchableOpacity
           style={styles.actionRow}
-          onPress={onLogout}
+          onPress={handlePressLogout}
           activeOpacity={0.7}
         >
           <Ionicons name="log-out-outline" size={22} color="#FF3B30" style={{ marginRight: 10 }} />
@@ -1662,7 +1696,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             if (!hiddenUrl) return;
             await apiClient.hideProfileMedia(hiddenUrl);
             Alert.alert(
-              'Media Hidden 🙈',
+              'Media Hidden ',
               'This item has been hidden from public view. It is NOT deleted from your database, and you can Unhide it anytime on your Profile Screen.'
             );
             fetchProfileFromBackend();
@@ -1678,7 +1712,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         visible={activeHiddenStoryIndex !== null}
         photos={fetchedHiddenMediaList}
         initialIndex={activeHiddenStoryIndex || 0}
-        userName="Hidden Photos & Videos 🙈"
+        userName="Hidden Photos & Videos "
         userAvatar={mainPhotoUrl}
         isHiddenMode={true}
         isOwnProfile={true}
@@ -1692,7 +1726,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             setLoading(true);
             await apiClient.unhideProfileMedia(unhideUrl);
             Alert.alert(
-              'Media Restored 👁️',
+              'Media Restored ',
               'This item has been unhidden! It is now visible again on your public profile & story preview.'
             );
             const updatedList = fetchedHiddenMediaList.filter((u) => u !== unhideUrl);

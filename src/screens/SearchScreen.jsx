@@ -20,7 +20,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { apiClient } from '../api/apiClient';
-import { getImageUrl } from '../api/config';
+import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
 import { PreviewModal } from '../components/PreviewModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -33,6 +33,15 @@ const extractPhotoUri = (photoItem) => {
     return photoItem.url || photoItem.uri || photoItem.path || photoItem.secure_url || photoItem.mediaUrl || '';
   }
   return String(photoItem);
+};
+
+const getSafeImageOrThumbnailUri = (photoItem) => {
+  const uri = extractPhotoUri(photoItem);
+  if (!uri || typeof uri !== 'string' || uri.trim().length === 0) return '';
+  if (isVideoUrl(uri)) {
+    return getVideoThumbnailUrl(uri);
+  }
+  return getImageUrl(uri);
 };
 
 const safeString = (val, fallback = '') => {
@@ -95,6 +104,7 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchError, setSearchError] = useState(null);
 
   // Master Filter Options & Saved Preferences
   const [filterOptions, setFilterOptions] = useState({
@@ -180,28 +190,31 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
     userAvatar: '',
   });
 
+const ensureArray = (val) => (Array.isArray(val) ? val : []);
+
   const openMediaPreview = (profile, initialIdx = 0) => {
     if (!profile) return;
     const rawPhotosList = [
       profile.profileImage,
-      ...(profile.profileImages || []),
-      ...(profile.photos || []),
-      ...(profile.videos || []),
-      ...(profile.media || []),
+      ...ensureArray(profile.profileImages),
+      ...ensureArray(profile.photos),
+      ...ensureArray(profile.videos),
+      ...ensureArray(profile.media),
     ];
 
     const photosList = rawPhotosList.map(extractPhotoUri).filter(Boolean);
 
     const uniquePhotos = Array.from(new Set(photosList));
     const finalPhotos = uniquePhotos.length > 0 ? uniquePhotos : [];
+    const mainAvatar = extractPhotoUri(profile.profileImage) || finalPhotos[0] || '';
 
     setPreviewMediaModal({
       visible: true,
       photos: finalPhotos,
       initialIndex: initialIdx < finalPhotos.length ? initialIdx : 0,
       userName: safeString(profile.firstName || profile.name, 'Suggested Match'),
-      userAvatar: avatar || finalPhotos[0],
-      mediaTimestamps: profile.mediaTimestamps,
+      userAvatar: mainAvatar,
+      mediaTimestamps: profile.mediaTimestamps || {},
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
     });
@@ -327,15 +340,18 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
         setTotalCount(res.totalCount || 0);
         setPage(res.page || 1);
         setTotalPages(res.totalPages || 1);
+        setSearchError(null);
       }
     } catch (err) {
-      console.error('Search API Error:', err);
+      console.warn('Search API Error:', err);
       const errMsg = (err && err.data && err.data.message) || (err && err.message) || '';
       const errStatus = err && err.status;
       if (errStatus === 401 || errMsg.includes('authorization denied') || errMsg.includes('invalid or expired')) {
         Alert.alert('Session Expired', 'Your login session has expired or is invalid. Please log in again to continue.');
+      } else if (errStatus === 403 || (err && err.data && err.data.code === 'SEARCH_LOCKED')) {
+        setSearchError('Search is locked for your current plan. Upgrade your plan to search profiles.');
       } else {
-        Alert.alert('Search Error', errMsg || 'Unable to execute search.');
+        setSearchError('Network request failed. Tap retry below to refresh.');
       }
     } finally {
       setIsLoading(false);
@@ -795,45 +811,73 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
           contentContainerStyle={{ paddingHorizontal: 15, paddingBottom: 30 }}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Ionicons name="search-outline" size={48} color="#8E8E93" style={{ marginBottom: 10 }} />
-              <Text style={styles.emptyTitle}>No Profiles Found</Text>
-              <Text style={styles.emptySubtitle}>Try broadening your age, distance, or interest filters.</Text>
+              <Ionicons
+                name={searchError ? "cloud-offline-outline" : "search-outline"}
+                size={48}
+                color={searchError ? "#FE3C72" : "#8E8E93"}
+                style={{ marginBottom: 10 }}
+              />
+              <Text style={styles.emptyTitle}>
+                {searchError ? 'Notice' : 'No Profiles Found'}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {searchError || 'Try broadening your age, distance, or interest filters.'}
+              </Text>
+              {!!searchError && (
+                <TouchableOpacity
+                  style={{
+                    marginTop: 14,
+                    paddingHorizontal: 20,
+                    paddingVertical: 10,
+                    backgroundColor: '#FE3C72',
+                    borderRadius: 22,
+                  }}
+                  onPress={() => executeSearch(1, true)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 14 }}>Tap to Retry</Text>
+                </TouchableOpacity>
+              )}
             </View>
           }
           renderItem={({ item }) => {
             if (!item) return null;
             const itemId = item._id || item.id;
             const status = actionStatusMap[itemId];
-            const profileImgUri = extractPhotoUri(
-              item.profileImage || (item.profileImages && item.profileImages[0])
-            );
+            const rawAvatar = item.profileImage || (item.profileImages && item.profileImages[0]);
+            const profileImgUri = getSafeImageOrThumbnailUri(rawAvatar);
             return (
               <TouchableOpacity
                 style={[styles.profileCard, status === 'passed' && { opacity: 0.6 }]}
                 activeOpacity={0.9}
                 onPress={() => {
-                  setSelectedProfileModal(item);
-                  setActivePhotoIndex(0);
-                  if (typeof onSelectProfile === 'function') {
-                    try {
-                      onSelectProfile(item);
-                    } catch (e) {
-                      console.log('Error in onSelectProfile callback:', e);
+                  try {
+                    if (!item) return;
+                    setActivePhotoIndex(0);
+                    setSelectedProfileModal(item);
+                    if (typeof onSelectProfile === 'function') {
+                      try {
+                        onSelectProfile(item);
+                      } catch (e) {
+                        console.log('Error in onSelectProfile callback:', e);
+                      }
                     }
+                  } catch (err) {
+                    console.error('Error selecting profile from search:', err);
                   }
                 }}
               >
                 {/* Profile Image & Badges */}
                 <View style={styles.cardHeaderImageRow}>
-                  {profileImgUri ? (
+                  {profileImgUri && profileImgUri.trim().length > 0 ? (
                     <Image
-                      source={{ uri: getImageUrl(profileImgUri) }}
+                      source={{ uri: profileImgUri }}
                       style={styles.cardAvatar}
                     />
                   ) : (
                     <View style={[styles.cardAvatar, { backgroundColor: '#3A3A48', justifyContent: 'center', alignItems: 'center' }]}>
                       <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '700' }}>
-                        {(item.firstName || item.name || 'U')[0].toUpperCase()}
+                        {safeString(item.firstName || item.name || 'U').charAt(0).toUpperCase() || 'U'}
                       </Text>
                     </View>
                   )}
@@ -1560,23 +1604,39 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
                 {(() => {
                   const rawPhotos = [
                     selectedProfileModal.profileImage,
-                    ...(selectedProfileModal.profileImages || []),
-                    ...(selectedProfileModal.photos || []),
-                    ...(selectedProfileModal.videos || []),
-                    ...(selectedProfileModal.media || []),
+                    ...ensureArray(selectedProfileModal.profileImages),
+                    ...ensureArray(selectedProfileModal.photos),
+                    ...ensureArray(selectedProfileModal.videos),
+                    ...ensureArray(selectedProfileModal.media),
                   ];
                   const photos = rawPhotos.map(extractPhotoUri).filter(Boolean);
                   const uniquePhotos = Array.from(new Set(photos));
-                  const displayPhotos = uniquePhotos;
-                  const activePhoto = displayPhotos[activePhotoIndex % displayPhotos.length];
+                  const displayPhotos = uniquePhotos.length > 0 ? uniquePhotos : (selectedProfileModal.profileImage ? [extractPhotoUri(selectedProfileModal.profileImage)].filter(Boolean) : []);
+                  const validIndex = displayPhotos.length > 0 ? (activePhotoIndex % displayPhotos.length) : 0;
+                  const activePhoto = displayPhotos[validIndex] || selectedProfileModal.profileImage || '';
+                  const safeActiveUri = getSafeImageOrThumbnailUri(activePhoto);
+                  const isCurrentVideo = isVideoUrl(extractPhotoUri(activePhoto));
 
                   return (
                     <View style={styles.carouselImageWrapper}>
                       <TouchableOpacity
                         activeOpacity={0.9}
-                        onPress={() => openMediaPreview(selectedProfileModal, activePhotoIndex)}
+                        onPress={() => openMediaPreview(selectedProfileModal, validIndex)}
                       >
-                        <Image source={{ uri: getImageUrl(extractPhotoUri(activePhoto)) }} style={styles.carouselImage} />
+                        {safeActiveUri && safeActiveUri.trim().length > 0 ? (
+                          <View style={styles.carouselImageWrapper}>
+                            <Image source={{ uri: safeActiveUri }} style={styles.carouselImage} />
+                            {isCurrentVideo && (
+                              <View style={styles.videoBadgeOverlay}>
+                                <Ionicons name="play" size={28} color="#FFFFFF" />
+                              </View>
+                            )}
+                          </View>
+                        ) : (
+                          <View style={[styles.carouselImage, { backgroundColor: '#1C1C24', justifyContent: 'center', alignItems: 'center' }]}>
+                            <Ionicons name="person" size={60} color="#8E8E93" />
+                          </View>
+                        )}
                       </TouchableOpacity>
                       {displayPhotos.length > 1 && (
                         <View style={styles.photoIndicatorRow}>
@@ -1585,7 +1645,7 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
                               key={idx}
                               style={[
                                 styles.photoIndicatorDot,
-                                idx === activePhotoIndex && styles.photoIndicatorDotActive,
+                                idx === validIndex && styles.photoIndicatorDotActive,
                               ]}
                               onPress={() => setActivePhotoIndex(idx)}
                             />
@@ -1660,14 +1720,14 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
               ) : null}
 
               {/* Interests & Languages */}
-              {((selectedProfileModal.interests && selectedProfileModal.interests.length > 0) ||
-                (selectedProfileModal.languages && selectedProfileModal.languages.length > 0)) && (
+              {((ensureArray(selectedProfileModal.interests).length > 0) ||
+                (ensureArray(selectedProfileModal.languages).length > 0)) && (
                 <View style={styles.expandedSectionBox}>
                   <Text style={styles.expandedSectionHeader}>Interests & Languages</Text>
                   <View style={styles.expandedChipsWrap}>
-                    {(selectedProfileModal.interests || []).map((interest, idx) => {
+                    {ensureArray(selectedProfileModal.interests).map((interest, idx) => {
                       const interestStr = safeString(interest);
-                      const commonList = (selectedProfileModal.commonInterests || []).map((c) => safeString(c));
+                      const commonList = ensureArray(selectedProfileModal.commonInterests).map((c) => safeString(c));
                       const isCommon = commonList.includes(interestStr);
                       return (
                         <View
@@ -1691,7 +1751,7 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
                         </View>
                       );
                     })}
-                    {(selectedProfileModal.languages || []).map((lang, idx) => (
+                    {ensureArray(selectedProfileModal.languages).map((lang, idx) => (
                       <View key={`lang-${idx}`} style={styles.expandedChipSubtle}>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <Ionicons name="language-outline" size={12} color="rgba(255,255,255,0.7)" style={{ marginRight: 3 }} />
@@ -2441,6 +2501,12 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
+  },
+  videoBadgeOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
   },
   photoIndicatorRow: {
     position: 'absolute',

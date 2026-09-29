@@ -43,22 +43,65 @@ const resolveWorkingBaseUrl = async (forceRecheck = false) => {
 };
 
 let authTokenInMemory = null;
+let lastKnownUserEmail = null;
+let lastKnownUserId = null;
 
-// Eagerly pre-load auth token from AsyncStorage into memory
+export const setLastKnownUser = (userData) => {
+  if (!userData) return;
+  if (userData.email) {
+    lastKnownUserEmail = userData.email.toString().trim().toLowerCase();
+    AsyncStorage.setItem('persistent_user_email', lastKnownUserEmail).catch(() => {});
+  }
+  const uId = userData.id || userData._id;
+  if (uId) {
+    lastKnownUserId = uId.toString();
+    AsyncStorage.setItem('persistent_user_id', lastKnownUserId).catch(() => {});
+  }
+};
+
+export const getLastKnownUser = () => ({
+  email: lastKnownUserEmail,
+  userId: lastKnownUserId,
+});
+
+// Eagerly pre-load auth token and user from AsyncStorage into memory
 AsyncStorage.getItem('token').then((token) => {
   if (token && token !== 'null' && token !== 'undefined') {
     authTokenInMemory = token;
   }
 }).catch(() => {});
 
+AsyncStorage.getItem('persistent_user_email').then((em) => {
+  if (em) lastKnownUserEmail = em.trim().toLowerCase();
+}).catch(() => {});
+
+AsyncStorage.getItem('persistent_user_id').then((id) => {
+  if (id) lastKnownUserId = id.toString();
+}).catch(() => {});
+
+AsyncStorage.getItem('user').then((userStr) => {
+  if (userStr) {
+    try {
+      const parsed = JSON.parse(userStr);
+      setLastKnownUser(parsed);
+    } catch (e) {}
+  }
+}).catch(() => {});
+
 let onSessionTerminatedCallback = null;
 let isManualLogoutInProgress = false;
+let isDeactivationAlertShowing = false;
 
 export const setManualLogoutInProgress = (val) => {
   isManualLogoutInProgress = !!val;
 };
 
 export const getIsManualLogoutInProgress = () => isManualLogoutInProgress;
+
+export const getIsDeactivationAlertShowing = () => isDeactivationAlertShowing;
+export const setIsDeactivationAlertShowing = (val) => {
+  isDeactivationAlertShowing = !!val;
+};
 
 export const setOnSessionTerminatedHandler = (cb) => {
   onSessionTerminatedCallback = cb;
@@ -104,7 +147,7 @@ const request = async (url, options = {}, isRetry = false) => {
       return `${b}${p}`;
     };
 
-    const defaultTimeout = isFormData ? 180000 : 15000;
+    const defaultTimeout = isFormData ? 600000 : 20000;
     let response;
     try {
       const controller = new AbortController();
@@ -212,36 +255,118 @@ const request = async (url, options = {}, isRetry = false) => {
     }
 
     if (!response.ok) {
+      if (url.includes('/api/auth/logout')) {
+        authTokenInMemory = null;
+        AsyncStorage.removeItem('token').catch(() => {});
+        AsyncStorage.removeItem('user').catch(() => {});
+        return { success: true, message: 'Logged out successfully' };
+      }
+
+      let isAccountDeactivated =
+        data?.status === 'deactivated' ||
+        data?.code === 'ACCOUNT_DEACTIVATED' ||
+        data?.isInactive === true ||
+        data?.isDeactivated === true ||
+        data?.message?.toLowerCase().includes('deactivated');
+
+      let deactReason = data?.reason || data?.deactivationReason || '';
+
+      const isIgnoredUrl =
+        url.includes('/api/auth/login') ||
+        url.includes('/api/profile/account-status');
+
+      // If response is 401 or single device conflict, always verify if the account was actually deactivated before declaring session termination!
+      if (!isAccountDeactivated && !isIgnoredUrl) {
+        try {
+          let checkPath = '/api/profile/account-status';
+          let emailForCheck = lastKnownUserEmail;
+          let userForCheck = lastKnownUserId;
+          if (!emailForCheck) {
+            try { emailForCheck = await AsyncStorage.getItem('persistent_user_email'); } catch (e) {}
+          }
+          if (!userForCheck) {
+            try { userForCheck = await AsyncStorage.getItem('persistent_user_id'); } catch (e) {}
+          }
+          if (emailForCheck) {
+            checkPath += `?email=${encodeURIComponent(emailForCheck)}`;
+          } else if (userForCheck) {
+            checkPath += `?userId=${encodeURIComponent(userForCheck)}`;
+          }
+          const tokenForCheck = authTokenInMemory;
+          const statusCheckRes = await fetch(formatFullUrl(currentBase, checkPath), {
+            headers: {
+              'Content-Type': 'application/json',
+              ...(tokenForCheck ? { 'authorization': `Bearer ${tokenForCheck}` } : {}),
+            },
+          });
+          const statusCheckText = await statusCheckRes.text();
+          try {
+            const statusCheckJson = JSON.parse(statusCheckText);
+            if (
+              statusCheckJson?.status === 'deactivated' ||
+              statusCheckJson?.isDeactivated === true ||
+              statusCheckJson?.isActive === false
+            ) {
+              isAccountDeactivated = true;
+              deactReason = statusCheckJson.reason || deactReason;
+            }
+          } catch (parseE) {}
+        } catch (checkErr) {
+          console.log('[apiClient] Pre-check account-status error:', checkErr);
+        }
+      }
+
       if (
         response.status === 401 ||
+        response.status === 403 ||
+        isAccountDeactivated ||
         data?.code === 'SINGLE_DEVICE_CONFLICT' ||
+        data?.code === 'ACCOUNT_DEACTIVATED' ||
         data?.code === 'SESSION_TERMINATED' ||
         data?.message?.includes('authorization denied') ||
         data?.message?.includes('invalid or expired') ||
         data?.message?.includes('accessed on another device') ||
         data?.message?.includes('logged out from all devices')
       ) {
-        console.warn('[apiClient] Stale, expired, or terminated session detected (401). Clearing token cache...');
+        console.warn('[apiClient] Stale, expired, deactivated or terminated session detected. Clearing token cache...');
         authTokenInMemory = null;
         AsyncStorage.removeItem('token').catch(() => {});
         AsyncStorage.removeItem('user').catch(() => {});
 
         const isExplicitRemoteTermination =
+          isAccountDeactivated ||
           data?.code === 'SINGLE_DEVICE_CONFLICT' ||
+          data?.code === 'ACCOUNT_DEACTIVATED' ||
           data?.code === 'SESSION_TERMINATED' ||
           data?.message?.includes('accessed on another device') ||
           data?.message?.includes('logged out from all devices');
 
-        if (isExplicitRemoteTermination && !isManualLogoutInProgress && onSessionTerminatedCallback) {
-          onSessionTerminatedCallback(
-            data?.message || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.'
-          );
+        if (!isIgnoredUrl && isExplicitRemoteTermination && !isManualLogoutInProgress && !isDeactivationAlertShowing && onSessionTerminatedCallback) {
+          isDeactivationAlertShowing = true;
+          const finalReason = deactReason || data?.reason || data?.deactivationReason || '';
+          onSessionTerminatedCallback({
+            isDeactivated: isAccountDeactivated,
+            reason: finalReason,
+            code: isAccountDeactivated ? 'ACCOUNT_DEACTIVATED' : (data?.code || 'SESSION_TERMINATED'),
+            status: isAccountDeactivated ? 'deactivated' : (data?.status || 'terminated'),
+            message: isAccountDeactivated
+              ? `Your account has been deactivated by the admin.${finalReason ? `\n\nReason: ${finalReason}` : ''}`
+              : (data?.message || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.'),
+            email: lastKnownUserEmail,
+            userId: lastKnownUserId,
+          });
         }
       }
       throw { data, status: response.status };
     }
     return data;
   } catch (error) {
+    if (url.includes('/api/auth/logout')) {
+      authTokenInMemory = null;
+      AsyncStorage.removeItem('token').catch(() => {});
+      AsyncStorage.removeItem('user').catch(() => {});
+      return { success: true, message: 'Logged out successfully' };
+    }
     if (error?.name === 'AbortError' || error?.message?.includes('Aborted') || error?.message?.includes('abort')) {
       console.warn(`[apiClient] Request to ${url} was aborted or timed out.`);
       const timeoutError = new Error('Request timed out. Please check your network connection and try again.');
@@ -302,13 +427,19 @@ export const apiClient = {
     return res;
   },
   logoutBackend: async () => {
+    isManualLogoutInProgress = true;
     try {
       return await request('/api/auth/logout', {
         method: 'POST',
       });
+    } catch (e) {
+      console.log('[apiClient] logoutBackend handled gracefully:', e?.message || e);
+      return { success: true, message: 'Logged out successfully' };
     } finally {
+      authTokenInMemory = null;
       setAuthToken(null);
-      await AsyncStorage.removeItem('token');
+      await AsyncStorage.removeItem('token').catch(() => {});
+      await AsyncStorage.removeItem('user').catch(() => {});
     }
   },
   logoutAllDevices: async (credentials = {}) => {
@@ -398,6 +529,43 @@ export const apiClient = {
       method: 'POST',
       body: JSON.stringify({ warningId }),
     });
+  },
+  checkAccountStatus: async (params = {}) => {
+    try {
+      let email = params?.email || lastKnownUserEmail;
+      let userId = params?.userId || lastKnownUserId;
+      if (!email) {
+        try { email = await AsyncStorage.getItem('persistent_user_email'); } catch (e) {}
+      }
+      if (!userId) {
+        try { userId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) {}
+      }
+      let queryString = '';
+      if (email) {
+        queryString = `?email=${encodeURIComponent(email)}`;
+      } else if (userId) {
+        queryString = `?userId=${encodeURIComponent(userId)}`;
+      }
+      return await request(`/api/profile/account-status${queryString}`, {
+        method: 'GET',
+      });
+    } catch (err) {
+      if (
+        err?.data?.status === 'deactivated' ||
+        err?.data?.code === 'ACCOUNT_DEACTIVATED' ||
+        err?.data?.isInactive ||
+        err?.data?.isDeactivated
+      ) {
+        return {
+          success: true,
+          status: 'deactivated',
+          isActive: false,
+          isDeactivated: true,
+          reason: err?.data?.reason || err?.data?.message || 'Your account has been deactivated by the admin.',
+        };
+      }
+      return null;
+    }
   },
   updateLocation: async (locationData) => {
     return await request('/api/profile/location', {
@@ -913,15 +1081,6 @@ export const apiClient = {
     } catch (err) {
       console.error('❌ [SUBSCRIPTION API ERROR] GET /api/subscriptions/check-session-status ERROR:', err);
       throw err;
-    }
-  },
-
-  logoutBackend: async () => {
-    isManualLogoutInProgress = true;
-    try {
-      return await request('/api/auth/logout', { method: 'POST' });
-    } catch (e) {
-      console.log('[apiClient] logoutBackend request warning:', e);
     }
   },
   resetResolvedUrl: () => {

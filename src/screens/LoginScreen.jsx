@@ -15,7 +15,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch } from 'react-redux';
 import { setCredentials } from '../redux/slices/authSlice';
-import { apiClient, setAuthToken } from '../api/apiClient';
+import { apiClient, setAuthToken, setLastKnownUser } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { SimulatedGradientBackground } from '../components/SimulatedGradientBackground';
@@ -72,6 +72,7 @@ export const LoginScreen = ({ onNavigate }) => {
       }
 
       setAuthToken(token);
+      setLastKnownUser(user);
       dispatch(setCredentials({ user, token }));
 
       // Immediately trigger FCM Token registration after credentials set
@@ -136,11 +137,33 @@ export const LoginScreen = ({ onNavigate }) => {
       return;
     }
 
+    const trimmedEmail = email.trim().toLowerCase();
+    setLastKnownUser({ email: trimmedEmail });
+
     try {
       setLoading(true);
       setAlreadyLoggedInError(false);
+
+      // 1. Pre-check GET /api/profile/account-status for this user's email
+      try {
+        const statusRes = await apiClient.checkAccountStatus({ email: trimmedEmail });
+        if (statusRes && (statusRes.status === 'deactivated' || statusRes.isDeactivated || statusRes.isActive === false)) {
+          const reasonText = statusRes.reason || 'Account deactivated by admin moderation team';
+          Alert.alert(
+            'Account Deactivated 🚫',
+            `Your account has been deactivated by the admin.\n\nReason: ${reasonText}\n\.`,
+            [{ text: 'OK' }],
+            { cancelable: false }
+          );
+          setLoading(false);
+          return;
+        }
+      } catch (statusErr) {
+        console.log('[LoginScreen] Pre-check account-status notice:', statusErr);
+      }
+
       const res = await apiClient.login({
-        email: email.trim().toLowerCase(),
+        email: trimmedEmail,
         password,
       });
 
@@ -158,6 +181,7 @@ export const LoginScreen = ({ onNavigate }) => {
 
       if (rawUser && token) {
         setAuthToken(token);
+        setLastKnownUser(rawUser);
 
         const needsOtpVerification = res.requireMobileVerification === true;
 
@@ -180,9 +204,38 @@ export const LoginScreen = ({ onNavigate }) => {
         Alert.alert('Login Failed', res.message || 'Invalid email or password.');
       }
 
-
     } catch (err) {
       console.log('Login error:', err);
+
+      // 2. If login fails with 403 / ACCOUNT_DEACTIVATED, query latest reason from API and show popup
+      const isAccountDeactivated =
+        err?.status === 403 ||
+        err?.data?.status === 'deactivated' ||
+        err?.data?.code === 'ACCOUNT_DEACTIVATED' ||
+        err?.data?.isInactive === true ||
+        err?.data?.isDeactivated === true ||
+        err?.message?.toLowerCase().includes('deactivated') ||
+        err?.data?.message?.toLowerCase().includes('deactivated');
+
+      if (isAccountDeactivated) {
+        let reasonText = err?.data?.reason;
+        try {
+          const statusRes = await apiClient.checkAccountStatus({ email: trimmedEmail });
+          if (statusRes?.reason) {
+            reasonText = statusRes.reason;
+          }
+        } catch (e) { }
+
+        const finalReason = reasonText || err?.data?.reason || 'Account deactivated by admin moderation team';
+        Alert.alert(
+          'Account Deactivated 🚫',
+          `Your account has been deactivated by the admin.\n\nReason: ${finalReason}.`,
+          [{ text: 'OK' }],
+          { cancelable: false }
+        );
+        return;
+      }
+
       const isDeviceLimit =
         err?.status === 409 ||
         err?.data?.status === 'DEVICE_LIMIT_REACHED' ||

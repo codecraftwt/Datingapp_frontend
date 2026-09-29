@@ -44,7 +44,7 @@ import { PreviewModal } from '../components/PreviewModal';
 import { SubscriptionModal } from '../components/SubscriptionModal';
 import Video from 'react-native-video';
 import { useDispatch, useSelector } from 'react-redux';
-import { apiClient, getIsManualLogoutInProgress } from '../api/apiClient';
+import { apiClient, getIsManualLogoutInProgress, getIsDeactivationAlertShowing, setIsDeactivationAlertShowing } from '../api/apiClient';
 import { BASE_URL, getBaseUrl, getImageUrl as formatConfigUrl, isVideoUrl, getVideoThumbnailUrl } from '../api/config';
 import { selectCurrentUser } from '../redux/slices/authSlice';
 import {
@@ -68,6 +68,7 @@ import { createSound } from 'react-native-nitro-sound';
 import soundService from '../services/soundService';
 import { registerFcmToken } from '../services/notificationService';
 import { WarningModal } from '../components/WarningModal';
+import { DeactivatedModal } from '../components/DeactivatedModal';
 
 const MOCK_STICKERS = [
   { id: 'heart', char: '❤️', label: 'Heart' },
@@ -315,10 +316,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 dispatch(setAllMessages(cachedMsgs));
               }
             }
-          } catch (_) {}
+          } catch (_) { }
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [currentUser, userProfile]);
 
   const fetchMessages = async () => {
@@ -332,7 +333,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         dispatch(setAllMessages(rawMessages));
         const userId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
         if (userId && rawMessages.length > 0) {
-          AsyncStorage.setItem(`cached_chat_messages_${userId}`, JSON.stringify(rawMessages)).catch(() => {});
+          AsyncStorage.setItem(`cached_chat_messages_${userId}`, JSON.stringify(rawMessages)).catch(() => { });
         }
       }
       if (partners && Object.keys(partners).length > 0) {
@@ -488,7 +489,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     initialFetchDoneRef.current = true;
 
     // Sync active subscription status and dynamic permissions once on mount
-    syncSubscriptionStatus().catch(() => {});
+    syncSubscriptionStatus().catch(() => { });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -514,7 +515,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (netState && netState.isConnected === false) return;
         fetchUnreadLikesCount();
         fetchMessages();
-      } catch (e) {}
+      } catch (e) { }
     }, 4000);
     // Poll blocked/unblocked status every 30 seconds as a fallback for missed socket events
     const blockedSyncInterval = setInterval(async () => {
@@ -522,7 +523,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const netState = await NetInfo.fetch();
         if (netState && netState.isConnected === false) return;
         fetchBlockedUsers();
-      } catch (e) {}
+      } catch (e) { }
     }, 30000);
     return () => {
       clearInterval(badgeSyncInterval);
@@ -546,6 +547,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         ToastAndroid.show('Refreshing page...', ToastAndroid.SHORT);
       }
       await Promise.all([
+        checkAccountStatus(),
         fetchQuestionnaires(),
         fetchSwipedIds(),
         fetchMessages(),
@@ -553,6 +555,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         fetchUnreadLikesCount(),
         fetchMatchesList(),
         fetchBlockedUsers(),
+        checkActiveWarning(),
       ]);
       setTopToast({ visible: true, message: 'All page data refreshed successfully! ✨', type: 'success' });
       if (Platform.OS === 'android') {
@@ -642,14 +645,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
       setUnreadLikesCount(0);
       if (typeof apiClient.markLikesAsRead === 'function') {
-        apiClient.markLikesAsRead().catch(() => {});
+        apiClient.markLikesAsRead().catch(() => { });
       }
     } else if (activeTab === 'chat') {
       fetchMatchesList();
       fetchMessages();
       setUnreadChatPushCount(0);
       if (typeof apiClient.markMatchesAsRead === 'function') {
-        apiClient.markMatchesAsRead().catch(() => {});
+        apiClient.markMatchesAsRead().catch(() => { });
       }
     }
   }, [activeTab]);
@@ -794,6 +797,58 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
   const [subscriptionPermissions, setSubscriptionPermissions] = useState(null);
 
+  // Admin Deactivated Modal States (API Reference like Warning / Report)
+  const [deactivatedData, setDeactivatedData] = useState(null);
+  const [showDeactivatedModal, setShowDeactivatedModal] = useState(false);
+
+  const handleAccountDeactivatedAlert = (reason) => {
+    if (getIsDeactivationAlertShowing()) return;
+    setIsDeactivationAlertShowing(true);
+    const reasonText = reason || 'Account deactivated by admin moderation team';
+    Alert.alert(
+      'Account Deactivated 🚫',
+      `Your account has been deactivated by the admin.\n\nReason: ${reasonText}`,
+      [
+        {
+          text: 'OK',
+          onPress: () => {
+            if (typeof onLogout === 'function') {
+              onLogout(reasonText, true);
+            }
+            setTimeout(() => {
+              setIsDeactivationAlertShowing(false);
+            }, 1500);
+          },
+        },
+      ],
+      { cancelable: false }
+    );
+  };
+
+  const checkAccountStatus = async (fallbackReason = null) => {
+    try {
+      let email = currentUser?.email || userProfile?.email;
+      let userId = currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id;
+      if (!email) {
+        try { email = await AsyncStorage.getItem('persistent_user_email'); } catch (e) { }
+      }
+      if (!userId) {
+        try { userId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) { }
+      }
+      const res = await apiClient.checkAccountStatus({ email, userId });
+      if (res && (res.status === 'deactivated' || res.isDeactivated || res.isActive === false)) {
+        setDeactivatedData(res);
+        const reasonText = res.reason || fallbackReason || 'Account deactivated by admin moderation team';
+        handleAccountDeactivatedAlert(reasonText);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.log('[HomeScreen] checkAccountStatus notice:', err);
+      return false;
+    }
+  };
+
   const checkActiveWarning = async () => {
     try {
       const res = await apiClient.getActiveWarning();
@@ -824,6 +879,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleTabPress = async (tabName) => {
+    // API Check: Verify if account was deactivated whenever user switches or navigates tabs
+    checkAccountStatus();
+
+    if (showDeactivatedModal || (deactivatedData && deactivatedData.isDeactivated)) {
+      setShowDeactivatedModal(true);
+      return;
+    }
+
     if (activeWarningData && !activeWarningData.isAcknowledged) {
       setShowAdminWarningModal(true);
       return;
@@ -880,6 +943,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   useEffect(() => {
     if (currentUser && (currentUser.id || currentUser._id)) {
       checkActiveWarning();
+      checkAccountStatus();
     }
   }, [currentUser, activeTab]);
 
@@ -907,7 +971,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       if (audioRecorderPlayerRef.current) {
         try {
           audioRecorderPlayerRef.current.stopPlayer();
-        } catch (_) {}
+        } catch (_) { }
       }
       if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
       if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
@@ -924,6 +988,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const rawMsgs = Array.isArray(res) ? res : (res?.messages || []);
       const isBlockedByMe = !Array.isArray(res) && res?.isBlockedByMe !== undefined ? !!res.isBlockedByMe : undefined;
       const isBlockedByOther = !Array.isArray(res) && res?.isBlockedByOther !== undefined ? !!res.isBlockedByOther : undefined;
+
+      if (res?.partner) {
+        setOnlineUsersMap((prev) => ({
+          ...prev,
+          [partnerId]: !!res.partner.isOnline,
+        }));
+        if (res.partner.lastSeen) {
+          setLastSeenMap((prev) => ({
+            ...prev,
+            [partnerId]: res.partner.lastSeen,
+          }));
+        }
+      }
 
       const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
       const formattedMsgs = rawMsgs.map((m) => {
@@ -1003,14 +1080,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     fetchChatMessages();
     let pollInterval;
     const partnerId = (activeChat?.id || activeChat?._id || activeChat?.userId)?.toString();
+    const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
     if (partnerId) {
       if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+        socketRef.current.emit('check_online_status', { targetUserId: partnerId, viewerUserId: currentUserId });
       }
       pollInterval = setInterval(() => {
         fetchChatMessages();
         if (socketRef.current && socketRef.current.connected) {
-          socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+          socketRef.current.emit('check_online_status', { targetUserId: partnerId, viewerUserId: currentUserId });
         }
       }, 3000);
     }
@@ -1108,7 +1186,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         { urls: 'stun:stun1.l.google.com:19302' },
       ],
     };
-    
+
     const pc = new RTCPeerConnection(configuration);
     peerConnectionRef.current = pc;
 
@@ -1153,7 +1231,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const makeVoiceCall = async () => {
     if (!activeChat || !currentUser || !socketRef.current) return;
     const currentId = currentUser.id || currentUser._id;
-    
+
     setCallSession({
       id: activeChat.id,
       name: activeChat.name,
@@ -1254,7 +1332,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       callerId: callSession.id,
       receiverId: currentId,
     });
-    
+
     setCallState('idle');
     setCallSession(null);
   };
@@ -1271,7 +1349,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
-    
+
     if (callTimerRef.current) {
       clearInterval(callTimerRef.current);
       callTimerRef.current = null;
@@ -1726,32 +1804,73 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('user_status', ({ userId, status, lastSeen }) => {
         const isOnline = status === 'online';
-        console.log(`🔄 [FRONTEND STATUS CHANGE] User "${userId}" status changed to -> ${isOnline ? 'Online 🟢' : 'Offline 🔴'} (via socket event user_status, lastSeen: ${lastSeen || 'N/A'})`);
-        setOnlineUsersMap((prev) => ({
-          ...prev,
-          [userId.toString()]: isOnline,
-        }));
-        if (status === 'offline' && lastSeen) {
-          setLastSeenMap((prev) => ({
+        const uIdStr = userId?.toString();
+        console.log(`🔄 [FRONTEND STATUS CHANGE] User "${uIdStr}" status changed to -> ${isOnline ? 'Online 🟢' : 'Offline 🔴'} (via socket event user_status, lastSeen: ${lastSeen || 'N/A'})`);
+        if (uIdStr) {
+          setOnlineUsersMap((prev) => ({
             ...prev,
-            [userId.toString()]: lastSeen,
+            [uIdStr]: isOnline,
           }));
+          if (status === 'offline') {
+            const effectiveLastSeen = lastSeen || new Date().toISOString();
+            setLastSeenMap((prev) => ({
+              ...prev,
+              [uIdStr]: effectiveLastSeen,
+            }));
+            setActiveChat((prevActive) => {
+              if (!prevActive) return null;
+              const pIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+              if (pIdStr === uIdStr) {
+                return {
+                  ...prevActive,
+                  isOnline: false,
+                  lastSeen: effectiveLastSeen,
+                };
+              }
+              return prevActive;
+            });
+          } else if (isOnline) {
+            setActiveChat((prevActive) => {
+              if (!prevActive) return null;
+              const pIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+              if (pIdStr === uIdStr) {
+                return {
+                  ...prevActive,
+                  isOnline: true,
+                };
+              }
+              return prevActive;
+            });
+          }
         }
       });
 
       socketRef.current.on('online_status_response', ({ targetUserId, isOnline, lastSeen }) => {
-        console.log(`🔄 [FRONTEND STATUS CHANGE] Target User "${targetUserId}" status updated to -> ${isOnline ? 'Online 🟢' : 'Offline 🔴'} (via online_status_response, lastSeen: ${lastSeen || 'N/A'})`);
-        if (targetUserId) {
+        const tIdStr = targetUserId?.toString();
+        console.log(`🔄 [FRONTEND STATUS CHANGE] Target User "${tIdStr}" status updated to -> ${isOnline ? 'Online 🟢' : 'Offline 🔴'} (via online_status_response, lastSeen: ${lastSeen || 'N/A'})`);
+        if (tIdStr) {
           setOnlineUsersMap((prev) => ({
             ...prev,
-            [targetUserId.toString()]: !!isOnline,
+            [tIdStr]: !!isOnline,
           }));
           if (lastSeen) {
             setLastSeenMap((prev) => ({
               ...prev,
-              [targetUserId.toString()]: lastSeen,
+              [tIdStr]: lastSeen,
             }));
           }
+          setActiveChat((prevActive) => {
+            if (!prevActive) return null;
+            const pIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+            if (pIdStr === tIdStr) {
+              return {
+                ...prevActive,
+                isOnline: !!isOnline,
+                lastSeen: lastSeen || prevActive.lastSeen,
+              };
+            }
+            return prevActive;
+          });
         }
       });
 
@@ -1963,7 +2082,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
         try {
           fetchMessages();
-        } catch (e) {}
+        } catch (e) { }
 
         // If user is currently viewing active chat conversation with sender, emit mark_seen back immediately
         if (isCurrentlyViewingChat) {
@@ -2001,8 +2120,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('new_match', (data) => {
         console.log('Socket.IO received new_match event:', data);
-        try { if (typeof refetchMatchesList === 'function') refetchMatchesList(); } catch (e) {}
-        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) {}
+        try { if (typeof refetchMatchesList === 'function') refetchMatchesList(); } catch (e) { }
+        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) { }
         if (data?.matchedUser) {
           setMatchedUser(data.matchedUser);
           setShowMatchPopup(true);
@@ -2013,15 +2132,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               title: data.title,
               body: data.body,
               data: { type: 'match', userId: data.matchedUser?.id || data.matchedUser?._id },
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
       });
 
       socketRef.current.on('new_like', (data) => {
         console.log('Socket.IO received new_like event:', data);
-        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) {}
-        try { if (typeof fetchUnreadLikesCount === 'function') fetchUnreadLikesCount(); } catch (e) {}
+        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) { }
+        try { if (typeof fetchUnreadLikesCount === 'function') fetchUnreadLikesCount(); } catch (e) { }
         setUnreadLikesCount((prev) => prev + 1);
         if (data?.title && data?.body) {
           if (typeof displayLocalSystemNotification === 'function') {
@@ -2029,8 +2148,52 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               title: data.title,
               body: data.body,
               data: { type: 'like', userId: data.likerUser?.id || data.likerUser?._id },
-            }).catch(() => {});
+            }).catch(() => { });
           }
+        }
+      });
+
+      socketRef.current.on('account_deactivated', async (data) => {
+        console.warn('⚠️ [SOCKET] Account deactivated event received:', data);
+        let reason = data?.reason || data?.message;
+        if (!reason || reason === 'Account deactivated by admin moderation team') {
+          try {
+            let email = currentUser?.email || userProfile?.email;
+            let userId = currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id;
+            if (!email) {
+              try { email = await AsyncStorage.getItem('persistent_user_email'); } catch (e) { }
+            }
+            if (!userId) {
+              try { userId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) { }
+            }
+            const statusRes = await apiClient.checkAccountStatus({ email, userId });
+            if (statusRes?.reason) {
+              reason = statusRes.reason;
+            }
+          } catch (e) { }
+        }
+        handleAccountDeactivatedAlert(reason);
+      });
+
+      socketRef.current.on('account_status_changed', async (data) => {
+        console.warn('⚠️ [SOCKET] Account status changed event received:', data);
+        if (data && (data.isActive === false || data.status === 'deactivated' || data.isDeactivated === true)) {
+          let reason = data?.reason;
+          if (!reason) {
+            try {
+              let email = currentUser?.email || userProfile?.email;
+              let userId = currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id;
+              if (!email) {
+                try { email = await AsyncStorage.getItem('persistent_user_email'); } catch (e) { }
+              }
+              if (!userId) {
+                try { userId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) { }
+              }
+              const statusRes = await apiClient.checkAccountStatus({ email, userId });
+              if (statusRes?.reason) reason = statusRes.reason;
+            } catch (e) { }
+          }
+          handleAccountDeactivatedAlert(reason);
         }
       });
 
@@ -2217,12 +2380,42 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         });
       });
 
-      socketRef.current.on('session_terminated', (data) => {
+      socketRef.current.on('session_terminated', async (data) => {
         console.log('🔴 [FRONTEND SOCKET] session_terminated event received:', data);
         if (typeof getIsManualLogoutInProgress === 'function' && getIsManualLogoutInProgress()) {
           console.log('[FRONTEND SOCKET] Manual logout in progress, suppressing session_terminated popup.');
           return;
         }
+
+        // Query GET /api/profile/account-status first to verify if this is an admin deactivation
+        let email = currentUser?.email || userProfile?.email;
+        let userId = currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id;
+        if (!email) {
+          try { email = await AsyncStorage.getItem('persistent_user_email'); } catch (e) { }
+        }
+        if (!userId) {
+          try { userId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) { }
+        }
+        let statusRes = null;
+        try {
+          statusRes = await apiClient.checkAccountStatus({ email, userId });
+        } catch (e) { }
+
+        const isDeactMsg =
+          data?.status === 'deactivated' ||
+          data?.code === 'ACCOUNT_DEACTIVATED' ||
+          data?.isDeactivated === true ||
+          (typeof data?.message === 'string' && data.message.toLowerCase().includes('deactivated')) ||
+          Boolean(data?.reason);
+
+        if (statusRes?.status === 'deactivated' || statusRes?.isDeactivated || statusRes?.isActive === false || isDeactMsg) {
+          const reasonText = statusRes?.reason || data?.reason || 'Account deactivated by admin moderation team';
+          handleAccountDeactivatedAlert(reasonText);
+          return;
+        }
+
+        if (getIsDeactivationAlertShowing()) return;
+        setIsDeactivationAlertShowing(true);
         const msg = data?.message || 'Your session has been terminated because your account was accessed on another device or logged out from all devices.';
         Alert.alert(
           'Session Terminated ⚠️',
@@ -2232,8 +2425,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               text: 'OK',
               onPress: () => {
                 if (onLogout) {
-                  onLogout();
+                  onLogout(null, true);
                 }
+                setTimeout(() => {
+                  setIsDeactivationAlertShowing(false);
+                }, 1500);
               },
             },
           ],
@@ -2263,7 +2459,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('unmatched', ({ unmatchedBy }) => {
         console.log('Socket.IO unmatched event received:', unmatchedBy);
-        
+
         // Close the active chat if it's with the user who unmatched us
         setActiveChat((prevActive) => {
           if (prevActive && prevActive.id.toString() === unmatchedBy.toString()) {
@@ -2306,7 +2502,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('call_accepted', async ({ receiverId, answer }) => {
         console.log('Socket.IO call_accepted received from:', receiverId);
-        
+
         // Stop caller's outgoing ringback tone immediately when recipient answers
         soundService.stopAllRingtones();
 
@@ -2391,7 +2587,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
         console.log('[HomeScreen AppState] State changed to:', nextAppState);
         if (nextAppState === 'active') {
-          syncSubscriptionStatus().catch(() => {});
+          syncSubscriptionStatus().catch(() => { });
           if (socketRef.current) {
             if (!socketRef.current.connected) {
               socketRef.current.connect();
@@ -2419,7 +2615,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (socketRef.current) {
           try {
             socketRef.current.emit('going_offline', currentId);
-          } catch (e) {}
+          } catch (e) { }
           socketRef.current.disconnect();
         }
       };
@@ -2444,9 +2640,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         });
       }
 
+      if (partnerId && (activeChat.lastSeen || activeChat.user?.lastSeen)) {
+        setLastSeenMap((prev) => {
+          if (prev[partnerId]) return prev;
+          return {
+            ...prev,
+            [partnerId]: activeChat.lastSeen || activeChat.user?.lastSeen,
+          };
+        });
+      }
+
       const checkStatus = () => {
         if (socketRef.current && socketRef.current.connected) {
-          if (partnerId) socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+          if (partnerId) socketRef.current.emit('check_online_status', { targetUserId: partnerId, viewerUserId: currentId });
           if (currentId) socketRef.current.emit('ping_presence', currentId);
         }
       };
@@ -2461,7 +2667,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
 
       if (partnerId && typeof apiClient.getChatMessages === 'function') {
-        apiClient.getChatMessages(partnerId).catch(() => {});
+        apiClient.getChatMessages(partnerId).catch(() => { });
       }
 
       // Periodically refresh partner's online status every 3.5 seconds while chatting
@@ -2502,9 +2708,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           if (socketRef.current && socketRef.current.connected) {
             socketRef.current.emit('ping_presence', currentId);
           }
-          try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+          try { apiClient.updatePresence({ isOnline: true }).catch(() => { }); } catch (e) { }
         } else {
-          try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
+          try { apiClient.updatePresence({ isOnline: false }).catch(() => { }); } catch (e) { }
         }
       };
 
@@ -2532,13 +2738,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       if (finalOnlineStatus) {
         // Instantly refresh badge counts on app active
-        try { fetchUnreadLikesCount(); } catch (e) {}
-        try { fetchLikes(); } catch (e) {}
-        try { fetchMessages(); } catch (e) {}
-        try { fetchMatchesList(); } catch (e) {}
-        try { checkActiveWarning(); } catch (e) {}
+        try { fetchUnreadLikesCount(); } catch (e) { }
+        try { fetchLikes(); } catch (e) { }
+        try { fetchMessages(); } catch (e) { }
+        try { fetchMatchesList(); } catch (e) { }
+        try { checkActiveWarning(); } catch (e) { }
 
-        try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+        try { apiClient.updatePresence({ isOnline: true }).catch(() => { }); } catch (e) { }
 
         if (socketRef.current) {
           if (!socketRef.current.connected) {
@@ -2553,16 +2759,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (activeChat && socketRef.current) {
           const partnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
           if (partnerId && socketRef.current.connected) {
-            socketRef.current.emit('check_online_status', { targetUserId: partnerId });
+            socketRef.current.emit('check_online_status', { targetUserId: partnerId, viewerUserId: currentId });
           }
         }
       } else if ((nextAppState === 'background' || nextAppState === 'inactive') && currentId) {
         console.log('[AppState] App in background/inactive/locked screen. Updating presence API to offline...');
-        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => { }); } catch (e) { }
         if (socketRef.current) {
-          console.log('[AppState] Emitting going_offline and disconnecting socket for user:', currentId);
-          try { socketRef.current.emit('going_offline', currentId); } catch (e) {}
-          try { socketRef.current.disconnect(); } catch (e) {}
+          console.log('[AppState] Emitting going_offline for user:', currentId);
+          try { socketRef.current.emit('going_offline', currentId); } catch (e) { }
+          setTimeout(() => {
+            try {
+              if (socketRef.current && AppState.currentState !== 'active') {
+                socketRef.current.disconnect();
+              }
+            } catch (e) { }
+          }, 300);
         }
       }
     };
@@ -2597,14 +2809,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       if (!finalOnlineStatus) {
         console.log('[NetInfo] Conditions not met (network/Wi-Fi off or inactive). Calling offline presence API and disconnecting socket...');
-        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => { }); } catch (e) { }
         if (socketRef.current) {
-          try { if (currentId) socketRef.current.emit('going_offline', currentId); } catch (e) {}
-          try { socketRef.current.disconnect(); } catch (e) {}
+          try { if (currentId) socketRef.current.emit('going_offline', currentId); } catch (e) { }
+          try { socketRef.current.disconnect(); } catch (e) { }
         }
       } else {
         console.log('[NetInfo] All 3 conditions met (Network + App Active + Logged In). Calling online presence API & reconnecting socket.');
-        try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+        try { apiClient.updatePresence({ isOnline: true }).catch(() => { }); } catch (e) { }
         if (socketRef.current) {
           if (!socketRef.current.connected) {
             console.log('[NetInfo] Reconnecting socket for active user:', currentId);
@@ -2648,16 +2860,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           if (isLikeNotif) {
             console.log('[HomeScreen] Real-time Push Notification: Updating Likes tab badge count instantly!');
             setUnreadLikesCount((prev) => Math.max(1, prev + 1));
-            try { fetchLikes(); } catch (e) {}
-            try { fetchUnreadLikesCount(); } catch (e) {}
+            try { fetchLikes(); } catch (e) { }
+            try { fetchUnreadLikesCount(); } catch (e) { }
           }
 
           if (isChatNotif) {
             console.log('[HomeScreen] Real-time Push Notification: Updating Chat tab badge & active conversation messages instantly!');
             setUnreadChatPushCount((prev) => prev + 1);
-            try { fetchMessages(); } catch (e) {}
-            try { fetchMatchesList(); } catch (e) {}
-            
+            try { fetchMessages(); } catch (e) { }
+            try { fetchMatchesList(); } catch (e) { }
+
             const senderIdStr = (data?.senderId || data?.userId)?.toString();
             const bodyMessageText = remoteMessage?.notification?.body || data?.body || data?.text || 'Sent a message';
             const notificationMsgId = data?.messageId || ('notif-' + Date.now());
@@ -2703,8 +2915,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               });
             }
 
-            try { fetchMessages(); } catch (e) {}
-            try { fetchMatchesList(); } catch (e) {}
+            try { fetchMessages(); } catch (e) { }
+            try { fetchMatchesList(); } catch (e) { }
 
             const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
             const targetPartnerId = activePartnerId || senderIdStr;
@@ -3536,53 +3748,56 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         {
           text: 'Clear All',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              const selectedUserId = activeChat.id;
-              await apiClient.clearChat(selectedUserId);
-              console.log('Chat cleared successfully for user:', selectedUserId);
+          onPress: () => {
+            const selectedUserId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+            if (!selectedUserId) return;
 
-              // Update local state
-              setChats((prevChats) =>
-                prevChats.map((c) => {
-                  if (c.id === selectedUserId) {
-                    return {
-                      ...c,
-                      messages: [
-                        {
-                          id: 'match-init',
-                          sender: 'them',
-                          text: `It's a Match! Say hi to ${c.name}! 👋`,
-                        },
-                      ],
-                    };
-                  }
-                  return c;
-                })
-              );
+            // ⚡ 1. Instant local state update (0ms UI latency)
+            const placeholderMsg = [
+              {
+                id: 'match-init',
+                sender: 'them',
+                text: `It's a Match! Say hi to ${activeChat.name || 'them'}! 👋`,
+              },
+            ];
 
-              setActiveChat((prevActive) => {
-                if (prevActive && prevActive.id === selectedUserId) {
+            setActiveChat((prevActive) => {
+              if (prevActive && (prevActive.id || prevActive._id || prevActive.userId)?.toString() === selectedUserId) {
+                return {
+                  ...prevActive,
+                  messages: placeholderMsg,
+                };
+              }
+              return prevActive;
+            });
+
+            setChats((prevChats) =>
+              prevChats.map((c) => {
+                const cId = (c.id || c._id || c.userId)?.toString();
+                if (cId === selectedUserId) {
                   return {
-                    ...prevActive,
-                    messages: [
-                      {
-                        id: 'match-init',
-                        sender: 'them',
-                        text: `It's a Match! Say hi to ${prevActive.name}! 👋`,
-                      },
-                    ],
+                    ...c,
+                    messages: placeholderMsg,
+                    lastMessage: '',
                   };
                 }
-                return prevActive;
-              });
+                return c;
+              })
+            );
 
-              refetchMessages();
-              refetchChatMessages();
-            } catch (err) {
-              console.error('Failed to clear chat:', err);
-              Alert.alert('Error', 'Failed to clear chat history.');
-            }
+            dispatch(setMessages([]));
+
+            // ⚡ 2. Execute API in background
+            apiClient.clearChat(selectedUserId)
+              .then(() => {
+                console.log('Chat cleared successfully for user:', selectedUserId);
+                if (typeof refetchMessages === 'function') refetchMessages();
+              })
+              .catch((err) => {
+                console.error('Failed to clear chat on server:', err);
+                Alert.alert('Error', 'Failed to clear chat history on server.');
+                if (typeof refetchChatMessages === 'function') refetchChatMessages();
+              });
           },
         },
       ]
@@ -3591,8 +3806,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const handleUnmatch = (targetUserIdParam, targetUserNameParam) => {
     const currentCandidate = swipeIndex < MOCK_MATCHES.length ? MOCK_MATCHES[swipeIndex] : null;
-    const targetUserId = targetUserIdParam || (activeChat && activeChat.id) || (currentCandidate && currentCandidate.id);
-    const targetUserName = targetUserNameParam || (activeChat && activeChat.name) || (currentCandidate && (currentCandidate.name || currentCandidate.firstName)) || 'this user';
+    const targetUserId = (targetUserIdParam || (activeChat && (activeChat.id || activeChat._id || activeChat.userId)) || (currentCandidate && (currentCandidate.id || currentCandidate._id)))?.toString();
+    const targetUserName = targetUserNameParam || (activeChat && (activeChat.name || activeChat.firstName)) || (currentCandidate && (currentCandidate.name || currentCandidate.firstName)) || 'this user';
 
     if (!targetUserId) return;
 
@@ -3604,26 +3819,27 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         {
           text: 'Unmatch',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await apiClient.unmatchUser({ targetUserId });
-              console.log('Unmatched user successfully:', targetUserId);
-
-              if (activeChat && activeChat.id.toString() === targetUserId.toString()) {
-                setActiveChat(null);
-              }
-              setShowActiveCardDetails(false);
-              setChats((prevChats) => prevChats.filter((c) => c.id.toString() !== targetUserId.toString()));
-              setMatchedUserIds((prevIds) => prevIds.filter((id) => id.toString() !== targetUserId.toString()));
-
-              refetchMatchesList();
-              refetchMessages();
-
-              Alert.alert('Success', `You have unmatched ${targetUserName}.`);
-            } catch (err) {
-              console.error('Failed to unmatch user:', err);
-              Alert.alert('Error', 'Failed to unmatch user.');
+          onPress: () => {
+            // ⚡ 1. Instant local state update & close chat (0ms UI latency)
+            if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetUserId) {
+              setActiveChat(null);
             }
+            setShowActiveCardDetails(false);
+            setChats((prevChats) => prevChats.filter((c) => (c.id || c._id || c.userId)?.toString() !== targetUserId));
+            setMatchedUserIds((prevIds) => prevIds.filter((id) => id.toString() !== targetUserId));
+
+            // ⚡ 2. Execute API in background
+            apiClient.unmatchUser({ targetUserId })
+              .then(() => {
+                console.log('Unmatched user successfully:', targetUserId);
+                if (typeof refetchMatchesList === 'function') refetchMatchesList();
+                if (typeof refetchMessages === 'function') refetchMessages();
+              })
+              .catch((err) => {
+                console.error('Failed to unmatch user on server:', err);
+                Alert.alert('Error', 'Failed to unmatch user on server.');
+                if (typeof refetchMatchesList === 'function') refetchMatchesList();
+              });
           },
         },
       ]
@@ -3645,7 +3861,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           perms = freshSub.permissions;
           setSubscriptionPermissions(freshSub.permissions);
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     const isSuperLikeAllowed = Boolean(perms?.superLikes?.isAllowed);
@@ -3722,40 +3938,95 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         {
           text: 'Block',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              const res = await apiClient.blockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr });
-              console.log('Blocked user successfully:', res || targetIdStr);
+          onPress: () => {
+            // ⚡ 1. Instant local state update (0ms UI latency)
+            setBlockedUsersList((prev) => [
+              ...prev,
+              { id: targetIdStr, _id: targetIdStr, name: targetUserName }
+            ]);
 
-              setBlockedUsersList((prev) => [
-                ...prev,
-                { id: targetIdStr, _id: targetIdStr, name: targetUserName }
-              ]);
-
-              if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetIdStr) {
-                setActiveChat((prev) => prev ? { ...prev, isBlocked: true } : null);
-              }
-              setShowActiveCardDetails(false);
-              setChats((prevChats) => prevChats.map((c) => {
-                const cId = (c.id || c._id || c.userId)?.toString();
-                if (cId === targetIdStr) {
-                  return { ...c, isBlocked: true };
-                }
-                return c;
-              }));
-
-              if (typeof fetchBlockedUsers === 'function') fetchBlockedUsers();
-              if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
-              if (typeof fetchMatchesList === 'function') fetchMatchesList();
-              if (typeof fetchMessages === 'function') fetchMessages();
-              if (typeof fetchLikes === 'function') fetchLikes();
-
-              Alert.alert('User Blocked 🔒', `You have blocked ${targetUserName}.`);
-            } catch (err) {
-              console.error('Failed to block user:', err);
-              const errMsg = err?.data?.message || (err?.message && err.message !== 'Aborted' ? err.message : 'Request failed. Please try again.');
-              Alert.alert('Block Error', errMsg);
+            if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetIdStr) {
+              setActiveChat((prev) => prev ? { ...prev, isBlocked: true } : null);
             }
+            setShowActiveCardDetails(false);
+            setChats((prevChats) => prevChats.map((c) => {
+              const cId = (c.id || c._id || c.userId)?.toString();
+              if (cId === targetIdStr) {
+                return { ...c, isBlocked: true };
+              }
+              return c;
+            }));
+
+            // ⚡ 2. Execute API in background
+            apiClient.blockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr })
+              .then((res) => {
+                console.log('Blocked user successfully:', res || targetIdStr);
+                if (typeof fetchBlockedUsers === 'function') fetchBlockedUsers();
+                if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+                if (typeof fetchMatchesList === 'function') fetchMatchesList();
+                if (typeof fetchMessages === 'function') fetchMessages();
+                if (typeof fetchLikes === 'function') fetchLikes();
+              })
+              .catch((err) => {
+                console.error('Failed to block user on server:', err);
+                const errMsg = err?.data?.message || (err?.message && err.message !== 'Aborted' ? err.message : 'Request failed. Please try again.');
+                Alert.alert('Block Error', errMsg);
+              });
+          },
+        },
+      ]
+    );
+  };
+
+  const handleUnblockUser = (targetUserIdParam, targetUserNameParam) => {
+    const currentCandidate = (Array.isArray(MOCK_MATCHES) && swipeIndex >= 0 && swipeIndex < MOCK_MATCHES.length) ? MOCK_MATCHES[swipeIndex] : null;
+    const resolvedTargetId = targetUserIdParam || (activeChat && (activeChat.id || activeChat._id || activeChat.userId)) || (currentCandidate && (currentCandidate.id || currentCandidate._id || currentCandidate.userId));
+    const targetUserName = targetUserNameParam || (activeChat && (activeChat.name || activeChat.firstName)) || (currentCandidate && (currentCandidate.name || currentCandidate.firstName)) || 'this user';
+
+    if (!resolvedTargetId) {
+      console.warn('[handleUnblockUser] Could not resolve valid targetUserId.');
+      Alert.alert('Unblock User', 'Unable to find user details to unblock.');
+      return;
+    }
+
+    const targetIdStr = (typeof resolvedTargetId === 'object' ? (resolvedTargetId.id || resolvedTargetId._id) : resolvedTargetId).toString();
+
+    Alert.alert(
+      'Unblock User 🔓',
+      `Are you sure you want to unblock ${targetUserName}? They will be able to message you and view your profile again.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unblock',
+          onPress: () => {
+            // ⚡ 1. Instant local state update (0ms UI latency)
+            setBlockedUsersList((prev) => prev.filter((b) => (b.id || b._id || b.userId)?.toString() !== targetIdStr));
+
+            if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetIdStr) {
+              setActiveChat((prev) => prev ? { ...prev, isBlocked: false } : null);
+            }
+            setChats((prevChats) => prevChats.map((c) => {
+              const cId = (c.id || c._id || c.userId)?.toString();
+              if (cId === targetIdStr) {
+                return { ...c, isBlocked: false };
+              }
+              return c;
+            }));
+
+            // ⚡ 2. Execute API in background
+            apiClient.unblockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr })
+              .then(() => {
+                console.log('Unblocked user successfully:', targetIdStr);
+                if (typeof fetchBlockedUsers === 'function') fetchBlockedUsers();
+                if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+                if (typeof fetchMatchesList === 'function') fetchMatchesList();
+                if (typeof fetchMessages === 'function') fetchMessages();
+                if (typeof fetchLikes === 'function') fetchLikes();
+              })
+              .catch((err) => {
+                console.error('Failed to unblock user on server:', err);
+                Alert.alert('Error', 'Failed to unblock user on server.');
+              });
           },
         },
       ]
@@ -3852,48 +4123,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const handleChatMenu = () => {
     if (!activeChat) return;
-
-    Alert.alert(
-      'Chat Options',
-      'Choose an action:',
-      [
-        {
-          text: 'Clear Chat History',
-          onPress: handleClearChat,
-        },
-        {
-          text: 'Unmatch / Block User',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Unmatch or Block',
-              `Select an action for ${activeChat.name}:`,
-              [
-                {
-                  text: 'Unmatch User',
-                  style: 'destructive',
-                  onPress: () => handleUnmatch(activeChat.id, activeChat.name),
-                },
-                {
-                  text: 'Block User',
-                  style: 'destructive',
-                  onPress: () => handleBlockUser(activeChat.id, activeChat.name),
-                },
-                {
-                  text: 'Cancel',
-                  style: 'cancel',
-                },
-              ]
-            );
-          },
-        },
-        {
-          text: 'Report User ⚠️',
-          onPress: () => openReportForm(activeChat.id, activeChat.name),
-        },
-      ],
-      { cancelable: true }
-    );
+    setShowChatOptionsMenuModal(true);
   };
 
   const handleClearAllConversations = () => {
@@ -4082,7 +4312,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       // Stop any audio currently playing
       if (audioRecorderPlayerRef.current) {
-        try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) {}
+        try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) { }
       }
       setPlayingMessageId(null);
 
@@ -4208,7 +4438,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             audioRecorderPlayerRef.current.removePlayBackListener();
             audioRecorderPlayerRef.current.removePlaybackEndListener();
             await audioRecorderPlayerRef.current.stopPlayer();
-          } catch (_) {}
+          } catch (_) { }
         }
         if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
         setPlayingMessageId(null);
@@ -4223,7 +4453,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           audioRecorderPlayerRef.current.removePlayBackListener();
           audioRecorderPlayerRef.current.removePlaybackEndListener();
           await audioRecorderPlayerRef.current.stopPlayer();
-        } catch (_) {}
+        } catch (_) { }
       }
       if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
 
@@ -4235,7 +4465,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       audioRecorderPlayerRef.current = sound;
 
       if (typeof sound.setSubscriptionDuration === 'function') {
-        try { sound.setSubscriptionDuration(0.1); } catch (_) {}
+        try { sound.setSubscriptionDuration(0.1); } catch (_) { }
       }
 
       try {
@@ -4263,7 +4493,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           try {
             sound.removePlayBackListener();
             sound.removePlaybackEndListener();
-          } catch (_) {}
+          } catch (_) { }
           setPlayingMessageId(null);
           setPlaybackPosition(0);
           setPlaybackDuration(0);
@@ -4613,10 +4843,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               {isItemBlurred
                                 ? '✨ Upgrade to Gold to unblur'
                                 : item.isSuperLike
-                                ? '⭐ Super Liked you!'
-                                : item.distance
-                                ? `📍 ${item.distance}`
-                                : 'Liked your profile'}
+                                  ? '⭐ Super Liked you!'
+                                  : item.distance
+                                    ? `📍 ${item.distance}`
+                                    : 'Liked your profile'}
                             </Text>
                           </View>
 
@@ -4702,7 +4932,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         activeChat.name === 'Matched User' ||
                         (partnerId && blockedByOtherList && blockedByOtherList.map((id) => id.toString()).includes(partnerId))
                       );
-                      const isPartnerOnline = !isBlockedByOther && !!(partnerId && (onlineUsersMap[partnerId] || activeChat.isOnline || activeChat.user?.isOnline));
+                      const isPartnerOnline = !isBlockedByOther && !!(
+                        partnerId && (
+                          onlineUsersMap[partnerId] !== undefined
+                            ? Boolean(onlineUsersMap[partnerId])
+                            : Boolean(activeChat.isOnline || activeChat.user?.isOnline)
+                        )
+                      );
+                      const partnerLastSeen = (partnerId && lastSeenMap[partnerId]) || activeChat.lastSeen || activeChat.user?.lastSeen;
 
                       return (
                         <TouchableOpacity
@@ -4757,7 +4994,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 ? ''
                                 : isPartnerOnline
                                   ? 'Online'
-                                  : formatLastSeen((partnerId && lastSeenMap[partnerId]) || activeChat.lastSeen)}
+                                  : formatLastSeen(partnerLastSeen)}
                             </Text>
                           </View>
                         </TouchableOpacity>
@@ -4796,37 +5033,37 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         (msg.mediaUrl &&
                           typeof msg.mediaUrl === 'string' &&
                           (msg.mediaUrl.includes('voice_') ||
-                           msg.mediaUrl.endsWith('.m4a') ||
-                           (msg.fileName && typeof msg.fileName === 'string' && msg.fileName.includes('voice_'))));
+                            msg.mediaUrl.endsWith('.m4a') ||
+                            (msg.fileName && typeof msg.fileName === 'string' && msg.fileName.includes('voice_'))));
 
                       const isVideo =
                         !isVoice &&
                         (msg.messageType === 'video' ||
-                         (msg.mediaUrl &&
-                           typeof msg.mediaUrl === 'string' &&
-                           (msg.mediaUrl.includes('/video/upload/') ||
-                            msg.mediaUrl.endsWith('.mp4') ||
-                            msg.mediaUrl.endsWith('.mov') ||
-                            msg.mediaUrl.endsWith('.avi'))));
+                          (msg.mediaUrl &&
+                            typeof msg.mediaUrl === 'string' &&
+                            (msg.mediaUrl.includes('/video/upload/') ||
+                              msg.mediaUrl.endsWith('.mp4') ||
+                              msg.mediaUrl.endsWith('.mov') ||
+                              msg.mediaUrl.endsWith('.avi'))));
 
                       const isImage =
                         !isVoice &&
                         !isVideo &&
                         (msg.messageType === 'image' ||
-                         (msg.mediaUrl &&
-                           typeof msg.mediaUrl === 'string' &&
-                           (msg.mediaUrl.startsWith('data:image') ||
-                            msg.mediaUrl.endsWith('.jpg') ||
-                            msg.mediaUrl.endsWith('.jpeg') ||
-                            msg.mediaUrl.endsWith('.png') ||
-                            msg.mediaUrl.endsWith('.webp') ||
-                            msg.mediaUrl.endsWith('.gif') ||
-                            (msg.mediaUrl.includes('cloudinary') &&
-                             msg.mediaUrl.includes('/image/upload/')))) ||
-                         (msg.text &&
-                           typeof msg.text === 'string' &&
-                           (msg.text.startsWith('http') || msg.text.startsWith('data:image')) &&
-                           (msg.text.endsWith('.jpg') || msg.text.endsWith('.jpeg') || msg.text.endsWith('.png'))));
+                          (msg.mediaUrl &&
+                            typeof msg.mediaUrl === 'string' &&
+                            (msg.mediaUrl.startsWith('data:image') ||
+                              msg.mediaUrl.endsWith('.jpg') ||
+                              msg.mediaUrl.endsWith('.jpeg') ||
+                              msg.mediaUrl.endsWith('.png') ||
+                              msg.mediaUrl.endsWith('.webp') ||
+                              msg.mediaUrl.endsWith('.gif') ||
+                              (msg.mediaUrl.includes('cloudinary') &&
+                                msg.mediaUrl.includes('/image/upload/')))) ||
+                          (msg.text &&
+                            typeof msg.text === 'string' &&
+                            (msg.text.startsWith('http') || msg.text.startsWith('data:image')) &&
+                            (msg.text.endsWith('.jpg') || msg.text.endsWith('.jpeg') || msg.text.endsWith('.png'))));
 
                       const isDocument = !isVoice && msg.messageType === 'document';
                       const isCall = !isVoice && (msg.messageType === 'voice_call' || msg.messageType === 'call');
@@ -4951,18 +5188,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                   <View style={styles.waVoiceTrackWrapper}>
                                     {/* Track Line */}
                                     <View style={[styles.waVoiceTrackLine, isMe ? styles.waVoiceTrackLineMe : styles.waVoiceTrackLineThem]} />
-                                    
+
                                     {/* Slider Dot Thumb */}
                                     <View
                                       style={[
                                         styles.waVoiceDotThumb,
                                         isMe ? styles.waVoiceDotThumbMe : styles.waVoiceDotThumbThem,
                                         {
-                                          left: `${
-                                            playingMessageId === msg.id && playbackDuration > 0
-                                              ? Math.min(Math.max((playbackPosition / playbackDuration) * 92, 0), 92)
-                                              : 0
-                                          }%`,
+                                          left: `${playingMessageId === msg.id && playbackDuration > 0
+                                            ? Math.min(Math.max((playbackPosition / playbackDuration) * 92, 0), 92)
+                                            : 0
+                                            }%`,
                                         },
                                       ]}
                                     />
@@ -4985,7 +5221,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                     )}
                                     {isMe && msg.createdAt !== 'match-init' && (
                                       <Text style={[styles.statusTicks, msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent]}>
-                                        { msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                        {msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
                                       </Text>
                                     )}
                                   </View>
@@ -5072,7 +5308,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                       msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent
                                     ]}
                                   >
-                                    { msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                    {msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
                                   </Text>
                                 )}
                               </View>
@@ -5312,7 +5548,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     >
                       <View style={styles.attachDialogContent}>
                         <Text style={styles.attachDialogTitle}>Share Media / Document</Text>
-                        
+
                         <View style={styles.attachOptionsRow}>
                           <TouchableOpacity
                             style={styles.attachOptionBtn}
@@ -5553,7 +5789,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           {(() => {
             const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
-            
+
             const chatsUnread = chats.reduce((total, c) => {
               const count = (c.messages || []).filter(
                 (m) => (m.sender !== 'you' && (m.senderId || m.sender)?.toString() !== currentId) && m.id !== 'match-init' && m.status !== 'seen'
@@ -6025,22 +6261,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                   {((selectedLikesProfile.interests && selectedLikesProfile.interests.length > 0) ||
                     (selectedLikesProfile.languages && selectedLikesProfile.languages.length > 0)) && (
-                    <>
-                      <Text style={[styles.cardDetailSectionTitleLarge, { marginTop: 16 }]}>Interests & Languages</Text>
-                      <View style={styles.cardExpandedInterests}>
-                        {(selectedLikesProfile.interests || []).map((interest, idx) => (
-                          <View key={`int-${idx}`} style={styles.cardExpandedInterestBadge}>
-                            <Text style={styles.cardExpandedInterestText}>{interest}</Text>
-                          </View>
-                        ))}
-                        {(selectedLikesProfile.languages || []).map((lang, idx) => (
-                          <View key={`lang-${idx}`} style={[styles.cardExpandedInterestBadge, { backgroundColor: '#262630' }]}>
-                            <Text style={styles.cardExpandedInterestText}>🗣️ {lang}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    </>
-                  )}
+                      <>
+                        <Text style={[styles.cardDetailSectionTitleLarge, { marginTop: 16 }]}>Interests & Languages</Text>
+                        <View style={styles.cardExpandedInterests}>
+                          {(selectedLikesProfile.interests || []).map((interest, idx) => (
+                            <View key={`int-${idx}`} style={styles.cardExpandedInterestBadge}>
+                              <Text style={styles.cardExpandedInterestText}>{interest}</Text>
+                            </View>
+                          ))}
+                          {(selectedLikesProfile.languages || []).map((lang, idx) => (
+                            <View key={`lang-${idx}`} style={[styles.cardExpandedInterestBadge, { backgroundColor: '#262630' }]}>
+                              <Text style={styles.cardExpandedInterestText}>🗣️ {lang}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </>
+                    )}
 
                   {/* Safety & Moderation Actions */}
                   <View style={{ marginTop: 24, gap: 10, marginBottom: (selectedLikesProfile?.isFromChat || !!activeChat || activeTab === 'chat') ? 40 : 0 }}>
@@ -6438,22 +6674,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </Modal>
         )}
 
-        {/* Chat Options Bottom Sheet Modal */}
+        {/* Chat Options Center Modal */}
         {showChatOptionsMenuModal && activeChat && (
           <Modal
             visible={showChatOptionsMenuModal}
             transparent={true}
-            animationType="slide"
+            animationType="none"
             onRequestClose={() => setShowChatOptionsMenuModal(false)}
           >
             <TouchableOpacity
-              style={styles.attachDialogOverlay}
+              style={styles.chatMenuCenterOverlay}
               activeOpacity={1}
               onPress={() => setShowChatOptionsMenuModal(false)}
             >
-              <View style={styles.attachDialogContent}>
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.chatMenuCenterContent}
+                onPress={(e) => e.stopPropagation?.()}
+              >
                 <Text style={styles.attachDialogTitle}>Options for {activeChat.name}</Text>
-                
+
                 <TouchableOpacity
                   style={{
                     paddingVertical: 14,
@@ -6466,9 +6706,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   }}
                   onPress={() => {
                     setShowChatOptionsMenuModal(false);
-                    setTimeout(() => handleClearChat(), 200);
+                    requestAnimationFrame(() => handleClearChat());
                   }}
-                  activeOpacity={0.8}
+                  activeOpacity={0.6}
                 >
                   <Text style={{ fontSize: 18, marginRight: 12 }}>💬</Text>
                   <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>Clear Chat History</Text>
@@ -6486,33 +6726,49 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   }}
                   onPress={() => {
                     setShowChatOptionsMenuModal(false);
-                    setTimeout(() => handleUnmatch(activeChat.id, activeChat.name), 200);
+                    requestAnimationFrame(() => handleUnmatch(activeChat.id, activeChat.name));
                   }}
-                  activeOpacity={0.8}
+                  activeOpacity={0.6}
                 >
                   <Text style={{ fontSize: 18, marginRight: 12 }}>🚫</Text>
                   <Text style={{ color: '#FF453A', fontSize: 16, fontWeight: '600' }}>Unmatch User</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={{
-                    paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderRadius: 12,
-                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                    marginBottom: 10,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                  }}
-                  onPress={() => {
-                    setShowChatOptionsMenuModal(false);
-                    setTimeout(() => handleBlockUser(activeChat.id, activeChat.name), 200);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text style={{ fontSize: 18, marginRight: 12 }}>🔒</Text>
-                  <Text style={{ color: '#FF453A', fontSize: 16, fontWeight: '600' }}>Block User</Text>
-                </TouchableOpacity>
+                {(() => {
+                  const targetActiveId = (activeChat?.id || activeChat?._id || activeChat?.userId)?.toString();
+                  const isBlocked = Boolean(
+                    activeChat?.isBlocked ||
+                    (Array.isArray(blockedUsersList) && blockedUsersList.some((b) => (b.id || b._id || b.userId)?.toString() === targetActiveId))
+                  );
+
+                  return (
+                    <TouchableOpacity
+                      style={{
+                        paddingVertical: 14,
+                        paddingHorizontal: 16,
+                        borderRadius: 12,
+                        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                        marginBottom: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        setShowChatOptionsMenuModal(false);
+                        if (isBlocked) {
+                          requestAnimationFrame(() => handleUnblockUser(activeChat.id, activeChat.name));
+                        } else {
+                          requestAnimationFrame(() => handleBlockUser(activeChat.id, activeChat.name));
+                        }
+                      }}
+                      activeOpacity={0.6}
+                    >
+                      <Text style={{ fontSize: 18, marginRight: 12 }}>{isBlocked ? '🔓' : '🔒'}</Text>
+                      <Text style={{ color: isBlocked ? '#00E676' : '#FF453A', fontSize: 16, fontWeight: '600' }}>
+                        {isBlocked ? 'Unblock User' : 'Block User'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })()}
 
                 <TouchableOpacity
                   style={{
@@ -6526,9 +6782,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   }}
                   onPress={() => {
                     setShowChatOptionsMenuModal(false);
-                    setTimeout(() => handleReportUser(activeChat.id, activeChat.name), 200);
+                    openReportForm(activeChat.id, activeChat.name);
                   }}
-                  activeOpacity={0.8}
+                  activeOpacity={0.6}
                 >
                   <Text style={{ fontSize: 18, marginRight: 12 }}>⚠️</Text>
                   <Text style={{ color: '#FF3B30', fontSize: 16, fontWeight: '600' }}>Report User</Text>
@@ -6540,7 +6796,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 >
                   <Text style={styles.attachCancelText}>Cancel</Text>
                 </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
             </TouchableOpacity>
           </Modal>
         )}
@@ -6618,7 +6874,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   <Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>
                     Why are you reporting this user?
                   </Text>
-                  
+
                   {REPORT_REASONS.map((reason) => {
                     const isSelected = selectedReportReason === reason;
                     return (
@@ -6739,6 +6995,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </Modal>
         )}
 
+        {/* Admin Deactivation Modal Popup - Non-Dismissible Mandatory App Lock */}
+        <DeactivatedModal
+          visible={showDeactivatedModal}
+          deactivatedData={deactivatedData}
+          onLogout={(reason) => {
+            setShowDeactivatedModal(false);
+            if (typeof onLogout === 'function') {
+              onLogout(reason || deactivatedData?.reason);
+            }
+          }}
+        />
+
         {/* Admin Warning Modal Popup - Non-Dismissible Mandatory App Lock */}
         <WarningModal
           visible={showAdminWarningModal}
@@ -6754,7 +7022,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           visible={isSubscriptionModalOpen}
           onClose={() => {
             setIsSubscriptionModalOpen(false);
-            syncSubscriptionStatus().catch(() => {});
+            syncSubscriptionStatus().catch(() => { });
           }}
           currentTier={userProfile?.subscriptionTier || currentUser?.subscriptionTier || 'Free'}
           onSubscriptionUpdated={async (newTier, newPerms) => {
@@ -9276,6 +9544,27 @@ const styles = StyleSheet.create({
   stickerItemText: {
     fontSize: 34,
   },
+  chatMenuCenterOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  chatMenuCenterContent: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#1E1E28',
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
+    elevation: 10,
+  },
   attachDialogOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -9559,7 +9848,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  
+
   // --- Voice Call Styles ---
   callChatHeaderButton: {
     paddingVertical: 6,
