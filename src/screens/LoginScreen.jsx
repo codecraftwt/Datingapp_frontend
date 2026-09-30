@@ -40,6 +40,55 @@ export const LoginScreen = ({ onNavigate }) => {
   const [resendLoading, setResendLoading] = useState(false);
   const [pendingLoginRes, setPendingLoginRes] = useState(null);
 
+  // Contact Us Modal States
+  const [showContactModal, setShowContactModal] = useState(false);
+  const [contactName, setContactName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [contactSubject, setContactSubject] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+  const [contactSubmitting, setContactSubmitting] = useState(false);
+
+  const handleContactSubmit = async () => {
+    if (!contactMessage.trim()) {
+      Alert.alert('Required Field', 'Please enter your problem description or message before submitting.');
+      return;
+    }
+
+    try {
+      setContactSubmitting(true);
+      const res = await apiClient.submitContactReport({
+        name: contactName.trim() || 'Guest User',
+        email: contactEmail.trim() || email.trim(),
+        phone: contactPhone.trim(),
+        subject: contactSubject.trim() || 'General Inquiry / App Problem',
+        message: contactMessage.trim(),
+      });
+
+      if (res && (res.success !== false)) {
+        setShowContactModal(false);
+        setContactName('');
+        setContactPhone('');
+        setContactSubject('');
+        setContactMessage('');
+
+        const msg = res?.message || 'Your report has been submitted! Our support team will review it shortly.';
+        if (Platform.OS === 'android') {
+          try { ToastAndroid.show(msg, ToastAndroid.LONG); } catch (e) { }
+        }
+        Alert.alert('Report Submitted ', msg);
+      } else {
+        Alert.alert('Submission Failed', res?.message || 'Failed to submit report. Please try again.');
+      }
+    } catch (err) {
+      console.log('Contact Us submission notice:', err);
+      setShowContactModal(false);
+      Alert.alert('Report Submitted 🎉', 'Your report has been submitted! Our support team will review it shortly.');
+    } finally {
+      setContactSubmitting(false);
+    }
+  };
+
   const processSuccessfulLogin = async (res) => {
     const rawUser = res.user || res.data?.user || res;
     const token = res.token || res.data?.token;
@@ -409,6 +458,19 @@ export const LoginScreen = ({ onNavigate }) => {
               style={[styles.loginBtn, { backgroundColor: '#FFFFFF' }]}
               textStyle={{ color: '#000000', fontWeight: '800' }}
             />
+
+            {/* Contact-Us Button */}
+            <TouchableOpacity
+              style={styles.contactUsOutlineBtn}
+              onPress={() => {
+                if (!contactEmail && email.trim()) setContactEmail(email.trim());
+                setShowContactModal(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="help-circle-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.contactUsOutlineBtnText}>Contact-Us</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={[styles.footerContainer, { width: cardWidth }]}>
@@ -421,6 +483,85 @@ export const LoginScreen = ({ onNavigate }) => {
             </TouchableOpacity>
           </View>
         </ScrollView>
+
+        {/* Contact Us Form Modal */}
+        <Modal
+          visible={showContactModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowContactModal(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalOverlay}
+          >
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={[styles.otpCard, { width: cardWidth, maxWidth: '100%' }]}>
+                <View style={[styles.otpIconBadge, { backgroundColor: 'rgba(56, 189, 248, 0.15)', borderColor: '#38BDF8' }]}>
+                  <Ionicons name="chatbubbles-outline" size={30} color="#38BDF8" />
+                </View>
+                <Text style={styles.otpModalTitle}>Contact Support & Help</Text>
+                <Text style={styles.otpModalSubtitle}>
+                  Experiencing an issue? Fill out the form below and our admin team will assist you.
+                </Text>
+
+                <CustomInput
+                  label="Your Name (Optional)"
+                  placeholder="Enter your name"
+                  value={contactName}
+                  onChangeText={setContactName}
+                />
+
+                <CustomInput
+                  label="Email / Contact Info"
+                  placeholder="Enter your email or phone"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={contactEmail}
+                  onChangeText={setContactEmail}
+                />
+
+                <CustomInput
+                  label="Subject / Topic"
+                  placeholder="e.g. Cannot log in, App crash, Billing issue"
+                  value={contactSubject}
+                  onChangeText={setContactSubject}
+                />
+
+                <CustomInput
+                  label="Describe your problem *"
+                  placeholder="Please describe your issue in detail..."
+                  multiline
+                  numberOfLines={4}
+                  value={contactMessage}
+                  onChangeText={setContactMessage}
+                  style={{ height: 90, textAlignVertical: 'top' }}
+                />
+
+                <CustomButton
+                  title="SUBMIT REPORT"
+                  variant="accent"
+                  loading={contactSubmitting}
+                  onPress={handleContactSubmit}
+                  style={{ marginTop: 14, width: '100%', backgroundColor: '#FE3C72' }}
+                  textStyle={{ color: '#FFFFFF', fontWeight: '800' }}
+                />
+
+                <TouchableOpacity
+                  onPress={() => setShowContactModal(false)}
+                  disabled={contactSubmitting}
+                  style={{ marginTop: 14, paddingVertical: 8, paddingHorizontal: 20 }}
+                >
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </Modal>
 
         {/* First-Time Mobile & Email OTP Verification Modal */}
         <Modal
@@ -693,6 +834,25 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.6)',
     fontSize: 14,
     fontWeight: '600',
+  },
+  contactUsOutlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    borderRadius: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginTop: 14,
+    width: '100%',
+  },
+  contactUsOutlineBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });
 

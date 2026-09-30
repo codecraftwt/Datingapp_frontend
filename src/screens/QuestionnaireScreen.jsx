@@ -366,12 +366,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     const localUri = asset.uri;
     const isVideo = asset.type?.startsWith('video/') || isVideoUrl(asset.fileName || localUri);
 
-    // Even if user selected a video longer than 15s, system captures only first 15s
+    // Note: Cloudinary trims the video on cloud, but raw file size on phone gallery must still be small enough for network upload
     if (isVideo && asset.duration && asset.duration > 15) {
-      console.log(`[QuestionnaireScreen] Video is ${Math.round(asset.duration)}s. Automatically capturing first 15 seconds.`);
-      if (Platform.OS === 'android') {
-        ToastAndroid.show('Video trimmed to first 15 seconds ⏱️', ToastAndroid.SHORT);
-      }
+      console.log(`[QuestionnaireScreen] Video duration is ${Math.round(asset.duration)}s. Cloudinary will extract first 15 seconds.`);
     }
 
     console.log(`[QuestionnaireScreen] Selected asset for Slot #${slotIndex + 1}:`, {
@@ -392,15 +389,24 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       return;
     }
 
-    // 35MB max video limit (supports high-quality 1080p/4K 15s mobile video clips)
+    // Check the size of the 15-second clip portion rather than the entire raw video
     const sizeBytes = asset.fileSize || asset.size || 0;
     const maxVideoSizeBytes = 35 * 1024 * 1024; // 35 MB
-    if (isVideo && sizeBytes > maxVideoSizeBytes) {
-      Alert.alert(
-        'Video File Size Too Large 📹',
-        `The selected video is ${(sizeBytes / (1024 * 1024)).toFixed(1)}MB. To ensure smooth uploads, please select a video clip under 35MB (up to 15 seconds).`
-      );
-      return;
+    if (isVideo) {
+      const durationSec = asset.duration || 15;
+      const effective15sSizeBytes = (durationSec > 15 && sizeBytes > 0)
+        ? Math.round((sizeBytes / durationSec) * 15)
+        : sizeBytes;
+
+      console.log(`[QuestionnaireScreen] Video evaluation: Total duration=${Math.round(durationSec)}s, Total size=${(sizeBytes/(1024*1024)).toFixed(1)}MB, Estimated 15s size=${(effective15sSizeBytes/(1024*1024)).toFixed(1)}MB`);
+
+      if (effective15sSizeBytes > maxVideoSizeBytes) {
+        Alert.alert(
+          'Video File Size Too Large 📹',
+          `The 15-second clip of your selected video is estimated at ${(effective15sSizeBytes / (1024 * 1024)).toFixed(1)}MB (max 35MB allowed).\n\nPlease select a lower resolution video or trim a short clip under 15 seconds in your phone gallery.`
+        );
+        return;
+      }
     }
 
     // Optimistically set local URI for immediate UI preview so preview never disappears
@@ -431,11 +437,6 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         });
         cloudFormData.append('upload_preset', 'Dating_Profiles');
         cloudFormData.append('folder', 'dating_app_profiles');
-
-        if (isVideo) {
-          cloudFormData.append('eager', 'so_0,w_400,c_limit,q_auto,f_jpg|so_0,eo_15,q_auto,vc_h264');
-          cloudFormData.append('eager_async', 'true');
-        }
 
         const cloudEndpoint = `https://api.cloudinary.com/v1_1/dwwykeft2/${isVideo ? 'video' : 'image'}/upload`;
         console.log(`[QuestionnaireScreen] Direct Cloudinary upload to ${cloudEndpoint}...`);
@@ -800,10 +801,6 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
             });
             cloudFormData.append('upload_preset', 'Dating_Profiles');
             cloudFormData.append('folder', 'dating_app_profiles');
-            if (isVid) {
-              cloudFormData.append('eager', 'so_0,w_400,c_limit,q_auto,f_jpg|so_0,eo_15,q_auto,vc_h264');
-              cloudFormData.append('eager_async', 'true');
-            }
             const cloudEndpoint = `https://api.cloudinary.com/v1_1/dwwykeft2/${isVid ? 'video' : 'image'}/upload`;
             const cloudController = new AbortController();
             const cloudTimeout = setTimeout(() => cloudController.abort(), isVid ? 120000 : 60000);

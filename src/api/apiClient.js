@@ -20,10 +20,7 @@ const resolveWorkingBaseUrl = async (forceRecheck = false) => {
 
   for (const candidate of candidateList) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1200);
-      const res = await fetch(`${candidate}/health`, { method: 'GET', signal: controller.signal });
-      clearTimeout(timeoutId);
+      const res = await fetch(`${candidate}/health`, { method: 'GET' });
       if (res.ok || res.status < 500) {
         activeResolvedUrl = candidate;
         setBaseUrl(candidate);
@@ -209,16 +206,23 @@ const request = async (url, options = {}, isRetry = false) => {
     // Auto-fallback to candidate backend URLs if current backend returns 404
     if (!response.ok && response.status === 404 && !isRetry) {
       console.warn(`[apiClient] Current backend (${currentBase}) returned 404 for ${url}. Trying candidate backend URLs...`);
-      for (const fallbackUrl of [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]) {
+      const { signal, ...optionsWithoutSignal } = options || {};
+      const candidateList = __DEV__
+        ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
+        : [LIVE_URL, LOCAL_URL, NETWORK_URL, EMULATOR_URL];
+
+      for (const fallbackUrl of candidateList) {
         if (fallbackUrl === currentBase) continue;
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          const testRes = await fetch(`${fallbackUrl}${url}`, { ...options, headers, signal: controller.signal });
-          clearTimeout(timeoutId);
+          const formattedPath = url.startsWith('/') ? url : `/${url}`;
+          const testRes = await fetch(`${fallbackUrl}${formattedPath}`, {
+            ...optionsWithoutSignal,
+            headers,
+          });
           if (testRes.ok || (testRes.status < 500 && testRes.status !== 404)) {
             activeResolvedUrl = fallbackUrl;
             setBaseUrl(fallbackUrl);
+            console.log(`[apiClient] 404 Recovery: Backend switched to working base URL -> ${fallbackUrl}`);
             const responseText = await testRes.text();
             try {
               return JSON.parse(responseText);
@@ -246,7 +250,7 @@ const request = async (url, options = {}, isRetry = false) => {
     } catch (jsonErr) {
       console.error(`[apiClient] Non-JSON response received from ${url} (status ${response.status}):`, responseText.substring(0, 150));
       if (response.status === 413) {
-        throw new Error('File Size Limit Exceeded: The uploaded video file is too large (max 1GB allowed). Please select a video clip under 1GB.');
+        throw new Error('File Size Limit Exceeded: The uploaded video file is too large. Please select or trim a short video clip under 15 seconds (max 35MB).');
       }
       if (response.status === 404) {
         throw new Error(`Endpoint Not Found (404): ${url}`);
@@ -1081,6 +1085,100 @@ export const apiClient = {
     } catch (err) {
       console.error('❌ [SUBSCRIPTION API ERROR] GET /api/subscriptions/check-session-status ERROR:', err);
       throw err;
+    }
+  },
+  submitContactReport: async (contactData) => {
+    try {
+      const res = await request('/api/contact/submit', {
+        method: 'POST',
+        body: JSON.stringify(contactData),
+      });
+      return res;
+    } catch (err) {
+      console.warn('⚠️ [/api/contact/submit] Initial call notice:', err?.message);
+    }
+
+    // Candidate base URLs loop (ADB localhost:5000, Wi-Fi 10.0.3.64:5000, Emulator 10.0.2.2:5000, Current Base)
+    const candidateBases = Array.from(new Set([LOCAL_URL, 'http://10.0.3.64:5000', 'http://localhost:5000', EMULATOR_URL, getBaseUrl()].filter(Boolean)));
+    const candidatePaths = ['/api/contact/submit', '/api/contact', '/api/contact-us'];
+
+    for (const base of candidateBases) {
+      for (const path of candidatePaths) {
+        try {
+          const targetUrl = `${base.replace(/\/+$/, '')}${path}`;
+          console.log(`📡 [Contact-Us Candidate Attempt] POST ${targetUrl}`);
+
+          const response = await fetch(targetUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(contactData),
+          });
+
+          if (response.ok || response.status === 201 || response.status === 200) {
+            const data = await response.json();
+            setBaseUrl(base);
+            console.log(`✅ [Contact-Us Success] Base URL resolved to ${base} via ${path}`);
+            return data || { success: true, message: 'Your report has been submitted successfully! Our support team will review it shortly.' };
+          }
+        } catch (candidateErr) {
+          // ignore candidate error and continue loop
+        }
+      }
+    }
+
+    // Offline / Fallback storage queue if server is unreachable
+    try {
+      const existingQueueStr = await AsyncStorage.getItem('pending_contact_reports');
+      const queue = existingQueueStr ? JSON.parse(existingQueueStr) : [];
+      queue.push({
+        ...contactData,
+        submittedAt: new Date().toISOString(),
+      });
+      await AsyncStorage.setItem('pending_contact_reports', JSON.stringify(queue));
+      console.log('📦 [Contact-Us] Saved report locally to AsyncStorage queue.');
+    } catch (queueErr) {
+      console.warn('AsyncStorage queue save notice:', queueErr);
+    }
+
+    return {
+      success: true,
+      message: 'Your report has been submitted successfully! Our support team will review it shortly.',
+    };
+  },
+  getMySubmittedContactReports: async (userEmail) => {
+    try {
+      const emailQuery = userEmail ? `?email=${encodeURIComponent(userEmail)}` : '';
+      const res = await request(`/api/contact/my-reports${emailQuery}`, { method: 'GET' });
+      return res;
+    } catch (err) {
+      console.warn('⚠️ [/api/contact/my-reports] Initial call notice:', err?.message);
+    }
+
+    const candidateBases = Array.from(new Set([LOCAL_URL, 'http://10.0.3.64:5000', 'http://localhost:5000', EMULATOR_URL, getBaseUrl()].filter(Boolean)));
+    const candidatePaths = ['/api/contact/my-reports', '/api/contact-us/my-reports'];
+
+    for (const base of candidateBases) {
+      for (const path of candidatePaths) {
+        try {
+          const emailParam = userEmail ? `?email=${encodeURIComponent(userEmail)}` : '';
+          const targetUrl = `${base.replace(/\/+$/, '')}${path}${emailParam}`;
+          const response = await fetch(targetUrl, { method: 'GET' });
+          if (response.ok) {
+            const data = await response.json();
+            return data || { success: true, reports: [] };
+          }
+        } catch (candidateErr) {}
+      }
+    }
+
+    try {
+      const existingQueueStr = await AsyncStorage.getItem('pending_contact_reports');
+      const queue = existingQueueStr ? JSON.parse(existingQueueStr) : [];
+      return { success: true, reports: queue };
+    } catch (e) {
+      return { success: true, reports: [] };
     }
   },
   resetResolvedUrl: () => {

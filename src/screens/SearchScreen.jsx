@@ -194,26 +194,30 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
 
   const openMediaPreview = (profile, initialIdx = 0) => {
     if (!profile) return;
-    const rawPhotosList = [
-      profile.profileImage,
+    const hiddenSet = new Set(Array.isArray(profile.hiddenMedia) ? profile.hiddenMedia : []);
+
+    // Main Profile Photo from Profile Image API (Slot #1)
+    const mainPhoto = (profile.profileImage && typeof profile.profileImage === 'string' && profile.profileImage.trim().length > 0 && profile.profileImage !== 'null' && profile.profileImage !== 'undefined' && !hiddenSet.has(profile.profileImage))
+      ? profile.profileImage
+      : (profile.image || '');
+
+    // Gallery Slots 2 through 9 from Gallery Media API
+    const gallerySlots = [
       ...ensureArray(profile.profileImages),
       ...ensureArray(profile.photos),
       ...ensureArray(profile.videos),
       ...ensureArray(profile.media),
-    ];
+    ].filter((p) => p && typeof p === 'string' && p.trim().length > 0 && p !== 'null' && p !== 'undefined' && !hiddenSet.has(p));
 
-    const photosList = rawPhotosList.map(extractPhotoUri).filter(Boolean);
-
-    const uniquePhotos = Array.from(new Set(photosList));
-    const finalPhotos = uniquePhotos.length > 0 ? uniquePhotos : [];
-    const mainAvatar = extractPhotoUri(profile.profileImage) || finalPhotos[0] || '';
+    const combinedList = mainPhoto ? [mainPhoto, ...gallerySlots] : gallerySlots;
+    const photosList = Array.from(new Set(combinedList.map(extractPhotoUri).filter(Boolean)));
 
     setPreviewMediaModal({
       visible: true,
-      photos: finalPhotos,
-      initialIndex: initialIdx < finalPhotos.length ? initialIdx : 0,
+      photos: photosList,
+      initialIndex: initialIdx < photosList.length ? initialIdx : 0,
       userName: safeString(profile.firstName || profile.name, 'Suggested Match'),
-      userAvatar: mainAvatar,
+      userAvatar: extractPhotoUri(mainPhoto) || photosList[0] || '',
       mediaTimestamps: profile.mediaTimestamps || {},
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
@@ -844,20 +848,38 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
             if (!item) return null;
             const itemId = item._id || item.id;
             const status = actionStatusMap[itemId];
-            const rawAvatar = item.profileImage || (item.profileImages && item.profileImages[0]);
+            const rawAvatar = (item.profileImage && typeof item.profileImage === 'string' && item.profileImage.trim().length > 0 && item.profileImage !== 'null' && item.profileImage !== 'undefined')
+              ? item.profileImage
+              : (item.image || (item.profileImages && item.profileImages[0]) || '');
             const profileImgUri = getSafeImageOrThumbnailUri(rawAvatar);
             return (
               <TouchableOpacity
                 style={[styles.profileCard, status === 'passed' && { opacity: 0.6 }]}
                 activeOpacity={0.9}
-                onPress={() => {
+                onPress={async () => {
                   try {
                     if (!item) return;
                     setActivePhotoIndex(0);
-                    setSelectedProfileModal(item);
+                    let freshProfile = item;
+                    const targetId = (item.id || item._id || item.userId)?.toString();
+                    if (targetId) {
+                      try {
+                        const res = await apiClient.getUserById(targetId);
+                        if (res && res.user) {
+                          delete freshProfile.profileImages;
+                          delete freshProfile.photos;
+                          delete freshProfile.videos;
+                          delete freshProfile.media;
+                          freshProfile = { ...freshProfile, ...res.user };
+                        }
+                      } catch (e) {
+                        console.log('Error fetching fresh profile for search item:', e);
+                      }
+                    }
+                    setSelectedProfileModal(freshProfile);
                     if (typeof onSelectProfile === 'function') {
                       try {
-                        onSelectProfile(item);
+                        onSelectProfile(freshProfile);
                       } catch (e) {
                         console.log('Error in onSelectProfile callback:', e);
                       }
@@ -1602,16 +1624,18 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
               {/* Photo Carousel Header */}
               <View style={styles.photoCarouselContainer}>
                 {(() => {
-                  const rawPhotos = [
-                    selectedProfileModal.profileImage,
-                    ...ensureArray(selectedProfileModal.profileImages),
-                    ...ensureArray(selectedProfileModal.photos),
-                    ...ensureArray(selectedProfileModal.videos),
-                    ...ensureArray(selectedProfileModal.media),
-                  ];
-                  const photos = rawPhotos.map(extractPhotoUri).filter(Boolean);
-                  const uniquePhotos = Array.from(new Set(photos));
-                  const displayPhotos = uniquePhotos.length > 0 ? uniquePhotos : (selectedProfileModal.profileImage ? [extractPhotoUri(selectedProfileModal.profileImage)].filter(Boolean) : []);
+                  const photos = (() => {
+                    const hiddenSet = new Set(Array.isArray(selectedProfileModal.hiddenMedia) ? selectedProfileModal.hiddenMedia : []);
+                    const rawPhotos = [
+                      selectedProfileModal.profileImage,
+                      ...ensureArray(selectedProfileModal.profileImages),
+                      ...ensureArray(selectedProfileModal.photos),
+                      ...ensureArray(selectedProfileModal.videos),
+                      ...ensureArray(selectedProfileModal.media),
+                    ].filter((p) => p && typeof p === 'string' && p.trim().length > 0 && p !== 'null' && p !== 'undefined' && !hiddenSet.has(p));
+                    return Array.from(new Set(rawPhotos.map(extractPhotoUri).filter(Boolean)));
+                  })();
+                  const displayPhotos = photos.length > 0 ? photos : (selectedProfileModal.profileImage ? [extractPhotoUri(selectedProfileModal.profileImage)].filter(Boolean) : []);
                   const validIndex = displayPhotos.length > 0 ? (activePhotoIndex % displayPhotos.length) : 0;
                   const activePhoto = displayPhotos[validIndex] || selectedProfileModal.profileImage || '';
                   const safeActiveUri = getSafeImageOrThumbnailUri(activePhoto);

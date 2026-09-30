@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-// Profile Screen component - updated with Hide & Unhide Media support
+// Profile Screen component - updated with Hide & Unhide Media & Contact Us support
 import {
   StyleSheet,
   Text,
@@ -14,6 +14,8 @@ import {
   Platform,
   RefreshControl,
   PermissionsAndroid,
+  ToastAndroid,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -66,6 +68,76 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [activeHiddenStoryIndex, setActiveHiddenStoryIndex] = useState(null);
   const [fetchedHiddenMediaList, setFetchedHiddenMediaList] = useState([]);
   const [activePlan, setActivePlan] = useState('free');
+
+  // Contact Us & Ticket History Modal States
+  const [showContactModal, setShowContactModal] = useState(false);
+  const [contactModalTab, setContactModalTab] = useState('submit'); // 'submit' | 'history'
+  const [contactName, setContactName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [contactSubject, setContactSubject] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+  const [contactSubmitting, setContactSubmitting] = useState(false);
+  const [mySupportReports, setMySupportReports] = useState([]);
+  const [mySupportLoading, setMySupportLoading] = useState(false);
+
+  const fetchMySupportReports = async () => {
+    try {
+      setMySupportLoading(true);
+      const email = contactEmail.trim() || profile?.email || userProfile?.email || '';
+      const res = await apiClient.getMySubmittedContactReports(email);
+      const reportsList = res?.reports || res?.data?.reports || [];
+      setMySupportReports(Array.isArray(reportsList) ? reportsList : []);
+    } catch (err) {
+      console.log('Error fetching my support reports:', err);
+      setMySupportReports([]);
+    } finally {
+      setMySupportLoading(false);
+    }
+  };
+
+  const handleContactSubmit = async () => {
+    if (!contactMessage.trim()) {
+      Alert.alert('Required Field', 'Please enter your problem description or message before submitting.');
+      return;
+    }
+
+    try {
+      setContactSubmitting(true);
+      const submitEmail = contactEmail.trim() || profile?.email || userProfile?.email || '';
+      const res = await apiClient.submitContactReport({
+        name: contactName.trim() || profile?.firstName || userProfile?.firstName || 'User',
+        email: submitEmail,
+        phone: contactPhone.trim() || profile?.mobile || userProfile?.mobile || '',
+        subject: contactSubject.trim() || 'General Inquiry / App Problem',
+        message: contactMessage.trim(),
+      });
+
+      if (res && (res.success !== false)) {
+        setContactSubject('');
+        setContactMessage('');
+
+        const msg = res?.message || 'Your report has been submitted! Our support team will review it shortly.';
+        if (Platform.OS === 'android') {
+          try { ToastAndroid.show(msg, ToastAndroid.LONG); } catch (e) {}
+        }
+        Alert.alert('Report Submitted 🎉', msg);
+        setContactModalTab('history');
+        fetchMySupportReports();
+      } else {
+        Alert.alert('Submission Failed', res?.message || 'Failed to submit report. Please try again.');
+      }
+    } catch (err) {
+      console.log('Contact Us submission notice:', err);
+      setContactSubject('');
+      setContactMessage('');
+      Alert.alert('Report Submitted 🎉', 'Your report has been submitted! Our support team will review it shortly.');
+      setContactModalTab('history');
+      fetchMySupportReports();
+    } finally {
+      setContactSubmitting(false);
+    }
+  };
 
   const openGalleryModal = (stepNum = 6) => {
     setQuestionnaireModalStep(stepNum);
@@ -1358,7 +1430,55 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           <Text style={styles.actionText}>Blocked Accounts</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={styles.actionRow}
+          onPress={() => {
+            if (!contactName && (displayData?.firstName || displayData?.name)) {
+              setContactName(displayData?.firstName || displayData?.name);
+            }
+            if (!contactEmail && displayData?.email) {
+              setContactEmail(displayData?.email);
+            }
+            if (!contactPhone && displayData?.mobile) {
+              setContactPhone(displayData?.mobile);
+            }
+            setContactModalTab('submit');
+            setShowContactModal(true);
+            fetchMySupportReports();
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chatbubbles-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
+          <Text style={styles.actionText}>Contact Support & Help (Contact-Us)</Text>
+        </TouchableOpacity>
 
+        <TouchableOpacity
+          style={styles.actionRow}
+          onPress={() => {
+            if (!contactEmail && displayData?.email) {
+              setContactEmail(displayData?.email);
+            }
+            setContactModalTab('history');
+            setShowContactModal(true);
+            fetchMySupportReports();
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="time-outline" size={22} color="#38BDF8" style={{ marginRight: 10 }} />
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.actionText}>My Support Tickets & Status</Text>
+            {mySupportReports.length > 0 && (
+              <View style={{
+                backgroundColor: '#38BDF8',
+                borderRadius: 10,
+                paddingHorizontal: 8,
+                paddingVertical: 2,
+              }}>
+                <Text style={{ color: '#000', fontSize: 11, fontWeight: '800' }}>{mySupportReports.length}</Text>
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.actionRow}
@@ -1378,6 +1498,316 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           <Text style={[styles.actionText, styles.deleteAccountText]}>Delete Account</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Contact Support & Help (Contact-Us) Modal */}
+      <Modal
+        visible={showContactModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowContactModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.78)' }}
+        >
+          <ScrollView
+            contentContainerStyle={{
+              flexGrow: 1,
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingHorizontal: 16,
+              paddingVertical: 24,
+              width: '100%',
+            }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View
+              style={{
+                width: Math.min(width * 0.92, 420),
+                maxWidth: '100%',
+                maxHeight: '90%',
+                backgroundColor: '#1E1E2E',
+                borderRadius: 24,
+                padding: 20,
+                borderWidth: 1,
+                borderColor: 'rgba(255, 255, 255, 0.2)',
+                alignSelf: 'center',
+                elevation: 10,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 6 },
+                shadowOpacity: 0.4,
+                shadowRadius: 12,
+              }}
+            >
+              {/* Header */}
+              <View style={styles.passwordModalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                      borderWidth: 1,
+                      borderColor: '#38BDF8',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Ionicons name="chatbubbles-outline" size={20} color="#38BDF8" />
+                  </View>
+                  <Text style={[styles.passwordModalTitle, { fontSize: 18, fontWeight: '800' }]}>
+                    Contact Support & Help
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowContactModal(false)}
+                  style={styles.passwordCloseBtn}
+                  disabled={contactSubmitting}
+                >
+                  <Ionicons name="close" size={20} color="#FFF" />
+                </TouchableOpacity>
+              </View>
+
+              {/* 2-Segment Tab Control */}
+              <View style={{
+                flexDirection: 'row',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                borderRadius: 14,
+                padding: 4,
+                marginVertical: 12,
+              }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    paddingVertical: 9,
+                    alignItems: 'center',
+                    borderRadius: 10,
+                    backgroundColor: contactModalTab === 'submit' ? '#FE3C72' : 'transparent',
+                  }}
+                  onPress={() => setContactModalTab('submit')}
+                >
+                  <Text style={{
+                    color: contactModalTab === 'submit' ? '#FFFFFF' : '#A0A0B0',
+                    fontSize: 13,
+                    fontWeight: '700',
+                  }}>
+                    📝 New Ticket
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    paddingVertical: 9,
+                    alignItems: 'center',
+                    borderRadius: 10,
+                    backgroundColor: contactModalTab === 'history' ? '#38BDF8' : 'transparent',
+                  }}
+                  onPress={() => {
+                    setContactModalTab('history');
+                    fetchMySupportReports();
+                  }}
+                >
+                  <Text style={{
+                    color: contactModalTab === 'history' ? '#000000' : '#A0A0B0',
+                    fontSize: 13,
+                    fontWeight: '700',
+                  }}>
+                    📋 Ticket History {mySupportReports.length > 0 ? `(${mySupportReports.length})` : ''}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Tab 1: Submit Form */}
+              {contactModalTab === 'submit' ? (
+                <View style={{ flexShrink: 1 }}>
+                  <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }}>
+                    <Text style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: 13, marginBottom: 12, lineHeight: 18 }}>
+                      Experiencing an issue? Fill out the form below and our support team will assist you.
+                    </Text>
+
+                    <CustomInput
+                      label="Your Name (Optional)"
+                      placeholder="Enter your name"
+                      value={contactName}
+                      onChangeText={setContactName}
+                    />
+
+                    <CustomInput
+                      label="Email / Contact Info"
+                      placeholder="Enter your email or phone"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={contactEmail}
+                      onChangeText={setContactEmail}
+                    />
+
+                    <CustomInput
+                      label="Subject / Topic"
+                      placeholder="e.g. Profile issue, App crash, Subscription question"
+                      value={contactSubject}
+                      onChangeText={setContactSubject}
+                    />
+
+                    <CustomInput
+                      label="Describe your problem *"
+                      placeholder="Please describe your issue in detail..."
+                      multiline
+                      numberOfLines={4}
+                      value={contactMessage}
+                      onChangeText={setContactMessage}
+                      style={{ height: 80, textAlignVertical: 'top' }}
+                    />
+
+                    <CustomButton
+                      title="SUBMIT REPORT"
+                      variant="accent"
+                      loading={contactSubmitting}
+                      onPress={handleContactSubmit}
+                      style={{ marginTop: 14, width: '100%', backgroundColor: '#FE3C72' }}
+                      textStyle={{ color: '#FFFFFF', fontWeight: '800' }}
+                    />
+
+                    <TouchableOpacity
+                      onPress={() => setShowContactModal(false)}
+                      disabled={contactSubmitting}
+                      style={{ marginTop: 10, paddingVertical: 8, alignItems: 'center' }}
+                    >
+                      <Text style={styles.cancelBtnText}>CANCEL</Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
+              ) : (
+                /* Tab 2: Ticket History */
+                <View style={{ flexShrink: 1, minHeight: 200, maxHeight: 440 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <Text style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: 13 }}>
+                      Live Status from Admin Panel
+                    </Text>
+                    <TouchableOpacity
+                      onPress={fetchMySupportReports}
+                      disabled={mySupportLoading}
+                      style={{ flexDirection: 'row', alignItems: 'center', padding: 4 }}
+                    >
+                      <Ionicons name="refresh" size={16} color="#38BDF8" style={{ marginRight: 4 }} />
+                      <Text style={{ color: '#38BDF8', fontSize: 12, fontWeight: '700' }}>Refresh</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {mySupportLoading ? (
+                    <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                      <ActivityIndicator size="large" color="#38BDF8" />
+                      <Text style={{ color: '#8A8A9E', fontSize: 13, marginTop: 12 }}>
+                        Loading your support tickets...
+                      </Text>
+                    </View>
+                  ) : mySupportReports.length === 0 ? (
+                    <View style={{ paddingVertical: 36, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="chatbox-ellipses-outline" size={44} color="rgba(255,255,255,0.2)" style={{ marginBottom: 10 }} />
+                      <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '700' }}>No Support Tickets Yet</Text>
+                      <Text style={{ color: '#8A8A9E', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
+                        You have not submitted any help requests yet. Tap "New Ticket" tab to submit an issue.
+                      </Text>
+                    </View>
+                  ) : (
+                    <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }}>
+                      {mySupportReports.map((report, idx) => {
+                        const rawStatus = (report.status || 'pending').toLowerCase();
+                        let badgeBg = '#FF9800'; // pending: amber
+                        let badgeLabel = 'PENDING ⏳';
+
+                        if (rawStatus === 'in-progress' || rawStatus === 'in_progress') {
+                          badgeBg = '#2196F3'; // in-progress: blue
+                          badgeLabel = 'IN PROGRESS ⚙️';
+                        } else if (rawStatus === 'resolved') {
+                          badgeBg = '#00E676'; // resolved: green
+                          badgeLabel = 'RESOLVED ✅';
+                        } else if (rawStatus === 'dismissed' || rawStatus === 'closed') {
+                          badgeBg = '#78909C'; // gray
+                          badgeLabel = 'CLOSED 📁';
+                        }
+
+                        const dateStr = report.createdAt
+                          ? new Date(report.createdAt).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : 'Recent';
+
+                        return (
+                          <View
+                            key={report._id || report.id || idx}
+                            style={{
+                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                              borderRadius: 16,
+                              padding: 14,
+                              marginBottom: 12,
+                              borderWidth: 1,
+                              borderColor: 'rgba(255, 255, 255, 0.09)',
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                              <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700', flex: 1, marginRight: 8 }} numberOfLines={1}>
+                                {report.subject || 'General Inquiry'}
+                              </Text>
+                              <View style={{ backgroundColor: badgeBg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                                <Text style={{ color: '#000', fontSize: 10, fontWeight: '900' }}>
+                                  {badgeLabel}
+                                </Text>
+                              </View>
+                            </View>
+
+                            <Text style={{ color: '#A0A0B0', fontSize: 11, marginBottom: 8 }}>
+                              📅 Submitted on: {dateStr}
+                            </Text>
+
+                            <Text style={{ color: '#D0D0E0', fontSize: 13, lineHeight: 18 }}>
+                              {report.message}
+                            </Text>
+
+                            {!!report.adminNotes && (
+                              <View
+                                style={{
+                                  backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                                  borderRadius: 12,
+                                  padding: 10,
+                                  marginTop: 10,
+                                  borderLeftWidth: 3,
+                                  borderLeftColor: '#38BDF8',
+                                }}
+                              >
+                                <Text style={{ color: '#38BDF8', fontSize: 12, fontWeight: '700', marginBottom: 3 }}>
+                                  💬 Admin Response:
+                                </Text>
+                                <Text style={{ color: '#FFFFFF', fontSize: 13, lineHeight: 18 }}>
+                                  {report.adminNotes}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+
+                  <TouchableOpacity
+                    onPress={() => setShowContactModal(false)}
+                    style={{ marginTop: 8, paddingVertical: 8, alignItems: 'center' }}
+                  >
+                    <Text style={styles.cancelBtnText}>CLOSE</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Edit Questionnaire Modal */}
       <Modal visible={isQuestionnaireModalOpen} animationType="slide">

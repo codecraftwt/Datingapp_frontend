@@ -1775,12 +1775,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         socketRef.current.emit('join', currentId);
         socketRef.current.emit('ping_presence', currentId);
 
-        // Flush offline queue on reconnection
-        const currentQueue = offlineQueueRef.current;
+        // Flush offline queue on reconnection with server acknowledgement
+        const currentQueue = offlineQueueRef.current || [];
         if (currentQueue && currentQueue.length > 0) {
-          console.log(`Reconnected! Flushing ${currentQueue.length} offline messages...`);
+          console.log(`⚡ [OFFLINE QUEUE] Reconnected! Flushing ${currentQueue.length} pending messages...`);
           currentQueue.forEach((item) => {
-            socketRef.current.emit('send_message', item.payload);
+            if (item && item.payload) {
+              socketRef.current.emit('send_message', item.payload, (res) => {
+                if (res && res.status === 'ok' && res.data) {
+                  handleServerConfirmation(res.data);
+                }
+              });
+            }
           });
         }
       });
@@ -2817,6 +2823,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       } else {
         console.log('[NetInfo] All 3 conditions met (Network + App Active + Logged In). Calling online presence API & reconnecting socket.');
         try { apiClient.updatePresence({ isOnline: true }).catch(() => { }); } catch (e) { }
+        
+        // Attempt REST API flush for any pending offline queue items
+        const currentQueue = offlineQueueRef.current || [];
+        if (currentQueue && currentQueue.length > 0) {
+          console.log(`🌐 [NetInfo] Online detected! Flushing ${currentQueue.length} pending offline messages via REST API fallback...`);
+          currentQueue.forEach((item) => {
+            if (item && item.payload) {
+              apiClient.sendMessage(item.payload).then((res) => {
+                const sMsg = res?.data || res;
+                if (sMsg?._id || sMsg?.id) {
+                  handleServerConfirmation(sMsg);
+                }
+              }).catch((e) => { });
+            }
+          });
+        }
+
         if (socketRef.current) {
           if (!socketRef.current.connected) {
             console.log('[NetInfo] Reconnecting socket for active user:', currentId);
@@ -3493,7 +3516,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       fileName: payload.fileName,
       fileSize: payload.fileSize,
       stickerId: payload.stickerId,
-      status: 'sending',
+      status: 'pending',
       createdAt: new Date().toISOString(),
     };
 
@@ -4789,12 +4812,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             isItemBlurred && { borderColor: 'rgba(255, 215, 0, 0.4)', borderWidth: 1, backgroundColor: 'rgba(255, 215, 0, 0.04)' }
                           ]}
                           activeOpacity={0.85}
-                          onPress={() => {
+                          onPress={async () => {
                             if (isItemBlurred) {
                               setIsSubscriptionModalOpen(true);
                             } else {
-                              setSelectedLikesProfile({ ...item, isFromChat: false });
                               setLikesActivePhotoIndex(0);
+                              let freshProfile = { ...item, isFromChat: false };
+                              const targetId = (item.id || item._id || item.userId)?.toString();
+                              if (targetId) {
+                                try {
+                                  const res = await apiClient.getUserById(targetId);
+                                  if (res && res.user) {
+                                    freshProfile = { ...freshProfile, ...res.user };
+                                  }
+                                } catch (e) {
+                                  console.log('Error fetching fresh profile by ID:', e);
+                                }
+                              }
+                              setSelectedLikesProfile(freshProfile);
                             }
                           }}
                         >
@@ -4966,6 +5001,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               if (partnerId) {
                                 const res = await apiClient.getUserById(partnerId);
                                 if (res && res.user) {
+                                  delete enrichedProfile.profileImages;
+                                  delete enrichedProfile.photos;
+                                  delete enrichedProfile.videos;
+                                  delete enrichedProfile.media;
                                   enrichedProfile = { ...enrichedProfile, ...res.user };
                                 }
                               }
@@ -5220,8 +5259,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                       </Text>
                                     )}
                                     {isMe && msg.createdAt !== 'match-init' && (
-                                      <Text style={[styles.statusTicks, msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent]}>
-                                        {msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                      <Text style={[styles.statusTicks, (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? { color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' } : msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent]}>
+                                        {(msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
                                       </Text>
                                     )}
                                   </View>
@@ -5305,10 +5344,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                   <Text
                                     style={[
                                       styles.statusTicks,
-                                      msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent
+                                      (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? { color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' } : msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent
                                     ]}
                                   >
-                                    {msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                    {(msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
                                   </Text>
                                 )}
                               </View>
@@ -6102,15 +6141,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 {/* Photo Preview Carousel Header (Above) */}
                 <View style={{ position: 'relative', width: '100%', height: 420 }}>
                   {(() => {
-                    const photos = [
-                      selectedLikesProfile.profileImage || selectedLikesProfile.image,
-                      ...(selectedLikesProfile.profileImages || []),
-                      ...(selectedLikesProfile.photos || []),
-                      ...(selectedLikesProfile.videos || []),
-                      ...(selectedLikesProfile.media || []),
-                    ].filter(Boolean);
-                    const uniquePhotos = Array.from(new Set(photos));
-                    const displayPhotos = uniquePhotos;
+                    const photos = (() => {
+                      const hiddenSet = new Set(Array.isArray(selectedLikesProfile.hiddenMedia) ? selectedLikesProfile.hiddenMedia : []);
+                      const allList = [
+                        selectedLikesProfile.profileImage || selectedLikesProfile.image,
+                        ...(selectedLikesProfile.profileImages || []),
+                        ...(selectedLikesProfile.photos || []),
+                        ...(selectedLikesProfile.videos || []),
+                        ...(selectedLikesProfile.media || []),
+                      ].filter((item) => item && typeof item === 'string' && item.trim().length > 0 && item !== 'null' && item !== 'undefined' && !hiddenSet.has(item));
+                      return Array.from(new Set(allList));
+                    })();
+                    const displayPhotos = photos.length > 0 ? photos : [selectedLikesProfile.profileImage || selectedLikesProfile.image].filter(Boolean);
                     const activePhoto = displayPhotos[likesActivePhotoIndex % displayPhotos.length];
 
                     return (

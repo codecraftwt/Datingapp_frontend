@@ -271,7 +271,7 @@ export const PreviewModal = ({
     isAnimatingRef.current = true;
 
     const remainingMs = Math.max(0, (1 - fromValue) * durationMs);
-    if (remainingMs <= 10) {
+    if (remainingMs <= 10 && fromValue >= 0.98) {
       handleNextStory();
       return;
     }
@@ -307,7 +307,13 @@ export const PreviewModal = ({
   };
 
   useEffect(() => {
-    setCurrentIndex(initialIndex);
+    let safeIndex = typeof initialIndex === 'number' && !isNaN(initialIndex) ? initialIndex : 0;
+    if (photos.length > 0 && safeIndex >= photos.length) {
+      safeIndex = Math.max(0, photos.length - 1);
+    }
+    if (safeIndex < 0) safeIndex = 0;
+
+    setCurrentIndex(safeIndex);
     progressAnim.setValue(0);
     pausedValueRef.current = 0;
     setMediaError(false);
@@ -315,7 +321,7 @@ export const PreviewModal = ({
     setDetectedDuration(null);
     setMenuVisible(false);
     setHiddenIndices(new Set());
-  }, [initialIndex, visible]);
+  }, [initialIndex, visible, photos.length]);
 
   useEffect(() => {
     setMediaError(false);
@@ -475,7 +481,7 @@ export const PreviewModal = ({
                   repeat={false}
                   controls={false}
                   onLoad={(meta) => {
-                    if (meta && meta.duration && meta.duration > 0) {
+                    if (meta && meta.duration && meta.duration > 0 && !isNaN(meta.duration)) {
                       const durMs = Math.min(15000, meta.duration * 1000);
                       setDetectedDuration(durMs);
                       if (!isPaused) {
@@ -489,12 +495,14 @@ export const PreviewModal = ({
                       handleNextStory();
                       return;
                     }
-                    if (!isPaused && data && data.seekableDuration && data.seekableDuration > 0) {
+                    if (!isPaused && data && data.seekableDuration > 0 && !isNaN(data.seekableDuration) && data.currentTime > 0 && !isNaN(data.currentTime)) {
                       const totalDurMs = Math.min(15000, data.seekableDuration * 1000);
                       const maxSec = Math.min(15, data.seekableDuration);
-                      const ratio = maxSec > 0 ? Math.min(1, data.currentTime / maxSec) : 0;
-                      if (!isAnimatingRef.current || Math.abs(currentAnimValueRef.current - ratio) > 0.2) {
-                        startAnimation(ratio, totalDurMs);
+                      if (maxSec > 0) {
+                        const ratio = Math.min(0.99, Math.max(0, data.currentTime / maxSec));
+                        if (ratio < 0.90 && (!isAnimatingRef.current || Math.abs(currentAnimValueRef.current - ratio) > 0.25)) {
+                          startAnimation(ratio, totalDurMs);
+                        }
                       }
                     }
                   }}

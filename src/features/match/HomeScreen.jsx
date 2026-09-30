@@ -3445,11 +3445,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           <PreviewModal
             visible={candidateStoryIndex !== null}
             photos={
-              (MOCK_MATCHES[swipeIndex]?.profileImages && MOCK_MATCHES[swipeIndex].profileImages.length > 0)
-                ? MOCK_MATCHES[swipeIndex].profileImages
-                : (MOCK_MATCHES[swipeIndex]?.photos && MOCK_MATCHES[swipeIndex].photos.length > 0)
-                ? MOCK_MATCHES[swipeIndex].photos
-                : [MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image].filter(Boolean)
+              [
+                MOCK_MATCHES[swipeIndex]?.profileImage || MOCK_MATCHES[swipeIndex]?.image,
+                ...(MOCK_MATCHES[swipeIndex]?.profileImages || []),
+                ...(MOCK_MATCHES[swipeIndex]?.photos || []),
+                ...(MOCK_MATCHES[swipeIndex]?.videos || []),
+                ...(MOCK_MATCHES[swipeIndex]?.media || []),
+              ].filter((item, idx, arr) => {
+                if (!item || typeof item !== 'string' || item === 'null' || item === 'undefined' || item.trim() === '') return false;
+                const hiddenSet = new Set(Array.isArray(MOCK_MATCHES[swipeIndex]?.hiddenMedia) ? MOCK_MATCHES[swipeIndex].hiddenMedia : []);
+                if (hiddenSet.has(item)) return false;
+                return arr.indexOf(item) === idx;
+              })
             }
             initialIndex={candidateStoryIndex || 0}
             userName={MOCK_MATCHES[swipeIndex]?.name || MOCK_MATCHES[swipeIndex]?.firstName || 'Suggested Match'}
