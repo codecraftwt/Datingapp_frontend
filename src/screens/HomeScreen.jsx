@@ -4,6 +4,7 @@ import {
   Text,
   View,
   TouchableOpacity,
+  Pressable,
   Image,
   ScrollView,
   TextInput,
@@ -23,6 +24,7 @@ import {
   AppState,
   ActivityIndicator,
   ToastAndroid,
+  Clipboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
@@ -62,6 +64,9 @@ import {
   editMessageInState,
   deleteMessageInState,
   setTyping,
+  updateMessageReactions,
+  updateMessagePinned,
+  updateMessageStarred,
 } from '../redux/slices/chatSlice';
 import io from 'socket.io-client';
 import { createSound } from 'react-native-nitro-sound';
@@ -92,6 +97,81 @@ const getImageUrl = (url) => {
     return '';
   }
   return formatConfigUrl(url);
+};
+
+const parseReplyTo = (replyObj) => {
+  if (!replyObj) return null;
+  let parsed = replyObj;
+  if (typeof replyObj === 'string') {
+    try {
+      parsed = JSON.parse(replyObj);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const text = (parsed.text || parsed.content || parsed.body || '').trim();
+  const mediaUrl = parsed.mediaUrl || parsed.url || parsed.audioUrl || parsed.fileUrl || null;
+  const msgId = parsed.messageId || parsed.id || parsed._id || null;
+  const sName = parsed.senderName || parsed.name || null;
+  const sId = parsed.senderId || parsed.sender || null;
+  const mType = parsed.messageType || parsed.type || (mediaUrl ? 'image' : 'text');
+  const fileName = parsed.fileName || null;
+  const stickerId = parsed.stickerId || null;
+
+  if (!text && !mediaUrl && !fileName && !stickerId) {
+    return null;
+  }
+
+  return {
+    ...parsed,
+    messageId: msgId ? msgId.toString() : null,
+    senderId: sId ? sId.toString() : null,
+    text: text || (fileName ? fileName : (stickerId ? 'Sticker' : 'Media')),
+    senderName: sName || 'Contact',
+    messageType: mType,
+    mediaUrl: mediaUrl,
+    fileName: fileName,
+  };
+};
+
+const isValidReplyTo = (replyObj) => !!parseReplyTo(replyObj);
+
+const getQuotedSnippetText = (replyObj) => {
+  if (!replyObj) return 'Media';
+  const type = replyObj.messageType || (replyObj.mediaUrl ? 'image' : 'text');
+  
+  if (type === 'image') {
+    if (replyObj.text && typeof replyObj.text === 'string' && replyObj.text.trim().length > 0 && !replyObj.text.startsWith('http') && !replyObj.text.startsWith('data:image')) {
+      return `📷 ${replyObj.text.trim()}`;
+    }
+    return '📷 Photo';
+  }
+  if (type === 'video') return '🎬 Video';
+  if (type === 'voice' || type === 'audio') return '🎤 Voice message';
+  if (type === 'document') return `📄 ${replyObj.fileName || 'Document'}`;
+  if (type === 'sticker') return '😊 Sticker';
+  if (type === 'call' || type === 'voice_call') return '📞 Voice call';
+  if (type === 'location') return '📍 Location';
+  
+  if (replyObj.text && typeof replyObj.text === 'string' && replyObj.text.trim().length > 0) {
+    return replyObj.text;
+  }
+  return 'Media';
+};
+
+const getQuotedSenderName = (replyObj, isMeMsg, activeChatName = '', currentUserIdStr = '') => {
+  if (!replyObj) return 'Message';
+  const sIdStr = replyObj.senderId?.toString();
+  const cIdStr = currentUserIdStr?.toString();
+  if (sIdStr && cIdStr && sIdStr === cIdStr) {
+    return 'You';
+  }
+  if (replyObj.senderName === 'You' || replyObj.senderName === 'you') {
+    return isMeMsg ? 'You' : (activeChatName || 'Contact');
+  }
+  return replyObj.senderName || (isMeMsg ? activeChatName : 'Contact');
 };
 
 const getCandidateAge = (user) => {
@@ -302,7 +382,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
 
-  // Load cached messages from AsyncStorage on startup so history appears instantly
+  // Load cached messages and persistent unsent/failed messages from AsyncStorage on startup so history & pending messages appear instantly
   useEffect(() => {
     const userId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
     if (!userId) return;
@@ -320,7 +400,54 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       })
       .catch(() => { });
+
+    AsyncStorage.getItem(`persistent_unsent_messages_${userId}`)
+      .then((str) => {
+        if (str) {
+          try {
+            const unsentItems = JSON.parse(str);
+            if (Array.isArray(unsentItems) && unsentItems.length > 0) {
+              setChats((prevChats) => {
+                let updated = [...(prevChats || [])];
+                unsentItems.forEach(({ partnerId, msg }) => {
+                  const idx = updated.findIndex((c) => (c.id || c._id || c.userId)?.toString() === partnerId.toString());
+                  if (idx > -1) {
+                    const msgs = updated[idx].messages || [];
+                    if (!msgs.some((m) => m.id === msg.id || (msg.tempId && m.tempId === msg.tempId))) {
+                      updated[idx] = {
+                        ...updated[idx],
+                        messages: [...msgs, msg].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)),
+                      };
+                    }
+                  }
+                });
+                return updated;
+              });
+            }
+          } catch (_) {}
+        }
+      })
+      .catch(() => {});
   }, [currentUser, userProfile]);
+
+  // Persist any pending/sending/failed messages to AsyncStorage so they survive app restarts & navigation
+  useEffect(() => {
+    const userId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+    if (!userId || !Array.isArray(chats)) return;
+    try {
+      const unsentItems = [];
+      chats.forEach((c) => {
+        const cPartnerId = (c.id || c._id || c.userId)?.toString();
+        if (!cPartnerId) return;
+        (c.messages || []).forEach((m) => {
+          if (m && (m.status === 'pending' || m.status === 'sending' || m.status === 'failed' || m.status === 'queued')) {
+            unsentItems.push({ partnerId: cPartnerId, msg: m });
+          }
+        });
+      });
+      AsyncStorage.setItem(`persistent_unsent_messages_${userId}`, JSON.stringify(unsentItems)).catch(() => {});
+    } catch (_) {}
+  }, [chats, currentUser, userProfile]);
 
   const fetchMessages = async () => {
     try {
@@ -371,6 +498,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [viewMediaModal, setViewMediaModal] = useState({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const chatScrollViewRef = useRef(null);
+  const messageYPositionsRef = useRef({});
   const isSendingMessageRef = useRef(false);
 
   useEffect(() => {
@@ -397,6 +525,20 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       hideSub.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isSearchInChatActive || !chatSearchQuery.trim() || !activeChat?.messages) return;
+    const qTrim = chatSearchQuery.trim().toLowerCase();
+    const matches = activeChat.messages.filter((m) => !m.isDeletedForEveryone && m.text && m.text.toLowerCase().includes(qTrim));
+    if (matches.length > 0 && matches[chatSearchMatchIndex]) {
+      const targetMsg = matches[chatSearchMatchIndex];
+      const targetKey = (targetMsg.id || targetMsg._id || targetMsg.createdAt)?.toString();
+      const targetY = messageYPositionsRef.current[targetKey];
+      if (targetY !== undefined && chatScrollViewRef.current) {
+        chatScrollViewRef.current.scrollTo({ y: Math.max(0, targetY - 70), animated: true });
+      }
+    }
+  }, [isSearchInChatActive, chatSearchQuery, chatSearchMatchIndex, activeChat]);
 
   const fetchUnreadLikesCount = async () => {
     try {
@@ -607,8 +749,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         return true;
       }
 
-      // 2. Close active chat conversation view if open
+      // 2. Close active chat conversation view if open (persisting messages into chats state)
       if (activeChat) {
+        const activeId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+        if (activeId && Array.isArray(activeChat.messages) && activeChat.messages.length > 0) {
+          setChats((prevChats) =>
+            (prevChats || []).map((c) => {
+              const cId = (c.id || c._id || c.userId)?.toString();
+              if (cId === activeId) {
+                return {
+                  ...c,
+                  messages: activeChat.messages,
+                };
+              }
+              return c;
+            })
+          );
+        }
+        setIsSearchInChatActive(false);
+        setChatSearchQuery('');
+        setChatSearchMatchIndex(0);
         setActiveChat(null);
         return true;
       }
@@ -771,6 +931,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     activeChatRef.current = activeChat;
   }, [activeChat]);
   const [typedMessage, setTypedMessage] = useState('');
+  const [isSearchInChatActive, setIsSearchInChatActive] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [chatSearchMatchIndex, setChatSearchMatchIndex] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
@@ -783,7 +946,84 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   }, [offlineQueue]);
 
   const [editingMessage, setEditingMessage] = useState(null);
+  const [replyingToMessage, setReplyingToMessage] = useState(null);
+  const [pinnedMessage, setPinnedMessage] = useState(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+  const [reactingToMessageForEmoji, setReactingToMessageForEmoji] = useState(null);
+  const chatInputRef = useRef(null);
+  const recentPinActionRef = useRef({}); // { [messageIdOrTempId]: { isPinned: boolean, timestamp: number } }
+  const recentStarActionRef = useRef({}); // { [messageIdOrTempId]: { isStarred: boolean, timestamp: number } }
+
+  const resolveIsPinned = (msgId, tempId, incomingVal, existingVal) => {
+    const mIdStr = msgId?.toString();
+    const mTempStr = tempId?.toString();
+    const recentAction =
+      (mIdStr && recentPinActionRef.current[mIdStr]) ||
+      (mTempStr && recentPinActionRef.current[mTempStr]);
+
+    // Local user's recent pin/unpin action within 8 seconds is authoritative against background polling lag
+    if (recentAction && Date.now() - recentAction.timestamp < 8000) {
+      return recentAction.isPinned;
+    }
+
+    if (incomingVal !== undefined && incomingVal !== null) {
+      return Boolean(incomingVal);
+    }
+    return Boolean(existingVal);
+  };
+
+  const resolveIsStarred = (msgId, tempId, incomingVal, existingVal) => {
+    const mIdStr = msgId?.toString();
+    const mTempStr = tempId?.toString();
+    const recentAction =
+      (mIdStr && recentStarActionRef.current[mIdStr]) ||
+      (mTempStr && recentStarActionRef.current[mTempStr]);
+
+    // Local user's recent star/unstar action within 8 seconds is authoritative against background polling lag
+    if (recentAction && Date.now() - recentAction.timestamp < 8000) {
+      return recentAction.isStarred;
+    }
+
+    if (incomingVal !== undefined && incomingVal !== null) {
+      return Boolean(incomingVal);
+    }
+    return Boolean(existingVal);
+  };
+
+  const enforceSinglePin = (msgs) => {
+    if (!Array.isArray(msgs)) return [];
+    let foundPinned = false;
+    return [...msgs]
+      .reverse()
+      .map((m) => {
+        if (m && m.isPinned) {
+          if (!foundPinned) {
+            foundPinned = true;
+            return m;
+          }
+          return { ...m, isPinned: false };
+        }
+        return m;
+      })
+      .reverse();
+  };
+
+  // Automatically sync pinnedMessage whenever activeChat or its messages update
+  useEffect(() => {
+    if (activeChat && Array.isArray(activeChat.messages)) {
+      const pinned = [...activeChat.messages].reverse().find((m) => m && m.isPinned && !m.isDeletedForEveryone);
+      setPinnedMessage(pinned || null);
+    } else {
+      setPinnedMessage(null);
+    }
+  }, [activeChat?.id, activeChat?.messages]);
+  const [selectedMessageForAction, setSelectedMessageForAction] = useState(null);
+  const [showMessageActionModal, setShowMessageActionModal] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false);
+  const [showForwardModal, setShowForwardModal] = useState(false);
   const [showChatOptionsMenuModal, setShowChatOptionsMenuModal] = useState(false);
+  const [showStarredModal, setShowStarredModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportTargetUser, setReportTargetUser] = useState(null);
   const [selectedReportReason, setSelectedReportReason] = useState('Inappropriate Photos or Content');
@@ -1004,18 +1244,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
       const formattedMsgs = rawMsgs.map((m) => {
-        const sId = (m.senderId || m.sender)?.toString();
+        const sId = (m.senderId || m.sender)?._id?.toString() || (m.senderId || m.sender)?.toString();
         return {
           id: (m._id || m.id).toString(),
           sender: sId === currentUserId ? 'you' : 'them',
           senderId: sId,
-          receiverId: (m.receiverId || m.receiver)?.toString(),
+          receiverId: (m.receiverId || m.receiver)?._id?.toString() || (m.receiverId || m.receiver)?.toString(),
           text: m.text,
           messageType: m.messageType || 'text',
           mediaUrl: m.mediaUrl,
           fileName: m.fileName,
           fileSize: m.fileSize,
           stickerId: m.stickerId,
+          replyTo: parseReplyTo(m.replyTo),
+          reactions: Array.isArray(m.reactions) ? m.reactions : [],
+          isEdited: Boolean(m.isEdited),
+          isPinned: m.isPinned || false,
+          isStarred: m.isStarred || false,
+          isDeletedForEveryone: m.isDeletedForEveryone || false,
           status: m.status || 'sent',
           createdAt: m.createdAt,
         };
@@ -1026,17 +1272,52 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const pId = (prev.id || prev._id || prev.userId)?.toString();
         if (pId === partnerId) {
           const prevMsgs = prev.messages || [];
-          const finalMsgs = (formattedMsgs.length === 0 && prevMsgs.length > 0) ? prevMsgs : formattedMsgs;
-          const msgsEqual = prevMsgs.length === finalMsgs.length &&
-            prevMsgs.every((m, i) => m.id === finalMsgs[i]?.id && m.text === finalMsgs[i]?.text);
           const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : prev.isBlocked;
           const isBlockedByOtherVal = isBlockedByOther !== undefined ? isBlockedByOther : prev.isBlockedByOther;
-          if (msgsEqual && isBlockedByMeVal === prev.isBlocked && isBlockedByOtherVal === prev.isBlockedByOther) {
-            return prev;
-          }
+
+          // Preserve any local optimistic messages (pending, sending, failed, or with tempId not yet in formattedMsgs)
+          const pendingMsgs = prevMsgs.filter(
+            (m) =>
+              m.status === 'pending' ||
+              m.status === 'sending' ||
+              m.status === 'failed' ||
+              (m.tempId && !formattedMsgs.some((f) => f.tempId === m.tempId || f.id === m.tempId || f.id === m.id))
+          );
+
+          // Merge server messages with local messages to preserve replyTo and reactions
+          const mergedMsgs = formattedMsgs.map((fMsg) => {
+            const existing = prevMsgs.find(
+              (p) =>
+                String(p.id) === String(fMsg.id) ||
+                (p.tempId && (String(p.tempId) === String(fMsg.id) || String(p.tempId) === String(fMsg.tempId))) ||
+                (fMsg.tempId && String(p.id) === String(fMsg.tempId))
+            );
+            if (!existing) return fMsg;
+            return {
+              ...existing,
+              ...fMsg,
+              replyTo: parseReplyTo(fMsg.replyTo) || parseReplyTo(existing.replyTo) || null,
+              reactions: (Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+                ? fMsg.reactions
+                : (Array.isArray(existing.reactions) ? existing.reactions : []),
+              isPinned: resolveIsPinned(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isPinned, existing.isPinned),
+              isStarred: resolveIsStarred(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isStarred, existing.isStarred),
+              isEdited: Boolean(fMsg.isEdited || existing.isEdited),
+            };
+          });
+
+          pendingMsgs.forEach((pMsg) => {
+            if (!mergedMsgs.some((m) => m.id === pMsg.id || (pMsg.tempId && (m.tempId === pMsg.tempId || m.id === pMsg.tempId)))) {
+              mergedMsgs.push(pMsg);
+            }
+          });
+
+          // Keep chronologically sorted
+          mergedMsgs.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
           return {
             ...prev,
-            messages: finalMsgs,
+            messages: enforceSinglePin(mergedMsgs),
             isBlocked: isBlockedByMeVal,
             isBlockedByOther: isBlockedByOtherVal,
           };
@@ -1049,9 +1330,37 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           const cId = (c.id || c._id || c.userId)?.toString();
           if (cId === partnerId) {
             const prevMsgs = c.messages || [];
-            const finalMsgs = (formattedMsgs.length === 0 && prevMsgs.length > 0) ? prevMsgs : formattedMsgs;
+            const mergedChatMsgs = formattedMsgs.map((fMsg) => {
+              const existing = prevMsgs.find(
+                (p) =>
+                  String(p.id) === String(fMsg.id) ||
+                  (p.tempId && (String(p.tempId) === String(fMsg.id) || String(p.tempId) === String(fMsg.tempId))) ||
+                  (fMsg.tempId && String(p.id) === String(fMsg.tempId))
+              );
+              if (!existing) return fMsg;
+              return {
+                ...existing,
+                ...fMsg,
+                replyTo: parseReplyTo(fMsg.replyTo) || parseReplyTo(existing.replyTo) || null,
+                reactions: (Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+                  ? fMsg.reactions
+                  : (Array.isArray(existing.reactions) ? existing.reactions : []),
+                isPinned: resolveIsPinned(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isPinned, existing.isPinned),
+                isStarred: resolveIsStarred(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isStarred, existing.isStarred),
+                isEdited: Boolean(fMsg.isEdited || existing.isEdited),
+              };
+            });
+            const finalMsgs = enforceSinglePin((mergedChatMsgs.length === 0 && prevMsgs.length > 0) ? prevMsgs : mergedChatMsgs);
             const msgsEqual = prevMsgs.length === finalMsgs.length &&
-              prevMsgs.every((m, i) => m.id === finalMsgs[i]?.id && m.text === finalMsgs[i]?.text);
+              prevMsgs.every((m, i) =>
+                m.id === finalMsgs[i]?.id &&
+                m.text === finalMsgs[i]?.text &&
+                m.isEdited === finalMsgs[i]?.isEdited &&
+                Boolean(m.isPinned) === Boolean(finalMsgs[i]?.isPinned) &&
+                Boolean(m.isStarred) === Boolean(finalMsgs[i]?.isStarred) &&
+                JSON.stringify(m.replyTo || null) === JSON.stringify(finalMsgs[i]?.replyTo || null) &&
+                JSON.stringify(m.reactions || []) === JSON.stringify(finalMsgs[i]?.reactions || [])
+              );
             const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : c.isBlocked;
             const isBlockedByOtherVal = isBlockedByOther !== undefined ? isBlockedByOther : c.isBlockedByOther;
             if (msgsEqual && isBlockedByMeVal === c.isBlocked && isBlockedByOtherVal === c.isBlockedByOther) {
@@ -1433,8 +1742,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   useEffect(() => {
     setIsTyping(false);
     if (isCurrentlyTypingRef.current && socketRef.current && currentUser && activeChat) {
-      const currentId = currentUser.id || currentUser._id;
-      socketRef.current.emit('stop_typing', { senderId: currentId, receiverId: activeChat.id });
+      const currentId = (currentUser.id || currentUser._id)?.toString();
+      const partnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+      if (currentId && partnerId) {
+        socketRef.current.emit('stop_typing', { senderId: currentId, receiverId: partnerId });
+      }
     }
     isCurrentlyTypingRef.current = false;
     if (typingTimerRef.current) {
@@ -1442,7 +1754,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       typingTimerRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeChat?.id]);
+  }, [activeChat?.id, activeChat?._id, activeChat?.userId]);
 
   // Edit Profile States
   const [matchedUserIds, setMatchedUserIds] = useState([]);
@@ -1685,12 +1997,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const formattedMsg = {
       id: (msg._id || msg.id || String(Date.now() + Math.random())).toString(),
       sender: isMe ? 'you' : 'them',
+      senderId: sId,
+      receiverId: rId,
       text: msg.text,
       messageType: msg.messageType || 'text',
       mediaUrl: msg.mediaUrl,
       fileName: msg.fileName,
       fileSize: msg.fileSize,
       stickerId: msg.stickerId,
+      replyTo: parseReplyTo(msg.replyTo),
+      reactions: Array.isArray(msg.reactions) ? msg.reactions : [],
+      isEdited: Boolean(msg.isEdited),
       status: msg.status || 'sent',
       createdAt: msg.createdAt || new Date().toISOString(),
     };
@@ -1957,7 +2274,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const tempId = msgData.tempId;
         const actualMsg = {
           id: (msgData._id || msgData.id).toString(),
+          tempId: tempId,
           sender: 'you',
+          senderId: (msgData.senderId || msgData.sender)?.toString(),
+          receiverId: (msgData.receiverId || msgData.receiver)?.toString(),
           text: msgData.text || '',
           time: new Date(msgData.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           messageType: msgData.messageType || 'text',
@@ -1965,6 +2285,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           fileName: msgData.fileName,
           fileSize: msgData.fileSize,
           stickerId: msgData.stickerId,
+          replyTo: parseReplyTo(msgData.replyTo),
+          reactions: Array.isArray(msgData.reactions) ? msgData.reactions : [],
+          isEdited: Boolean(msgData.isEdited),
           status: msgData.status || 'sent',
           createdAt: msgData.createdAt || new Date().toISOString(),
         };
@@ -1976,11 +2299,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             const cIdStr = (c.id || c._id || c.userId)?.toString();
             if (cIdStr === rIdStr) {
               const msgs = c.messages || [];
-              const exists = msgs.some((m) => m.id === actualMsg.id || (tempId && m.id === tempId));
+              const exists = msgs.some((m) => m.id === actualMsg.id || (tempId && (m.id === tempId || m.tempId === tempId)));
               return {
                 ...c,
                 messages: exists
-                  ? msgs.map((m) => (m.id === tempId || m.id === actualMsg.id ? actualMsg : m))
+                  ? msgs.map((m) => (m.id === tempId || m.tempId === tempId || m.id === actualMsg.id ? actualMsg : m))
                   : [...msgs, actualMsg],
               };
             }
@@ -1993,16 +2316,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
           if (activeIdStr === rIdStr) {
             const msgs = prevActive.messages || [];
-            const exists = msgs.some((m) => m.id === actualMsg.id || (tempId && m.id === tempId));
+            const exists = msgs.some((m) => m.id === actualMsg.id || (tempId && (m.id === tempId || m.tempId === tempId)));
             return {
               ...prevActive,
               messages: exists
-                ? msgs.map((m) => (m.id === tempId || m.id === actualMsg.id ? actualMsg : m))
+                ? msgs.map((m) => (m.id === tempId || m.tempId === tempId || m.id === actualMsg.id ? actualMsg : m))
                 : [...msgs, actualMsg],
             };
           }
           return prevActive;
         });
+        setOfflineQueue((prev) => prev.filter((item) => item.tempId !== tempId));
       });
 
       socketRef.current.on('receive_message', (msg) => {
@@ -2015,6 +2339,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const formattedMsg = {
           id: (msg._id || msg.id || Date.now()).toString(),
           sender: 'them',
+          senderId: senderIdStr,
+          receiverId: (msg.receiverId || msg.receiver)?.toString(),
           text: msg.text || '',
           time: new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           messageType: msg.messageType || 'text',
@@ -2022,6 +2348,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           fileName: msg.fileName,
           fileSize: msg.fileSize,
           stickerId: msg.stickerId,
+          replyTo: parseReplyTo(msg.replyTo),
+          reactions: Array.isArray(msg.reactions) ? msg.reactions : [],
+          isEdited: Boolean(msg.isEdited),
           status: isCurrentlyViewingChat ? 'seen' : (msg.status || 'delivered'),
           createdAt: msg.createdAt || new Date().toISOString(),
         };
@@ -2203,114 +2532,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       });
 
-      socketRef.current.on('message_sent', (msg) => {
-        console.log('Socket.IO message sent confirmation:', msg);
-        if (msg.tempId) {
-          const actualMsg = {
-            id: msg._id,
-            sender: 'you',
-            text: msg.text,
-            messageType: msg.messageType || 'text',
-            mediaUrl: msg.mediaUrl,
-            fileName: msg.fileName,
-            fileSize: msg.fileSize,
-            stickerId: msg.stickerId,
-            status: msg.status || 'sent',
-            createdAt: msg.createdAt,
-          };
-          const otherId = msg.receiverId.toString();
 
-          setChats((prevChats) =>
-            prevChats.map((c) => {
-              const cIdStr = (c.id || c._id || c.userId)?.toString();
-              if (cIdStr === otherId) {
-                return {
-                  ...c,
-                  messages: (c.messages || []).map((m) =>
-                    m.id === msg.tempId ? actualMsg : m
-                  ),
-                };
-              }
-              return c;
-            })
-          );
-          setActiveChat((prevActive) => {
-            if (!prevActive) return prevActive;
-            const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
-            if (activeIdStr === otherId) {
-              return {
-                ...prevActive,
-                messages: (prevActive.messages || []).map((m) =>
-                  m.id === msg.tempId ? actualMsg : m
-                ),
-              };
-            }
-            return prevActive;
-          });
-          setOfflineQueue((prev) => prev.filter((item) => item.tempId !== msg.tempId));
-        }
-      });
-
-      socketRef.current.on('message_delivered', ({ messageId, tempId, receiverId, status }) => {
-        console.log('Socket.IO message_delivered event received:', messageId, status);
-        const newStatus = status || 'delivered';
-        const rIdStr = receiverId?.toString();
-        setChats((prevChats) =>
-          prevChats.map((c) => {
-            if (!rIdStr || c.id === rIdStr) {
-              return {
-                ...c,
-                messages: (c.messages || []).map((m) =>
-                  m.id === messageId || (tempId && m.id === tempId) ? { ...m, status: newStatus } : m
-                ),
-              };
-            }
-            return c;
-          })
-        );
-        setActiveChat((prevActive) => {
-          if (!prevActive) return prevActive;
-          const activeId = (prevActive.id || prevActive._id)?.toString();
-          if (!rIdStr || activeId === rIdStr) {
-            return {
-              ...prevActive,
-              messages: (prevActive.messages || []).map((m) =>
-                m.id === messageId || (tempId && m.id === tempId) ? { ...m, status: newStatus } : m
-              ),
-            };
-          }
-          return prevActive;
-        });
-      });
-
-      socketRef.current.on('messages_seen', ({ senderId, receiverId, status }) => {
-        console.log('Socket.IO messages_seen event received for sender/receiver:', senderId, receiverId);
-        const sIdStr = senderId?.toString();
-        const rIdStr = receiverId?.toString();
-        setChats((prevChats) =>
-          prevChats.map((c) => {
-            const partnerId = c.id?.toString();
-            if (!rIdStr || partnerId === rIdStr || partnerId === sIdStr) {
-              return {
-                ...c,
-                messages: (c.messages || []).map((m) => (m.sender === 'you' ? { ...m, status: 'seen' } : m)),
-              };
-            }
-            return c;
-          })
-        );
-        setActiveChat((prevActive) => {
-          if (!prevActive) return prevActive;
-          const activeId = (prevActive.id || prevActive._id)?.toString();
-          if (!rIdStr || activeId === rIdStr || activeId === sIdStr) {
-            return {
-              ...prevActive,
-              messages: (prevActive.messages || []).map((m) => (m.sender === 'you' ? { ...m, status: 'seen' } : m)),
-            };
-          }
-          return prevActive;
-        });
-      });
 
       socketRef.current.on('message_edited', ({ messageId, text, isEdited, senderId, receiverId }) => {
         console.log('Socket.IO message edited:', messageId, text);
@@ -2341,35 +2563,236 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         refetchChatMessages();
       });
 
-      socketRef.current.on('message_deleted', ({ messageId, senderId, receiverId }) => {
-        console.log('Socket.IO message deleted:', messageId);
+      socketRef.current.on('message_reaction_updated', ({ messageId, tempId, reactions, senderId, receiverId }) => {
+        console.log('Socket.IO message_reaction_updated received:', messageId, tempId, reactions);
+        const rIdStr = receiverId?.toString();
+        const sIdStr = senderId?.toString();
+        const targetIdStr = messageId?.toString();
+        const targetTempStr = tempId?.toString();
+
+        const updateReactions = (m) => {
+          const mIdStr = (m.id || m._id)?.toString();
+          const mTempStr = m.tempId?.toString();
+          if (
+            (targetIdStr && (mIdStr === targetIdStr || mTempStr === targetIdStr)) ||
+            (targetTempStr && (mIdStr === targetTempStr || mTempStr === targetTempStr))
+          ) {
+            return { ...m, reactions: Array.isArray(reactions) ? reactions : [] };
+          }
+          return m;
+        };
+
         setChats((prevChats) =>
           prevChats.map((c) => {
-            if (c.id === senderId || c.id === receiverId) {
+            const hasMsg = (c.messages || []).some(
+              (m) => (m.id && (String(m.id) === targetIdStr || String(m.id) === targetTempStr)) ||
+                     (m.tempId && (String(m.tempId) === targetIdStr || String(m.tempId) === targetTempStr))
+            );
+            const cIdStr = (c.id || c._id || c.userId)?.toString();
+            if (hasMsg || !rIdStr || cIdStr === rIdStr || cIdStr === sIdStr) {
               return {
                 ...c,
-                messages: c.messages.filter((m) => m.id !== messageId),
+                messages: (c.messages || []).map(updateReactions),
               };
             }
             return c;
           })
         );
         setActiveChat((prevActive) => {
-          if (prevActive && (prevActive.id === senderId || prevActive.id === receiverId)) {
-            return {
-              ...prevActive,
-              messages: prevActive.messages.filter((m) => m.id !== messageId),
-            };
-          }
-          return prevActive;
+          if (!prevActive) return prevActive;
+          return {
+            ...prevActive,
+            messages: (prevActive.messages || []).map(updateReactions),
+          };
         });
+        dispatch(updateMessageReactions({ messageId: targetIdStr, tempId: targetTempStr, reactions }));
+      });
+
+      socketRef.current.on('message_pinned_updated', ({ messageId, tempId, isPinned, text, senderId, receiverId }) => {
+        console.log('Socket.IO message_pinned_updated received:', messageId, isPinned);
+        const rIdStr = receiverId?.toString();
+        const sIdStr = senderId?.toString();
+        const targetIdStr = messageId?.toString();
+        const targetTempStr = tempId?.toString();
+
+        if (targetIdStr) {
+          recentPinActionRef.current[targetIdStr] = {
+            isPinned: !!isPinned,
+            timestamp: Date.now(),
+          };
+        }
+        if (targetTempStr) {
+          recentPinActionRef.current[targetTempStr] = {
+            isPinned: !!isPinned,
+            timestamp: Date.now(),
+          };
+        }
+
+        const updatePin = (m) => {
+          const mIdStr = (m.id || m._id)?.toString();
+          const mTempStr = m.tempId?.toString();
+          if (
+            (targetIdStr && (mIdStr === targetIdStr || mTempStr === targetIdStr)) ||
+            (targetTempStr && (mIdStr === targetTempStr || mTempStr === targetTempStr))
+          ) {
+            return { ...m, isPinned: !!isPinned };
+          }
+          if (isPinned) {
+            return { ...m, isPinned: false };
+          }
+          return m;
+        };
+
+        setChats((prevChats) =>
+          prevChats.map((c) => {
+            const hasMsg = (c.messages || []).some(
+              (m) => (m.id && (String(m.id) === targetIdStr || String(m.id) === targetTempStr)) ||
+                     (m.tempId && (String(m.tempId) === targetIdStr || String(m.tempId) === targetTempStr))
+            );
+            const cIdStr = (c.id || c._id || c.userId)?.toString();
+            if (hasMsg || !rIdStr || cIdStr === rIdStr || cIdStr === sIdStr) {
+              return {
+                ...c,
+                messages: enforceSinglePin((c.messages || []).map(updatePin)),
+              };
+            }
+            return c;
+          })
+        );
+        setActiveChat((prevActive) => {
+          if (!prevActive) return prevActive;
+          return {
+            ...prevActive,
+            messages: enforceSinglePin((prevActive.messages || []).map(updatePin)),
+          };
+        });
+        dispatch(updateMessagePinned({ messageId: targetIdStr, tempId: targetTempStr, isPinned: !!isPinned }));
+      });
+
+      socketRef.current.on('message_star_updated', ({ messageId, tempId, isStarred, senderId, receiverId }) => {
+        console.log('Socket.IO message_star_updated received:', messageId, isStarred);
+        const rIdStr = receiverId?.toString();
+        const sIdStr = senderId?.toString();
+        const targetIdStr = messageId?.toString();
+        const targetTempStr = tempId?.toString();
+
+        if (targetIdStr) {
+          recentStarActionRef.current[targetIdStr] = {
+            isStarred: !!isStarred,
+            timestamp: Date.now(),
+          };
+        }
+        if (targetTempStr) {
+          recentStarActionRef.current[targetTempStr] = {
+            isStarred: !!isStarred,
+            timestamp: Date.now(),
+          };
+        }
+
+        const updateStar = (m) => {
+          const mIdStr = (m.id || m._id)?.toString();
+          const mTempStr = m.tempId?.toString();
+          if (
+            (targetIdStr && (mIdStr === targetIdStr || mTempStr === targetIdStr)) ||
+            (targetTempStr && (mIdStr === targetTempStr || mTempStr === targetTempStr))
+          ) {
+            return { ...m, isStarred: !!isStarred };
+          }
+          return m;
+        };
+
+        setChats((prevChats) =>
+          prevChats.map((c) => {
+            const hasMsg = (c.messages || []).some(
+              (m) => (m.id && (String(m.id) === targetIdStr || String(m.id) === targetTempStr)) ||
+                     (m.tempId && (String(m.tempId) === targetIdStr || String(m.tempId) === targetTempStr))
+            );
+            const cIdStr = (c.id || c._id || c.userId)?.toString();
+            if (hasMsg || !rIdStr || cIdStr === rIdStr || cIdStr === sIdStr) {
+              return {
+                ...c,
+                messages: (c.messages || []).map(updateStar),
+              };
+            }
+            return c;
+          })
+        );
+        setActiveChat((prevActive) => {
+          if (!prevActive) return prevActive;
+          return {
+            ...prevActive,
+            messages: (prevActive.messages || []).map(updateStar),
+          };
+        });
+        dispatch(updateMessageStarred({ messageId: targetIdStr, tempId: targetTempStr, isStarred: !!isStarred }));
+      });
+
+      socketRef.current.on('message_deleted', ({ messageId, deleteType, text, senderId, receiverId }) => {
+        console.log('Socket.IO message deleted:', messageId, deleteType);
+        const rIdStr = receiverId?.toString();
+        const sIdStr = senderId?.toString();
+
+        if (deleteType === 'everyone') {
+          const updateDel = (m) => m.id === messageId ? { ...m, text: text || 'This message was deleted', mediaUrl: null, isDeletedForEveryone: true } : m;
+          setChats((prevChats) =>
+            prevChats.map((c) => {
+              const cIdStr = (c.id || c._id || c.userId)?.toString();
+              if (!rIdStr || cIdStr === rIdStr || cIdStr === sIdStr) {
+                return {
+                  ...c,
+                  messages: (c.messages || []).map(updateDel),
+                };
+              }
+              return c;
+            })
+          );
+          setActiveChat((prevActive) => {
+            if (!prevActive) return prevActive;
+            const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+            if (!rIdStr || activeIdStr === rIdStr || activeIdStr === sIdStr) {
+              return {
+                ...prevActive,
+                messages: (prevActive.messages || []).map(updateDel),
+              };
+            }
+            return prevActive;
+          });
+        } else {
+          setChats((prevChats) =>
+            prevChats.map((c) => {
+              const cIdStr = (c.id || c._id || c.userId)?.toString();
+              if (!rIdStr || cIdStr === rIdStr || cIdStr === sIdStr) {
+                return {
+                  ...c,
+                  messages: (c.messages || []).filter((m) => m.id !== messageId),
+                };
+              }
+              return c;
+            })
+          );
+          setActiveChat((prevActive) => {
+            if (!prevActive) return prevActive;
+            const activeIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+            if (!rIdStr || activeIdStr === rIdStr || activeIdStr === sIdStr) {
+              return {
+                ...prevActive,
+                messages: (prevActive.messages || []).filter((m) => m.id !== messageId),
+              };
+            }
+            return prevActive;
+          });
+        }
         refetchChatMessages();
       });
 
       socketRef.current.on('user_typing', ({ senderId }) => {
-        console.log('Socket.IO user_typing received:', senderId);
+        console.log('🟢 Socket.IO user_typing received for senderId:', senderId);
+        if (!senderId) return;
+        const senderStr = senderId.toString();
         setActiveChat((prevActive) => {
-          if (prevActive && prevActive.id.toString() === senderId.toString()) {
+          if (!prevActive) return prevActive;
+          const partnerIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+          if (partnerIdStr === senderStr) {
             setIsTyping(true);
           }
           return prevActive;
@@ -2377,9 +2800,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       socketRef.current.on('user_stop_typing', ({ senderId }) => {
-        console.log('Socket.IO user_stop_typing received:', senderId);
+        console.log('🔴 Socket.IO user_stop_typing received for senderId:', senderId);
+        if (!senderId) return;
+        const senderStr = senderId.toString();
         setActiveChat((prevActive) => {
-          if (prevActive && prevActive.id.toString() === senderId.toString()) {
+          if (!prevActive) return prevActive;
+          const partnerIdStr = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+          if (partnerIdStr === senderStr) {
             setIsTyping(false);
           }
           return prevActive;
@@ -3036,8 +3463,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     const messagesByOtherUser = {};
     messagesData.forEach((msg) => {
-      const sId = msg.senderId.toString();
-      const rId = msg.receiverId.toString();
+      const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
+      const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
       const otherId = sId === currentId ? rId : sId;
 
       if (!messagesByOtherUser[otherId]) {
@@ -3046,15 +3473,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       messagesByOtherUser[otherId].push({
         id: msg._id,
         sender: sId === currentId ? 'you' : 'them',
+        senderId: sId,
+        receiverId: rId,
         text: msg.text,
         messageType: msg.messageType || 'text',
         mediaUrl: msg.mediaUrl,
         fileName: msg.fileName,
         fileSize: msg.fileSize,
         stickerId: msg.stickerId,
+        replyTo: parseReplyTo(msg.replyTo),
+        reactions: Array.isArray(msg.reactions) ? msg.reactions : [],
+        isPinned: msg.isPinned || false,
+        isStarred: msg.isStarred || false,
+        isDeletedForEveryone: msg.isDeletedForEveryone || false,
         status: msg.status || 'sent',
         createdAt: msg.createdAt,
-        isEdited: msg.isEdited || false,
+        isEdited: Boolean(msg.isEdited),
       });
     });
 
@@ -3081,20 +3515,49 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         ? 'Matched User'
         : (otherUser.name || otherUser.firstName || 'Matched User');
 
-      // Preserve any pending/sending messages from local state that aren't yet in messagesByOtherUser
+      // Preserve local state messages and merge non-destructively with DB messages
       const existingChatInState = (chats || []).find(
         (c) => (c.id || c._id || c.userId)?.toString() === otherId
       );
-      const pendingMsgs = (existingChatInState?.messages || []).filter((m) => {
-        if (!m || m.id === 'match-init') return false;
-        if (m.status === 'sending') return true;
-        if (m.tempId) {
-          return !messagesByOtherUser[otherId].some(
-            (dbM) => String(dbM.id) === String(m.id) || String(dbM.id) === String(m.tempId)
-          );
-        }
-        return false;
+      const existingMsgs = existingChatInState?.messages || [];
+
+      // Non-destructively merge messages from DB with local state so replyTo and reactions are NEVER wiped out
+      const mergedDbMsgs = (messagesByOtherUser[otherId] || []).map((dbMsg) => {
+        const existing = existingMsgs.find(
+          (p) =>
+            String(p.id) === String(dbMsg.id) ||
+            (p.tempId && (String(p.tempId) === String(dbMsg.id) || String(p.tempId) === String(dbMsg.tempId))) ||
+            (dbMsg.tempId && String(p.id) === String(dbMsg.tempId))
+        );
+        if (!existing) return dbMsg;
+        return {
+          ...existing,
+          ...dbMsg,
+          replyTo: parseReplyTo(dbMsg.replyTo) || parseReplyTo(existing.replyTo) || null,
+          reactions: (Array.isArray(dbMsg.reactions) && dbMsg.reactions.length > 0)
+            ? dbMsg.reactions
+            : (Array.isArray(existing.reactions) && existing.reactions.length > 0 ? existing.reactions : []),
+          isPinned: resolveIsPinned(dbMsg.id, dbMsg.tempId || existing.tempId, dbMsg.isPinned, existing.isPinned),
+          isStarred: resolveIsStarred(dbMsg.id, dbMsg.tempId || existing.tempId, dbMsg.isStarred, existing.isStarred),
+          isEdited: Boolean(dbMsg.isEdited || existing.isEdited),
+        };
       });
+
+      // Preserve local optimistic, pending, or recently sent messages that aren't yet in DB array
+      const extraLocalMsgs = existingMsgs.filter(
+        (m) =>
+          m &&
+          m.id !== 'match-init' &&
+          !mergedDbMsgs.some(
+            (f) =>
+              String(f.id) === String(m.id) ||
+              (m.tempId && (String(f.id) === String(m.tempId) || String(f.tempId) === String(m.tempId))) ||
+              (f.tempId && String(m.id) === String(f.tempId))
+          )
+      );
+
+      const allMerged = enforceSinglePin([...mergedDbMsgs, ...extraLocalMsgs]);
+      allMerged.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 
       chatsList.push({
         id: otherId,
@@ -3103,7 +3566,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         lastSeen: otherUser.lastSeen,
         isBlocked: isBlocked,
         isBlockedByOther: isBlockedByOther,
-        messages: [...messagesByOtherUser[otherId], ...pendingMsgs],
+        messages: allMerged,
       });
     });
 
@@ -3171,20 +3634,53 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       if (prevActiveChat) {
         const found = chatsList.find((c) => c.id === prevActiveChat.id);
         if (found) {
-          const extraMsgs = (prevActiveChat.messages || []).filter(
-            (m) => m.id !== 'match-init' && !found.messages.some((f) => String(f.id) === String(m.id))
+          const prevMsgs = prevActiveChat.messages || [];
+          const mergedFoundMsgs = (found.messages || []).map((fMsg) => {
+            const existing = prevMsgs.find(
+              (p) =>
+                String(p.id) === String(fMsg.id) ||
+                (p.tempId && (String(p.tempId) === String(fMsg.id) || String(p.tempId) === String(fMsg.tempId))) ||
+                (fMsg.tempId && String(p.id) === String(fMsg.tempId))
+            );
+            if (!existing) return fMsg;
+            return {
+              ...existing,
+              ...fMsg,
+              replyTo: parseReplyTo(fMsg.replyTo) || parseReplyTo(existing.replyTo) || null,
+              reactions: (Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+                ? fMsg.reactions
+                : (Array.isArray(existing.reactions) ? existing.reactions : []),
+              isPinned: resolveIsPinned(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isPinned, existing.isPinned),
+              isStarred: resolveIsStarred(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isStarred, existing.isStarred),
+              isEdited: Boolean(fMsg.isEdited || existing.isEdited),
+            };
+          });
+
+          const extraMsgs = prevMsgs.filter(
+            (m) => m.id !== 'match-init' && !mergedFoundMsgs.some((f) => String(f.id) === String(m.id) || (m.tempId && String(f.id) === String(m.tempId)))
           );
-          const combined = [...found.messages, ...extraMsgs];
+          const combined = [...mergedFoundMsgs, ...extraMsgs];
           const hasRealMessages = combined.some((m) => m.id !== 'match-init');
-          const cleanMessages = hasRealMessages ? combined.filter((m) => m.id !== 'match-init') : combined;
+          const cleanMessages = enforceSinglePin(hasRealMessages ? combined.filter((m) => m.id !== 'match-init') : combined);
+          cleanMessages.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
           const isBlocked = found.isBlocked || prevActiveChat.isBlocked || false;
           const isBlockedByOther = found.isBlockedByOther || prevActiveChat.isBlockedByOther || false;
-          const prevMsgs = prevActiveChat.messages || [];
 
           const isSameLength = cleanMessages.length === prevMsgs.length;
           const isSameContent = isSameLength && cleanMessages.every((m, idx) => {
             const p = prevMsgs[idx];
-            return p && String(m.id || m._id) === String(p.id || p._id) && m.text === p.text && m.status === p.status && m.createdAt === p.createdAt;
+            return (
+              p &&
+              String(m.id || m._id) === String(p.id || p._id) &&
+              m.text === p.text &&
+              m.status === p.status &&
+              m.createdAt === p.createdAt &&
+              Boolean(m.isPinned) === Boolean(p.isPinned) &&
+              Boolean(m.isStarred) === Boolean(p.isStarred) &&
+              JSON.stringify(m.replyTo || null) === JSON.stringify(p.replyTo || null) &&
+              JSON.stringify(m.reactions || []) === JSON.stringify(p.reactions || [])
+            );
           });
 
           if (
@@ -3217,17 +3713,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     // Map DB messages to UI message structure
     const formatted = chatMessagesData.map((msg) => ({
-      id: msg._id,
-      sender: msg.senderId.toString() === currentId ? 'you' : 'them',
-      text: msg.text,
+      id: (msg._id || msg.id).toString(),
+      sender: (msg.senderId?._id || msg.senderId || msg.sender)?.toString() === currentId ? 'you' : 'them',
+      senderId: (msg.senderId?._id || msg.senderId || msg.sender)?.toString(),
+      receiverId: (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString(),
+      text: msg.text || '',
       messageType: msg.messageType || 'text',
       mediaUrl: msg.mediaUrl,
       fileName: msg.fileName,
       fileSize: msg.fileSize,
       stickerId: msg.stickerId,
+      replyTo: parseReplyTo(msg.replyTo),
+      reactions: Array.isArray(msg.reactions) ? msg.reactions : [],
+      isEdited: Boolean(msg.isEdited),
+      isPinned: Boolean(msg.isPinned),
+      isStarred: Boolean(msg.isStarred),
+      isDeletedForEveryone: Boolean(msg.isDeletedForEveryone),
       status: msg.status || 'sent',
       createdAt: msg.createdAt,
-      isEdited: msg.isEdited || false,
     }));
 
     // Maintain any active temp messages & real-time received messages
@@ -3236,14 +3739,44 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (formatted.length === 0 && prev.messages.some(m => m.id === 'match-init')) {
           return prev;
         }
-        const extraMsgs = (prev.messages || []).filter(
-          (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id)))
-        );
-        const nextMsgs = [...formatted, ...extraMsgs];
         const prevMsgs = prev.messages || [];
+        const mergedFormatted = formatted.map((fMsg) => {
+          const existing = prevMsgs.find(
+            (p) =>
+              String(p.id) === String(fMsg.id) ||
+              (p.tempId && (String(p.tempId) === String(fMsg.id) || String(p.tempId) === String(fMsg.tempId))) ||
+              (fMsg.tempId && String(p.id) === String(fMsg.tempId))
+          );
+          if (!existing) return fMsg;
+          return {
+            ...existing,
+            ...fMsg,
+            replyTo: parseReplyTo(fMsg.replyTo) || parseReplyTo(existing.replyTo) || null,
+            reactions: (Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+              ? fMsg.reactions
+              : (Array.isArray(existing.reactions) ? existing.reactions : []),
+            isPinned: resolveIsPinned(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isPinned, existing.isPinned),
+            isStarred: resolveIsStarred(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isStarred, existing.isStarred),
+            isEdited: Boolean(fMsg.isEdited || existing.isEdited),
+          };
+        });
+        const extraMsgs = prevMsgs.filter(
+          (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !mergedFormatted.some((f) => String(f.id) === String(m.id) || (m.tempId && String(f.id) === String(m.tempId))))
+        );
+        const nextMsgs = enforceSinglePin([...mergedFormatted, ...extraMsgs]);
+        nextMsgs.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
         if (
           nextMsgs.length === prevMsgs.length &&
-          nextMsgs.every((m, i) => m.id === prevMsgs[i]?.id && m.text === prevMsgs[i]?.text)
+          nextMsgs.every((m, i) =>
+            m.id === prevMsgs[i]?.id &&
+            m.text === prevMsgs[i]?.text &&
+            m.isEdited === prevMsgs[i]?.isEdited &&
+            Boolean(m.isPinned) === Boolean(prevMsgs[i]?.isPinned) &&
+            Boolean(m.isStarred) === Boolean(prevMsgs[i]?.isStarred) &&
+            JSON.stringify(m.replyTo || null) === JSON.stringify(prevMsgs[i]?.replyTo || null) &&
+            JSON.stringify(m.reactions || []) === JSON.stringify(prevMsgs[i]?.reactions || [])
+          )
         ) {
           return prev;
         }
@@ -3261,14 +3794,44 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           if (formatted.length === 0 && c.messages.some(m => m.id === 'match-init')) {
             return c;
           }
-          const extraMsgs = (c.messages || []).filter(
-            (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !formatted.some((f) => String(f.id) === String(m.id)))
-          );
-          const nextMsgs = [...formatted, ...extraMsgs];
           const prevMsgs = c.messages || [];
+          const mergedFormatted = formatted.map((fMsg) => {
+            const existing = prevMsgs.find(
+              (p) =>
+                String(p.id) === String(fMsg.id) ||
+                (p.tempId && (String(p.tempId) === String(fMsg.id) || String(p.tempId) === String(fMsg.tempId))) ||
+                (fMsg.tempId && String(p.id) === String(fMsg.tempId))
+            );
+            if (!existing) return fMsg;
+            return {
+              ...existing,
+              ...fMsg,
+              replyTo: parseReplyTo(fMsg.replyTo) || parseReplyTo(existing.replyTo) || null,
+              reactions: (Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+                ? fMsg.reactions
+                : (Array.isArray(existing.reactions) ? existing.reactions : []),
+              isPinned: resolveIsPinned(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isPinned, existing.isPinned),
+              isStarred: resolveIsStarred(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isStarred, existing.isStarred),
+              isEdited: Boolean(fMsg.isEdited || existing.isEdited),
+            };
+          });
+          const extraMsgs = prevMsgs.filter(
+            (m) => m.id !== 'match-init' && (String(m.id).startsWith('temp-') || !mergedFormatted.some((f) => String(f.id) === String(m.id) || (m.tempId && String(f.id) === String(m.tempId))))
+          );
+          const nextMsgs = enforceSinglePin([...mergedFormatted, ...extraMsgs]);
+          nextMsgs.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
           if (
             nextMsgs.length === prevMsgs.length &&
-            nextMsgs.every((m, i) => m.id === prevMsgs[i]?.id && m.text === prevMsgs[i]?.text)
+            nextMsgs.every((m, i) =>
+              m.id === prevMsgs[i]?.id &&
+              m.text === prevMsgs[i]?.text &&
+              m.isEdited === prevMsgs[i]?.isEdited &&
+              Boolean(m.isPinned) === Boolean(prevMsgs[i]?.isPinned) &&
+              Boolean(m.isStarred) === Boolean(prevMsgs[i]?.isStarred) &&
+              JSON.stringify(m.replyTo || null) === JSON.stringify(prevMsgs[i]?.replyTo || null) &&
+              JSON.stringify(m.reactions || []) === JSON.stringify(prevMsgs[i]?.reactions || [])
+            )
           ) {
             return c;
           }
@@ -3374,8 +3937,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     if (!socketRef.current || !currentUser || !activeChat) return;
 
-    const currentId = currentUser.id || currentUser._id;
-    const receiverId = activeChat.id;
+    const currentId = (currentUser.id || currentUser._id)?.toString();
+    const receiverId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+
+    if (!currentId || !receiverId) return;
 
     if (text.trim() === '') {
       if (isCurrentlyTypingRef.current) {
@@ -3397,11 +3962,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
 
       typingTimerRef.current = setTimeout(() => {
-        if (socketRef.current && activeChat) {
+        if (socketRef.current) {
           socketRef.current.emit('stop_typing', { senderId: currentId, receiverId });
         }
         isCurrentlyTypingRef.current = false;
-      }, 2000);
+      }, 2500);
     }
   };
 
@@ -3491,6 +4056,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setTypedMessage('');
     }
 
+    if (editingMessage) {
+      const newText = currentText.trim();
+      const targetId = (editingMessage.id || editingMessage._id)?.toString();
+      setEditingMessage(null);
+      if (!newText || !targetId) return;
+
+      const updateEdited = (m) => (m.id === targetId || m._id === targetId ? { ...m, text: newText, isEdited: true } : m);
+
+      setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(updateEdited) } : null);
+      setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(updateEdited) } : c)));
+
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('edit_message', { messageId: targetId, receiverId, text: newText });
+      }
+      apiClient.editMessage({ messageId: targetId, text: newText }).catch((e) => console.log('Edit message API error:', e));
+      return;
+    }
+
     const tempId = 'temp-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
 
     let payload = {
@@ -3506,15 +4089,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       payload.messageType = 'text';
     }
 
+    if (replyingToMessage) {
+      const currentUserIdStr = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+      const qText = replyingToMessage.text ? replyingToMessage.text.trim() : getQuotedSnippetText(replyingToMessage);
+      const isReplyingToMe = replyingToMessage.sender === 'you' || (replyingToMessage.senderId && replyingToMessage.senderId.toString() === currentUserIdStr);
+      const replyData = {
+        messageId: (replyingToMessage.id || replyingToMessage._id)?.toString(),
+        senderId: (replyingToMessage.senderId || (isReplyingToMe ? currentUserIdStr : (activeChat?.id || activeChat?._id)?.toString()))?.toString(),
+        text: qText,
+        senderName: isReplyingToMe ? 'You' : (activeChat?.name || activeChat?.firstName || 'Contact'),
+        messageType: replyingToMessage.messageType || (replyingToMessage.mediaUrl ? 'image' : 'text'),
+        mediaUrl: replyingToMessage.mediaUrl || null,
+        fileName: replyingToMessage.fileName || null,
+      };
+      payload.replyTo = replyData;
+      setReplyingToMessage(null);
+    }
+
     const localMsg = {
       id: tempId,
       tempId: tempId,
       sender: 'you',
+      senderId: currentId,
+      receiverId: receiverId,
       text: payload.text,
       messageType: payload.messageType || 'text',
       mediaUrl: payload.mediaUrl,
       fileName: payload.fileName,
       fileSize: payload.fileSize,
+      replyTo: payload.replyTo || null,
       stickerId: payload.stickerId,
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -3528,9 +4131,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     };
 
     setChats((prevChats) => {
-      if (!Array.isArray(prevChats)) return prevChats;
+      if (!Array.isArray(prevChats)) return [ { id: receiverId, messages: [localMsg] } ];
+      let found = false;
       const updated = prevChats.map((c) => {
         if (isIdMatch(c, receiverId)) {
+          found = true;
           const msgs = (c.messages || []).filter((m) => m.id !== 'match-init');
           const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
           return {
@@ -3540,19 +4145,28 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
         return c;
       });
+      if (!found && receiverId) {
+        updated.push({
+          id: receiverId,
+          name: activeChat.name || activeChat.firstName || 'User',
+          image: activeChat.image || activeChat.profileImage,
+          messages: [localMsg],
+        });
+      }
       return sortChatsByRecent(updated);
     });
+
     setActiveChat((prevActive) => {
-      if (isIdMatch(prevActive, receiverId)) {
-        const msgs = (prevActive.messages || []).filter((m) => m.id !== 'match-init');
-        const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
-        return {
-          ...prevActive,
-          messages: exists ? msgs : [...msgs, localMsg],
-        };
-      }
-      return prevActive;
+      if (!prevActive) return prevActive;
+      const msgs = (prevActive.messages || []).filter((m) => m.id !== 'match-init');
+      const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
+      return {
+        ...prevActive,
+        messages: exists ? msgs : [...msgs, localMsg],
+      };
     });
+
+    dispatch(addMessage(localMsg));
 
     let hasConfirmed = false;
     const handleServerConfirmation = (serverMsg) => {
@@ -3562,15 +4176,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         id: (serverMsg._id || serverMsg.id).toString(),
         tempId: tempId,
         sender: 'you',
+        senderId: currentId,
+        receiverId: receiverId,
         text: serverMsg.text,
         messageType: serverMsg.messageType || 'text',
         mediaUrl: serverMsg.mediaUrl,
         fileName: serverMsg.fileName,
         fileSize: serverMsg.fileSize,
         stickerId: serverMsg.stickerId,
+        replyTo: parseReplyTo(serverMsg?.replyTo) || parseReplyTo(payload?.replyTo) || null,
+        reactions: Array.isArray(serverMsg.reactions) ? serverMsg.reactions : (Array.isArray(localMsg?.reactions) ? localMsg.reactions : []),
+        isEdited: Boolean(serverMsg.isEdited),
         status: serverMsg.status || 'sent',
         createdAt: serverMsg.createdAt || new Date().toISOString(),
       };
+      dispatch(addMessage(actualMsg));
       setChats((prevChats) =>
         prevChats.map((c) => {
           if (isIdMatch(c, receiverId)) {
@@ -3587,45 +4207,135 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         })
       );
       setActiveChat((prevActive) => {
-        if (isIdMatch(prevActive, receiverId)) {
-          const msgs = prevActive.messages || [];
-          const hasTemp = msgs.some((m) => m.id === tempId || m.tempId === tempId);
-          return {
-            ...prevActive,
-            messages: hasTemp
-              ? msgs.map((m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m))
-              : msgs.some((m) => m.id === actualMsg.id) ? msgs : [...msgs, actualMsg],
-          };
-        }
-        return prevActive;
+        if (!prevActive) return prevActive;
+        const msgs = prevActive.messages || [];
+        const hasTemp = msgs.some((m) => m.id === tempId || m.tempId === tempId);
+        return {
+          ...prevActive,
+          messages: hasTemp
+            ? msgs.map((m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m))
+            : msgs.some((m) => m.id === actualMsg.id) ? msgs : [...msgs, actualMsg],
+        };
       });
       setOfflineQueue((prev) => prev.filter((item) => item.tempId !== tempId));
     };
 
     const handleSendError = (errMsg) => {
-      // Remove optimistic message on block/send error
+      // Mark optimistic message as failed (never delete automatically; user can tap to retry or manually delete)
+      const markFailed = (m) => (m.id === tempId || m.tempId === tempId ? { ...m, status: 'failed', errorMessage: errMsg } : m);
       setChats((prevChats) =>
         prevChats.map((c) => {
           if (isIdMatch(c, receiverId)) {
             return {
               ...c,
-              messages: (c.messages || []).filter((m) => m.id !== tempId && m.tempId !== tempId),
+              messages: (c.messages || []).map(markFailed),
             };
           }
           return c;
         })
       );
       setActiveChat((prevActive) => {
-        if (isIdMatch(prevActive, receiverId)) {
-          return {
-            ...prevActive,
-            messages: (prevActive.messages || []).filter((m) => m.id !== tempId && m.tempId !== tempId),
-          };
-        }
-        return prevActive;
+        if (!prevActive) return prevActive;
+        return {
+          ...prevActive,
+          messages: (prevActive.messages || []).map(markFailed),
+        };
       });
-      Alert.alert('Cannot Send Message', errMsg || 'You cannot send messages to this user.');
+      Alert.alert('Cannot Send Message', errMsg || 'Failed to send message. Tap the message to retry.');
     };
+
+  const handleRetrySendMessage = (failedMsg) => {
+    if (!failedMsg || !activeChat || !currentUser) return;
+    const currentId = (currentUser.id || currentUser._id)?.toString();
+    const receiverId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    const tempId = failedMsg.tempId || failedMsg.id;
+
+    const resetPending = (m) => (m.id === tempId || m.tempId === tempId ? { ...m, status: 'pending', errorMessage: null } : m);
+    setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(resetPending) } : null);
+    setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(resetPending) } : c)));
+
+    const payload = {
+      senderId: currentId,
+      receiverId: receiverId,
+      tempId: tempId,
+      text: failedMsg.text || '',
+      messageType: failedMsg.messageType || 'text',
+      mediaUrl: failedMsg.mediaUrl || null,
+      fileName: failedMsg.fileName || null,
+      fileSize: failedMsg.fileSize || null,
+      replyTo: failedMsg.replyTo || null,
+      stickerId: failedMsg.stickerId || null,
+    };
+
+    if (socketRef.current && socketRef.current.connected) {
+      console.log('⚡ Retrying send_message via Socket:', payload);
+      socketRef.current.emit('send_message', payload, (res) => {
+        if (res && res.status === 'ok' && res.data) {
+          const actualMsg = {
+            id: (res.data._id || res.data.id).toString(),
+            tempId: tempId,
+            sender: 'you',
+            senderId: currentId,
+            receiverId: receiverId,
+            text: res.data.text,
+            messageType: res.data.messageType || 'text',
+            mediaUrl: res.data.mediaUrl,
+            fileName: res.data.fileName,
+            fileSize: res.data.fileSize,
+            stickerId: res.data.stickerId,
+            replyTo: parseReplyTo(res?.data?.replyTo) || parseReplyTo(failedMsg?.replyTo) || parseReplyTo(payload?.replyTo) || null,
+            reactions: Array.isArray(res?.data?.reactions) ? res.data.reactions : [],
+            isEdited: Boolean(res?.data?.isEdited),
+            status: res.data.status || 'sent',
+            createdAt: res.data.createdAt || new Date().toISOString(),
+          };
+          dispatch(addMessage(actualMsg));
+          const confirmUpdate = (m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m);
+          setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(confirmUpdate) } : null);
+          setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(confirmUpdate) } : c)));
+        } else if (res && res.status === 'error') {
+          const markFailed = (m) => (m.id === tempId || m.tempId === tempId ? { ...m, status: 'failed', errorMessage: res.message } : m);
+          setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(markFailed) } : null);
+          setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(markFailed) } : c)));
+          Alert.alert('Cannot Send Message', res?.message || 'Failed to resend message.');
+        }
+      });
+    } else {
+      apiClient.sendMessage(payload).then((res) => {
+        const sMsg = res?.data || res;
+        if (sMsg?._id || sMsg?.id) {
+          const actualMsg = {
+            id: (sMsg._id || sMsg.id).toString(),
+            tempId: tempId,
+            sender: 'you',
+            senderId: currentId,
+            receiverId: receiverId,
+            text: sMsg.text,
+            messageType: sMsg.messageType || 'text',
+            mediaUrl: sMsg.mediaUrl,
+            fileName: sMsg.fileName,
+            fileSize: sMsg.fileSize,
+            stickerId: sMsg.stickerId,
+            replyTo: parseReplyTo(sMsg?.replyTo) || parseReplyTo(failedMsg?.replyTo) || parseReplyTo(payload?.replyTo) || null,
+            reactions: Array.isArray(sMsg?.reactions) ? sMsg.reactions : [],
+            isEdited: Boolean(sMsg?.isEdited),
+            status: sMsg.status || 'sent',
+            createdAt: sMsg.createdAt || new Date().toISOString(),
+          };
+          dispatch(addMessage(actualMsg));
+          const confirmUpdate = (m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m);
+          setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(confirmUpdate) } : null);
+          setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(confirmUpdate) } : c)));
+        }
+      }).catch((err) => {
+        const errMsg = err?.data?.message || err?.message || 'Failed to resend message.';
+        const markFailed = (m) => (m.id === tempId || m.tempId === tempId ? { ...m, status: 'failed', errorMessage: errMsg } : m);
+        setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(markFailed) } : null);
+        setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(markFailed) } : c)));
+        Alert.alert('Cannot Send Message', errMsg);
+      });
+    }
+  };
 
     if (socketRef.current && socketRef.current.connected) {
       console.log('⚡ [PURE SOCKET EVENT] Emitting send_message socket event:', payload);
@@ -3656,136 +4366,329 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleMessageLongPress = (msg) => {
-    if (!msg || msg.id === 'match-init') return;
+    console.log('📌 [LONG PRESS TRIGGERED] Message:', msg);
+    if (!msg) return;
+    const msgId = (msg.id || msg._id || String(Date.now())).toString();
+    if (msgId === 'match-init') return;
 
-    const isMyMessage = msg.sender === 'you';
-    const options = [];
+    const normalizedMsg = {
+      ...msg,
+      id: msgId,
+      _id: msgId,
+    };
 
-    if (isMyMessage && (msg.messageType === 'text' || (!msg.messageType && msg.text && !msg.mediaUrl))) {
-      options.push({
-        text: 'Edit Message',
-        onPress: () => {
-          setEditingMessage(msg);
-          setTypedMessage(msg.text || '');
-        },
+    setSelectedMessageForAction(normalizedMsg);
+    setShowMessageActionModal(true);
+  };
+
+  const handleEmojiReaction = (emoji, targetMsg = null) => {
+    const msg = targetMsg || selectedMessageForAction;
+    if (!msg || !activeChat || !currentUser) return;
+    const sIdStr = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+    const rIdStr = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    const targetIdStr = (msg.id || msg._id)?.toString();
+    if (!sIdStr || !targetIdStr) return;
+
+    const currentReactions = Array.isArray(msg.reactions) ? msg.reactions : [];
+    const existingIdx = currentReactions.findIndex((r) => (r.userId?.toString() || r.userId) === sIdStr);
+    const isRemoving = existingIdx > -1 && currentReactions[existingIdx]?.emoji === emoji;
+    const action = isRemoving ? 'remove' : 'set';
+
+    // 1. Socket real-time broadcast
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('react_message', {
+        messageId: targetIdStr,
+        senderId: sIdStr,
+        receiverId: rIdStr,
+        emoji,
+        action,
       });
     }
 
-    // Helper: remove message from local state for a given chat partner
-    const removeMessageFromState = (msgId) => {
-      const chatPartnerId = activeChat?.id;
-      setChats((prevChats) =>
-        prevChats.map((c) => {
-          if (c.id === chatPartnerId) {
-            return { ...c, messages: c.messages.filter((m) => m.id !== msgId) };
-          }
-          return c;
-        })
-      );
-      setActiveChat((prevActive) => {
-        if (prevActive && prevActive.id === chatPartnerId) {
-          return { ...prevActive, messages: prevActive.messages.filter((m) => m.id !== msgId) };
+    // 2. HTTP REST persistence with deterministic action to guarantee MongoDB save without toggle conflict
+    apiClient.reactToMessage(targetIdStr, emoji, rIdStr, action).catch((err) => {
+      console.warn('apiClient.reactToMessage notice:', err?.message || err);
+    });
+
+    let calculatedReactions = [];
+    const updateMsgReactions = (m) => {
+      const mIdStr = (m.id || m._id)?.toString();
+      const mTempStr = m.tempId?.toString();
+      if (mIdStr !== targetIdStr && mTempStr !== targetIdStr) return m;
+      const reactions = Array.isArray(m.reactions) ? [...m.reactions] : [];
+      const userIdx = reactions.findIndex((r) => (r.userId?.toString() || r.userId) === sIdStr);
+      if (action === 'remove') {
+        if (userIdx > -1) {
+          reactions.splice(userIdx, 1);
         }
-        return prevActive;
-      });
+      } else {
+        if (userIdx > -1) {
+          reactions[userIdx] = { ...reactions[userIdx], emoji };
+        } else {
+          reactions.push({ userId: sIdStr, emoji });
+        }
+      }
+      calculatedReactions = reactions;
+      return { ...m, reactions };
     };
 
-    options.push({
-      text: 'Delete Message',
-      style: 'destructive',
-      onPress: () => {
-        // Show delete scope sub-alert
-        const deleteOptions = [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete for Me',
-            onPress: async () => {
-              try {
-                if (msg.id && !msg.id.toString().startsWith('temp-')) {
-                  await apiClient.deleteMessage(msg.id, false);
-                }
-                removeMessageFromState(msg.id);
-                refetchChatMessages();
-              } catch (err) {
-                console.error('Failed to delete message for me:', err);
-                Alert.alert('Error', 'Failed to delete message.');
-              }
-            },
-          },
-        ];
-
-        // "Delete for Everyone" only available for messages sent by the current user
-        if (isMyMessage) {
-          deleteOptions.push({
-            text: 'Delete for Everyone',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                if (msg.id && !msg.id.toString().startsWith('temp-')) {
-                  await apiClient.deleteMessage(msg.id, true);
-                }
-                // Remove from local state immediately (socket event will handle receiver side)
-                removeMessageFromState(msg.id);
-                refetchChatMessages();
-              } catch (err) {
-                console.error('Failed to delete message for everyone:', err);
-                Alert.alert('Error', 'Failed to delete message for everyone.');
-              }
-            },
-          });
-        }
-
-        Alert.alert(
-          'Delete Message',
-          isMyMessage
-            ? 'Choose how to delete this message:'
-            : 'Delete this message for yourself?',
-          deleteOptions,
-          { cancelable: true }
-        );
-      },
-    });
-
-    options.push({
-      text: 'Cancel',
-      style: 'cancel',
-    });
-
-    Alert.alert(
-      msg.fileName ? `Document Options` : 'Message Options',
-      msg.fileName ? `${msg.fileName}` : 'Choose an action:',
-      options,
-      { cancelable: true }
+    setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(updateMsgReactions) } : null);
+    setChats((prev) =>
+      prev.map((c) => {
+        const cId = (c.id || c._id || c.userId)?.toString();
+        return cId === rIdStr ? { ...c, messages: (c.messages || []).map(updateMsgReactions) } : c;
+      })
     );
+
+    dispatch(updateMessageReactions({ messageId: targetIdStr, tempId: msg.tempId, reactions: calculatedReactions }));
+
+    setShowMessageActionModal(false);
+  };
+
+  const handleCopyMessageText = (msg) => {
+    const targetMsg = msg || selectedMessageForAction;
+    if (!targetMsg) return;
+    const textToCopy = targetMsg.text || targetMsg.mediaUrl || '';
+    if (textToCopy) {
+      Clipboard.setString(textToCopy);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('Message copied to clipboard', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Copied', 'Message copied to clipboard');
+      }
+    }
+    setShowMessageActionModal(false);
+  };
+
+  const handlePinMessageAction = (msg) => {
+    const targetMsg = msg || selectedMessageForAction;
+    if (!targetMsg || !activeChat || !currentUser) return;
+    const sIdStr = (currentUser.id || currentUser._id)?.toString();
+    const rIdStr = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    const targetIdStr = (targetMsg.id || targetMsg._id)?.toString();
+    if (!targetIdStr) return;
+    const newIsPinned = !targetMsg.isPinned;
+
+    // Immediately register in recentPinActionRef to protect optimistic state against background polling lag
+    recentPinActionRef.current[targetIdStr] = {
+      isPinned: newIsPinned,
+      timestamp: Date.now(),
+    };
+    if (targetMsg.tempId) {
+      recentPinActionRef.current[targetMsg.tempId.toString()] = {
+        isPinned: newIsPinned,
+        timestamp: Date.now(),
+      };
+    }
+    if (newIsPinned) {
+      // Unpin any other records in recentPinActionRef for this chat
+      Object.keys(recentPinActionRef.current).forEach((k) => {
+        if (k !== targetIdStr && (!targetMsg.tempId || k !== targetMsg.tempId.toString())) {
+          recentPinActionRef.current[k] = { isPinned: false, timestamp: Date.now() };
+        }
+      });
+    }
+
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('pin_message', {
+        messageId: targetIdStr,
+        senderId: sIdStr,
+        receiverId: rIdStr,
+        isPinned: newIsPinned,
+      });
+    }
+
+    // Persist via HTTP REST endpoint as well to guarantee save in MongoDB
+    apiClient.pinMessage(targetIdStr, newIsPinned, rIdStr).catch((err) => {
+      console.warn('apiClient.pinMessage notice:', err?.message || err);
+    });
+
+    const updatePin = (m) => {
+      const mId = (m.id || m._id)?.toString();
+      const mTemp = m.tempId?.toString();
+      if (mId === targetIdStr || mTemp === targetIdStr) {
+        return { ...m, isPinned: newIsPinned };
+      }
+      if (newIsPinned) {
+        return { ...m, isPinned: false };
+      }
+      return m;
+    };
+
+    setActiveChat((prev) => prev ? { ...prev, messages: enforceSinglePin((prev.messages || []).map(updatePin)) } : null);
+    setChats((prev) =>
+      prev.map((c) => {
+        const cId = (c.id || c._id || c.userId)?.toString();
+        return cId === rIdStr ? { ...c, messages: enforceSinglePin((c.messages || []).map(updatePin)) } : c;
+      })
+    );
+
+    dispatch(updateMessagePinned({ messageId: targetIdStr, tempId: targetMsg.tempId, isPinned: newIsPinned }));
+
+    setSelectedMessageForAction(null);
+    setShowMessageActionModal(false);
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(newIsPinned ? 'Message pinned 📌' : 'Message unpinned', ToastAndroid.SHORT);
+    }
+  };
+
+  const handleToggleStarAction = (msg) => {
+    const targetMsg = msg || selectedMessageForAction;
+    if (!targetMsg || !activeChat || !currentUser) return;
+    const sIdStr = (currentUser.id || currentUser._id)?.toString();
+    const rIdStr = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    const targetIdStr = (targetMsg.id || targetMsg._id)?.toString();
+    if (!targetIdStr) return;
+    const newStarred = !targetMsg.isStarred;
+
+    recentStarActionRef.current[targetIdStr] = {
+      isStarred: newStarred,
+      timestamp: Date.now(),
+    };
+    if (targetMsg.tempId) {
+      recentStarActionRef.current[targetMsg.tempId.toString()] = {
+        isStarred: newStarred,
+        timestamp: Date.now(),
+      };
+    }
+
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('star_message', {
+        messageId: targetIdStr,
+        senderId: sIdStr,
+        receiverId: rIdStr,
+        isStarred: newStarred,
+      });
+    }
+
+    // Persist to MongoDB via REST API
+    apiClient.starMessage(targetIdStr, newStarred, rIdStr).catch((err) => {
+      console.warn('apiClient.starMessage notice:', err?.message || err);
+    });
+
+    const updateStar = (m) => {
+      const mId = (m.id || m._id)?.toString();
+      const mTemp = m.tempId?.toString();
+      if (mId === targetIdStr || mTemp === targetIdStr) {
+        return { ...m, isStarred: newStarred };
+      }
+      return m;
+    };
+
+    setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(updateStar) } : null);
+    setChats((prev) =>
+      prev.map((c) => {
+        const cId = (c.id || c._id || c.userId)?.toString();
+        return cId === rIdStr ? { ...c, messages: (c.messages || []).map(updateStar) } : c;
+      })
+    );
+
+    dispatch(updateMessageStarred({ messageId: targetIdStr, tempId: targetMsg.tempId, isStarred: newStarred }));
+
+    setSelectedMessageForAction(null);
+    setShowMessageActionModal(false);
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(newStarred ? 'Starred message ⭐' : 'Unstarred message', ToastAndroid.SHORT);
+    }
+  };
+
+  const handleForwardMessageAction = (targetChatUser) => {
+    if (!selectedMessageForAction || !targetChatUser || !currentUser) return;
+    const currentId = (currentUser.id || currentUser._id)?.toString();
+    const receiverId = (targetChatUser.id || targetChatUser._id || targetChatUser.userId)?.toString();
+
+    const forwardPayload = {
+      senderId: currentId,
+      receiverId: receiverId,
+      text: selectedMessageForAction.text || '',
+      messageType: selectedMessageForAction.messageType || 'text',
+      mediaUrl: selectedMessageForAction.mediaUrl || null,
+      fileName: selectedMessageForAction.fileName || null,
+      fileSize: selectedMessageForAction.fileSize || null,
+      stickerId: selectedMessageForAction.stickerId || null,
+    };
+
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('send_message', forwardPayload);
+    } else {
+      apiClient.sendMessage(forwardPayload).catch(() => {});
+    }
+
+    setShowForwardModal(false);
+    setShowMessageActionModal(false);
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(`Forwarded to ${targetChatUser.name || 'chat'}`, ToastAndroid.SHORT);
+    }
+  };
+
+  const handleExecuteDeleteAction = async (deleteType) => {
+    const msg = selectedMessageForAction;
+    if (!msg || !activeChat || !currentUser) return;
+    const sIdStr = (currentUser.id || currentUser._id)?.toString();
+    const rIdStr = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('delete_message', {
+        messageId: msg.id,
+        senderId: sIdStr,
+        receiverId: rIdStr,
+        deleteType: deleteType,
+      });
+    }
+
+    try {
+      if (msg.id && !msg.id.toString().startsWith('temp-')) {
+        await apiClient.deleteMessage(msg.id, deleteType === 'everyone');
+      }
+    } catch (err) {
+      console.warn('API delete message error:', err);
+    }
+
+    if (deleteType === 'everyone') {
+      const updateDeleted = (m) => m.id === msg.id ? { ...m, text: 'This message was deleted', mediaUrl: null, isDeletedForEveryone: true } : m;
+      setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(updateDeleted) } : null);
+      setChats((prev) => prev.map((c) => c.id === rIdStr ? { ...c, messages: (c.messages || []).map(updateDeleted) } : c));
+    } else {
+      const removeMsg = (m) => m.id !== msg.id;
+      setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).filter(removeMsg) } : null);
+      setChats((prev) => prev.map((c) => c.id === rIdStr ? { ...c, messages: (c.messages || []).filter(removeMsg) } : c));
+    }
+
+    setShowDeleteConfirmModal(false);
+    setShowMessageActionModal(false);
   };
 
 
   const handleClearChat = () => {
     if (!activeChat) return;
 
+    const selectedUserId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    const targetName = activeChat.name || activeChat.firstName || 'this chat';
+
     Alert.alert(
-      'Clear Chat',
-      `Are you sure you want to clear all messages in your chat with ${activeChat.name}? This will only delete it for you.`,
+      'Clear this chat?',
+      `Are you sure you want to clear all messages in your chat with ${targetName}? This action will delete the messages from your screen only.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear All',
+          text: 'Clear Chat',
           style: 'destructive',
-          onPress: () => {
-            const selectedUserId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+          onPress: async () => {
             if (!selectedUserId) return;
 
-            // ⚡ 1. Instant local state update (0ms UI latency)
             const placeholderMsg = [
               {
                 id: 'match-init',
                 sender: 'them',
-                text: `It's a Match! Say hi to ${activeChat.name || 'them'}! 👋`,
+                text: `It's a Match! Say hi to ${targetName}! 👋`,
               },
             ];
 
+            // ⚡ 1. Instant local state update on user's screen (0ms UI latency)
             setActiveChat((prevActive) => {
-              if (prevActive && (prevActive.id || prevActive._id || prevActive.userId)?.toString() === selectedUserId) {
+              if (!prevActive) return prevActive;
+              const pId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+              if (pId === selectedUserId) {
                 return {
                   ...prevActive,
                   messages: placeholderMsg,
@@ -3808,18 +4711,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               })
             );
 
-            dispatch(setMessages([]));
+            // ⚡ 2. Clear local storage cache for this chat partner
+            try {
+              const currentUserIdStr = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+              if (currentUserIdStr) {
+                const unsentStr = await AsyncStorage.getItem(`persistent_unsent_messages_${currentUserIdStr}`);
+                if (unsentStr) {
+                  const unsentList = JSON.parse(unsentStr);
+                  if (Array.isArray(unsentList)) {
+                    const filtered = unsentList.filter((item) => item.partnerId?.toString() !== selectedUserId);
+                    await AsyncStorage.setItem(`persistent_unsent_messages_${currentUserIdStr}`, JSON.stringify(filtered));
+                  }
+                }
+              }
+            } catch (e) {}
 
-            // ⚡ 2. Execute API in background
+            // ⚡ 3. Call server API to mark deletedBySender / deletedByReceiver for this user (Partner's chat history remains untouched)
             apiClient.clearChat(selectedUserId)
               .then(() => {
-                console.log('Chat cleared successfully for user:', selectedUserId);
-                if (typeof refetchMessages === 'function') refetchMessages();
+                console.log('Chat cleared successfully on server for user:', selectedUserId);
               })
               .catch((err) => {
                 console.error('Failed to clear chat on server:', err);
                 Alert.alert('Error', 'Failed to clear chat history on server.');
-                if (typeof refetchChatMessages === 'function') refetchChatMessages();
               });
           },
         },
@@ -4189,11 +5103,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const selectSticker = (sticker) => {
-    handleSendMessage({
-      messageType: 'sticker',
-      stickerId: sticker.id,
-      mediaUrl: sticker.char,
-    });
+    if (reactingToMessageForEmoji) {
+      handleEmojiReaction(sticker.char, reactingToMessageForEmoji);
+      setReactingToMessageForEmoji(null);
+    } else {
+      handleSendMessage({
+        messageType: 'sticker',
+        stickerId: sticker.id,
+        mediaUrl: sticker.char,
+      });
+    }
     setShowStickerPicker(false);
   };
 
@@ -4953,109 +5872,233 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                   keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
                 >
-                  <View style={styles.chatHeader}>
-                    <TouchableOpacity
-                      style={styles.chatBackButton}
-                      onPress={() => setActiveChat(null)}
-                    >
-                      <Text style={styles.chatBackArrow}>←</Text>
-                    </TouchableOpacity>
-                    {(() => {
-                      const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
-                      const isBlockedByOther = !!(
-                        activeChat.isBlockedByOther ||
-                        activeChat.name === 'Matched User' ||
-                        (partnerId && blockedByOtherList && blockedByOtherList.map((id) => id.toString()).includes(partnerId))
-                      );
-                      const isPartnerOnline = !isBlockedByOther && !!(
-                        partnerId && (
-                          onlineUsersMap[partnerId] !== undefined
-                            ? Boolean(onlineUsersMap[partnerId])
-                            : Boolean(activeChat.isOnline || activeChat.user?.isOnline)
-                        )
-                      );
-                      const partnerLastSeen = (partnerId && lastSeenMap[partnerId]) || activeChat.lastSeen || activeChat.user?.lastSeen;
+                  {isSearchInChatActive ? (
+                    <View style={styles.chatSearchHeaderBar}>
+                      <TouchableOpacity
+                        style={styles.chatBackButton}
+                        onPress={() => {
+                          setIsSearchInChatActive(false);
+                          setChatSearchQuery('');
+                          setChatSearchMatchIndex(0);
+                        }}
+                      >
+                        <Ionicons name="arrow-back" size={24} color="#AEBAC1" />
+                      </TouchableOpacity>
 
-                      return (
-                        <TouchableOpacity
-                          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                          activeOpacity={isBlockedByOther ? 1 : 0.8}
-                          disabled={isBlockedByOther}
-                          onPress={async () => {
-                            // If blocked by the other user, do NOT expand profile and do NOT call API
-                            if (isBlockedByOther) {
-                              return;
-                            }
-
-                            setLikesActivePhotoIndex(0);
-
-                            const localCandidate =
-                              (Array.isArray(MOCK_MATCHES) ? MOCK_MATCHES : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
-                              (Array.isArray(likesList) ? likesList : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
-                              (Array.isArray(chats) ? chats : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
-                              {};
-
-                            let enrichedProfile = { ...localCandidate, ...activeChat };
-
-                            try {
-                              if (partnerId) {
-                                const res = await apiClient.getUserById(partnerId);
-                                if (res && res.user) {
-                                  delete enrichedProfile.profileImages;
-                                  delete enrichedProfile.photos;
-                                  delete enrichedProfile.videos;
-                                  delete enrichedProfile.media;
-                                  enrichedProfile = { ...enrichedProfile, ...res.user };
-                                }
-                              }
-                            } catch (e) {
-                              console.log('Error fetching chat partner full profile by ID:', e);
-                            }
-
-                            setSelectedLikesProfile({ ...enrichedProfile, isFromChat: true });
+                      <View style={styles.chatSearchInputContainer}>
+                        <TextInput
+                          style={styles.chatSearchInput}
+                          placeholder="Search messages..."
+                          placeholderTextColor="#8696A0"
+                          value={chatSearchQuery}
+                          onChangeText={(val) => {
+                            setChatSearchQuery(val);
+                            setChatSearchMatchIndex(0);
                           }}
-                        >
-                          <View style={styles.avatarWrapper}>
-                            <Image
-                              source={{ uri: isBlockedByOther ? '' : getImageUrl(activeChat.image || activeChat.profileImage) }}
-                              style={styles.chatHeaderAvatar}
-                            />
-                            {isPartnerOnline && (
-                              <View style={styles.onlineDotOverlay} />
+                          autoFocus={true}
+                        />
+                        {chatSearchQuery.trim().length > 0 && (
+                          <TouchableOpacity
+                            onPress={() => {
+                              setChatSearchQuery('');
+                              setChatSearchMatchIndex(0);
+                            }}
+                            style={{ padding: 4, marginRight: 4 }}
+                          >
+                            <Ionicons name="close" size={18} color="#8696A0" />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+
+                      {(() => {
+                        const qTrim = chatSearchQuery.trim().toLowerCase();
+                        const matches = qTrim.length > 0 && activeChat?.messages
+                          ? activeChat.messages.filter((m) => !m.isDeletedForEveryone && m.text && m.text.toLowerCase().includes(qTrim))
+                          : [];
+                        return (
+                          <View style={styles.chatSearchNavContainer}>
+                            {qTrim.length > 0 && (
+                              <Text style={styles.chatSearchCountText}>
+                                {matches.length > 0 ? `${chatSearchMatchIndex + 1}/${matches.length}` : '0/0'}
+                              </Text>
                             )}
+                            <TouchableOpacity
+                              disabled={matches.length === 0}
+                              onPress={() => {
+                                if (matches.length > 0) {
+                                  setChatSearchMatchIndex((prev) => (prev > 0 ? prev - 1 : matches.length - 1));
+                                }
+                              }}
+                              style={{ padding: 4, opacity: matches.length > 0 ? 1 : 0.3 }}
+                            >
+                              <Ionicons name="chevron-up" size={22} color="#AEBAC1" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              disabled={matches.length === 0}
+                              onPress={() => {
+                                if (matches.length > 0) {
+                                  setChatSearchMatchIndex((prev) => (prev < matches.length - 1 ? prev + 1 : 0));
+                                }
+                              }}
+                              style={{ padding: 4, opacity: matches.length > 0 ? 1 : 0.3 }}
+                            >
+                              <Ionicons name="chevron-down" size={22} color="#AEBAC1" />
+                            </TouchableOpacity>
                           </View>
-                          <View style={styles.chatHeaderTitleContainer}>
-                            <Text style={styles.chatHeaderName}>
-                              {isBlockedByOther ? 'Matched User' : (activeChat.name || activeChat.firstName)}
-                            </Text>
-                            <Text style={styles.chatHeaderStatusText}>
-                              {isBlockedByOther
-                                ? ''
-                                : isPartnerOnline
-                                  ? 'Online'
-                                  : formatLastSeen(partnerLastSeen)}
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })()}
-                    {/* [VOICE CALLING HIDDEN AS REQUESTED]: Chat Header Voice Call button commented out
+                        );
+                      })()}
+                    </View>
+                  ) : (
+                    <View style={styles.chatHeader}>
+                      <TouchableOpacity
+                        style={styles.chatBackButton}
+                        onPress={() => {
+                          if (activeChat) {
+                            const activeId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+                            if (activeId && Array.isArray(activeChat.messages) && activeChat.messages.length > 0) {
+                              setChats((prevChats) =>
+                                (prevChats || []).map((c) => {
+                                  const cId = (c.id || c._id || c.userId)?.toString();
+                                  if (cId === activeId) {
+                                    return {
+                                      ...c,
+                                      messages: activeChat.messages,
+                                    };
+                                  }
+                                  return c;
+                                })
+                              );
+                            }
+                          }
+                          setIsSearchInChatActive(false);
+                          setChatSearchQuery('');
+                          setChatSearchMatchIndex(0);
+                          setActiveChat(null);
+                        }}
+                      >
+                        <Text style={styles.chatBackArrow}>←</Text>
+                      </TouchableOpacity>
+                      {(() => {
+                        const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
+                        const isBlockedByOther = !!(
+                          activeChat.isBlockedByOther ||
+                          activeChat.name === 'Matched User' ||
+                          (partnerId && blockedByOtherList && blockedByOtherList.map((id) => id.toString()).includes(partnerId))
+                        );
+                        const isPartnerOnline = !isBlockedByOther && !!(
+                          partnerId && (
+                            onlineUsersMap[partnerId] !== undefined
+                              ? Boolean(onlineUsersMap[partnerId])
+                              : Boolean(activeChat.isOnline || activeChat.user?.isOnline)
+                          )
+                        );
+                        const partnerLastSeen = (partnerId && lastSeenMap[partnerId]) || activeChat.lastSeen || activeChat.user?.lastSeen;
+
+                        return (
+                          <TouchableOpacity
+                            style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                            activeOpacity={isBlockedByOther ? 1 : 0.8}
+                            disabled={isBlockedByOther}
+                            onPress={async () => {
+                              if (isBlockedByOther) return;
+                              setLikesActivePhotoIndex(0);
+                              const localCandidate =
+                                (Array.isArray(MOCK_MATCHES) ? MOCK_MATCHES : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                                (Array.isArray(likesList) ? likesList : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                                (Array.isArray(chats) ? chats : []).find(m => (m?.id || m?._id || m?.userId)?.toString() === partnerId?.toString()) ||
+                                {};
+
+                              let enrichedProfile = { ...localCandidate, ...activeChat };
+
+                              try {
+                                if (partnerId) {
+                                  const res = await apiClient.getUserById(partnerId);
+                                  if (res && res.user) {
+                                    delete enrichedProfile.profileImages;
+                                    delete enrichedProfile.photos;
+                                    delete enrichedProfile.videos;
+                                    delete enrichedProfile.media;
+                                    enrichedProfile = { ...enrichedProfile, ...res.user };
+                                  }
+                                }
+                              } catch (e) {
+                                console.log('Error fetching chat partner full profile by ID:', e);
+                              }
+
+                              setSelectedLikesProfile({ ...enrichedProfile, isFromChat: true });
+                            }}
+                          >
+                            <View style={styles.avatarWrapper}>
+                              <Image
+                                source={{ uri: isBlockedByOther ? '' : getImageUrl(activeChat.image || activeChat.profileImage) }}
+                                style={styles.chatHeaderAvatar}
+                              />
+                              {isPartnerOnline && (
+                                <View style={styles.onlineDotOverlay} />
+                              )}
+                            </View>
+                            <View style={styles.chatHeaderTitleContainer}>
+                              <Text style={styles.chatHeaderName}>
+                                {isBlockedByOther ? 'Matched User' : (activeChat.name || activeChat.firstName)}
+                              </Text>
+                              <Text style={[styles.chatHeaderStatusText, isTyping && { color: '#FF4B72', fontWeight: 'bold' }]}>
+                                {isBlockedByOther
+                                  ? ''
+                                  : isTyping
+                                    ? 'typing...'
+                                    : isPartnerOnline
+                                      ? 'Online'
+                                      : formatLastSeen(partnerLastSeen)}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })()}
+                      <TouchableOpacity
+                        style={styles.chatThreeDotsButton}
+                        onPress={handleChatMenu}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.chatThreeDotsText}>⋮</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {pinnedMessage && (
                     <TouchableOpacity
-                      style={styles.callChatHeaderButton}
-                      onPress={makeVoiceCall}
-                      activeOpacity={0.7}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        const targetMsgId = (pinnedMessage.id || pinnedMessage._id)?.toString();
+                        if (targetMsgId && messageYPositionsRef.current[targetMsgId] !== undefined && chatScrollViewRef.current) {
+                          chatScrollViewRef.current.scrollTo({
+                            y: Math.max(0, messageYPositionsRef.current[targetMsgId] - 70),
+                            animated: true,
+                          });
+                          setHighlightedMessageId(targetMsgId);
+                          setTimeout(() => setHighlightedMessageId(null), 1500);
+                        }
+                      }}
+                      style={styles.pinnedBannerContainer}
                     >
-                      <Text style={styles.callChatHeaderText}>📞 Call</Text>
+                      <Ionicons name="pin" size={16} color="#00A884" style={{ marginRight: 8 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.pinnedBannerTitle}>Pinned Message</Text>
+                        <Text style={styles.pinnedBannerText} numberOfLines={1}>
+                          {pinnedMessage.text || (pinnedMessage.mediaUrl ? 'Media message' : 'Message')}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+                          handlePinMessageAction(pinnedMessage);
+                        }}
+                        style={{ padding: 6 }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.6)" />
+                      </TouchableOpacity>
                     </TouchableOpacity>
-                    */}
-                    <TouchableOpacity
-                      style={styles.chatThreeDotsButton}
-                      onPress={handleChatMenu}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.chatThreeDotsText}>⋮</Text>
-                    </TouchableOpacity>
-                  </View>
+                  )}
 
                   <ScrollView
                     ref={chatScrollViewRef}
@@ -5108,23 +6151,83 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       const isCall = !isVoice && (msg.messageType === 'voice_call' || msg.messageType === 'call');
 
                       const imageUrlToRender = getImageUrl(msg.mediaUrl || (isImage ? msg.text : ''));
+                      const replyToObj = parseReplyTo(msg.replyTo);
+                      const hasValidReplyTo = !!replyToObj;
+                      const isTransparentContainer = isSticker || (isImage && !hasValidReplyTo);
+
+                      const qTrim = isSearchInChatActive ? chatSearchQuery.trim().toLowerCase() : '';
+                      const searchMatches = qTrim.length > 0 && activeChat?.messages
+                        ? activeChat.messages.filter((m) => !m.isDeletedForEveryone && m.text && m.text.toLowerCase().includes(qTrim))
+                        : [];
+                      const isMatched = qTrim.length > 0 && msg.text && msg.text.toLowerCase().includes(qTrim);
+                      const activeMatchedMsg = searchMatches[chatSearchMatchIndex];
+                      const isActiveFocusedMatch = isMatched && activeMatchedMsg && (msg.id === activeMatchedMsg.id || msg._id === activeMatchedMsg._id);
 
                       return (
                         <View
                           key={msg.id}
+                          onLayout={(e) => {
+                            const y = e.nativeEvent.layout.y;
+                            const k = (msg.id || msg._id || msg.createdAt)?.toString();
+                            if (k && messageYPositionsRef.current) {
+                              messageYPositionsRef.current[k] = y;
+                            }
+                          }}
                           style={[
                             styles.messageBubbleWrapper,
-                            isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperThem
+                            isMe ? styles.bubbleWrapperMe : styles.bubbleWrapperThem,
+                            (Array.isArray(msg.reactions) && msg.reactions.length > 0) && { marginBottom: 16 }
                           ]}
                         >
-                          <TouchableOpacity
-                            activeOpacity={0.85}
+                          <Pressable
+                            delayLongPress={180}
                             onLongPress={() => handleMessageLongPress(msg)}
-                            style={[
-                              isSticker || isImage ? styles.transparentBubble : styles.messageBubble,
-                              isMe ? ((isSticker || isImage) ? null : styles.bubbleMe) : ((isSticker || isImage) ? null : styles.bubbleThem)
+                            style={({ pressed }) => [
+                              { opacity: pressed ? 0.85 : 1 },
+                              isTransparentContainer ? styles.transparentBubble : styles.messageBubble,
+                              isMe ? (isTransparentContainer ? null : styles.bubbleMe) : (isTransparentContainer ? null : styles.bubbleThem),
+                              isMatched && {
+                                borderWidth: 1.5,
+                                borderColor: isActiveFocusedMatch ? '#00A884' : 'rgba(0, 168, 132, 0.45)',
+                                backgroundColor: isActiveFocusedMatch ? 'rgba(0, 168, 132, 0.22)' : undefined,
+                              },
+                              (highlightedMessageId && (msg.id === highlightedMessageId || msg._id === highlightedMessageId || msg.id?.toString() === highlightedMessageId)) && {
+                                borderWidth: 2,
+                                borderColor: '#00A884',
+                                backgroundColor: 'rgba(0, 168, 132, 0.28)',
+                              }
                             ]}
                           >
+                            {hasValidReplyTo && (
+                              <TouchableOpacity
+                                activeOpacity={0.8}
+                                onPress={() => {
+                                  const targetMsgId = replyToObj.messageId?.toString();
+                                  if (targetMsgId && messageYPositionsRef.current[targetMsgId] !== undefined && chatScrollViewRef.current) {
+                                    chatScrollViewRef.current.scrollTo({
+                                      y: Math.max(0, messageYPositionsRef.current[targetMsgId] - 70),
+                                      animated: true,
+                                    });
+                                    setHighlightedMessageId(targetMsgId);
+                                    setTimeout(() => setHighlightedMessageId(null), 1500);
+                                  }
+                                }}
+                                style={[styles.quotedMessageCard, isMe ? styles.quotedCardMe : styles.quotedCardThem]}
+                              >
+                                <View style={[styles.quotedAccentLine, isMe ? styles.quotedLineMe : styles.quotedLineThem]} />
+                                <View style={styles.quotedTextContainer}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Text style={{ fontSize: 11, color: isMe ? '#06D755' : '#0284C7', marginRight: 4, fontWeight: '700' }}>↳</Text>
+                                    <Text style={[styles.quotedSenderName, isMe ? styles.quotedSenderNameMe : styles.quotedSenderNameThem]}>
+                                      {getQuotedSenderName(replyToObj, isMe, activeChat?.name, activeLoggedInUserId)}
+                                    </Text>
+                                  </View>
+                                  <Text style={[styles.quotedSnippetText, isMe ? styles.quotedSnippetMe : styles.quotedSnippetThem]} numberOfLines={2}>
+                                    {getQuotedSnippetText(replyToObj)}
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
+                            )}
                             {isSticker && (
                               <Text style={styles.stickerText}>{msg.mediaUrl || msg.text}</Text>
                             )}
@@ -5253,6 +6356,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                   </Text>
 
                                   <View style={styles.waVoiceMetaRight}>
+                                    {msg.isStarred && (
+                                      <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 4 }} />
+                                    )}
                                     {msg.createdAt && msg.createdAt !== 'match-init' && (
                                       <Text style={[styles.waVoiceTimeText, isMe ? styles.waVoiceMetaTextMe : styles.waVoiceMetaTextThem]}>
                                         {formatMessageTime(msg.createdAt)}
@@ -5260,7 +6366,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                     )}
                                     {isMe && msg.createdAt !== 'match-init' && (
                                       <Text style={[styles.statusTicks, (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? { color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' } : msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent]}>
-                                        {(msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                        {msg.status === 'failed' ? ' ⚠️ Failed (Tap to retry)' : (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
                                       </Text>
                                     )}
                                   </View>
@@ -5317,16 +6423,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                             {!isVoice && (
                               <View style={styles.messageMetaRow}>
+                                {msg.isPinned && (
+                                  <Ionicons name="pin" size={11} color={isMe ? "rgba(255,255,255,0.85)" : "#38BDF8"} style={{ marginRight: 4 }} />
+                                )}
+                                {msg.isStarred && (
+                                  <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 4 }} />
+                                )}
                                 {msg.isEdited && (
                                   <Text
                                     style={[
                                       styles.messageTimeText,
                                       isMe ? styles.messageTimeTextMe : styles.messageTimeTextThem,
-                                      { marginRight: 4, fontStyle: 'italic' },
+                                      { marginRight: 4, fontStyle: 'italic', fontSize: 10, opacity: 0.85 },
                                       isSticker && { color: 'rgba(255,255,255,0.6)' }
                                     ]}
                                   >
-                                    (edited)
+                                    Edited
                                   </Text>
                                 )}
                                 {msg.createdAt && msg.createdAt !== 'match-init' && (
@@ -5352,15 +6464,34 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 )}
                               </View>
                             )}
-                          </TouchableOpacity>
+
+                            {Array.isArray(msg.reactions) && msg.reactions.length > 0 && (() => {
+                              const emojiList = Array.from(new Set(msg.reactions.map(r => typeof r === 'string' ? r : (r?.emoji || r?.char || '')).filter(Boolean)));
+                              if (emojiList.length === 0) return null;
+                              return (
+                                <TouchableOpacity
+                                  activeOpacity={0.8}
+                                  onPress={() => handleEmojiReaction(emojiList[0], msg)}
+                                  style={[styles.reactionBadgePill, isMe ? styles.reactionPillMe : styles.reactionPillThem]}
+                                >
+                                  {emojiList.map((emoji, idx) => (
+                                    <Text key={idx} style={styles.reactionBadgeEmoji}>{emoji}</Text>
+                                  ))}
+                                  {msg.reactions.length > 0 && (
+                                    <Text style={styles.reactionBadgeCount}>{msg.reactions.length}</Text>
+                                  )}
+                                </TouchableOpacity>
+                              );
+                            })()}
+                          </Pressable>
                         </View>
                       );
                     })}
                     {isTyping && (
                       <View style={[styles.messageBubbleWrapper, styles.bubbleWrapperThem]}>
-                        <View style={[styles.messageBubble, styles.bubbleThem, { paddingVertical: 10 }]}>
-                          <Text style={[styles.messageText, styles.messageTextThem, { opacity: 0.6, fontStyle: 'italic' }]}>
-                            Typing
+                        <View style={[styles.messageBubble, styles.bubbleThem, { paddingVertical: 8, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center' }]}>
+                          <Text style={[styles.messageText, styles.messageTextThem, { opacity: 0.9, fontStyle: 'italic', color: '#FF4B72', fontWeight: 'bold' }]}>
+                            typing... 💬
                           </Text>
                         </View>
                       </View>
@@ -5382,6 +6513,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           </TouchableOpacity>
                         ))}
                       </ScrollView>
+                    </View>
+                  )}
+
+                  {replyingToMessage && (
+                    <View style={styles.replyPreviewBanner}>
+                      <View style={styles.replyPreviewBar} />
+                      <View style={{ flex: 1, paddingLeft: 8 }}>
+                        <Text style={styles.replyPreviewTitle}>
+                          Replying to {replyingToMessage.sender === 'you' || (replyingToMessage.senderId && replyingToMessage.senderId === (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString()) ? 'yourself' : (activeChat?.name || 'them')}
+                        </Text>
+                        <Text style={styles.replyPreviewText} numberOfLines={1}>
+                          {getQuotedSnippetText(replyingToMessage)}
+                        </Text>
+                      </View>
+                      <TouchableOpacity onPress={() => setReplyingToMessage(null)} style={styles.closeReplyBtn}>
+                        <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '700' }}>✕</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
 
@@ -5537,6 +6685,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         </TouchableOpacity>
 
                         <TextInput
+                          ref={chatInputRef}
                           style={styles.chatInput}
                           placeholder={editingMessage ? "Edit message..." : "Type a message..."}
                           placeholderTextColor="rgba(255, 255, 255, 0.4)"
@@ -6716,64 +7865,128 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </Modal>
         )}
 
-        {/* Chat Options Center Modal */}
+        {/* Authentic WhatsApp Dark Mode Top-Right Header Overflow Menu Modal */}
         {showChatOptionsMenuModal && activeChat && (
           <Modal
             visible={showChatOptionsMenuModal}
             transparent={true}
-            animationType="none"
+            animationType="fade"
             onRequestClose={() => setShowChatOptionsMenuModal(false)}
           >
             <TouchableOpacity
-              style={styles.chatMenuCenterOverlay}
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(0, 0, 0, 0.45)',
+                justifyContent: 'flex-start',
+                alignItems: 'flex-end',
+                paddingTop: Platform.OS === 'ios' ? (safeTopPadding + 50) : (safeTopPadding + 40),
+                paddingRight: 12,
+              }}
               activeOpacity={1}
               onPress={() => setShowChatOptionsMenuModal(false)}
             >
               <TouchableOpacity
                 activeOpacity={1}
-                style={styles.chatMenuCenterContent}
-                onPress={(e) => e.stopPropagation?.()}
+                style={{
+                  width: 220,
+                  backgroundColor: '#232D36',
+                  borderRadius: 14,
+                  paddingVertical: 6,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255, 255, 255, 0.08)',
+                  elevation: 15,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.5,
+                  shadowRadius: 10,
+                }}
               >
-                <Text style={styles.attachDialogTitle}>Options for {activeChat.name}</Text>
+                <TouchableOpacity
+                  style={styles.waContextMenuItem}
+                  onPress={() => {
+                    setShowChatOptionsMenuModal(false);
+                    const partnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+                    if (partnerId) {
+                      setSelectedLikesProfile({ ...activeChat, isFromChat: true });
+                    }
+                  }}
+                >
+                  <Ionicons name="person-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
+                  <Text style={styles.waContextMenuText}>View contact</Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={{
-                    paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderRadius: 12,
-                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                    marginBottom: 10,
-                    flexDirection: 'row',
-                    alignItems: 'center',
+                  style={styles.waContextMenuItem}
+                  onPress={() => {
+                    setShowChatOptionsMenuModal(false);
+                    if (Platform.OS === 'android') {
+                      ToastAndroid.show('Media & docs', ToastAndroid.SHORT);
+                    }
                   }}
+                >
+                  <Ionicons name="images-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
+                  <Text style={styles.waContextMenuText}>Media & docs</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.waContextMenuItem}
+                  onPress={() => {
+                    setShowChatOptionsMenuModal(false);
+                    setShowStarredModal(true);
+                  }}
+                >
+                  <Ionicons name="star-outline" size={19} color="#FFD700" style={{ marginRight: 14 }} />
+                  <Text style={styles.waContextMenuText}>Starred messages</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.waContextMenuItem}
+                  onPress={() => {
+                    setShowChatOptionsMenuModal(false);
+                    setIsSearchInChatActive(true);
+                    setChatSearchQuery('');
+                    setChatSearchMatchIndex(0);
+                  }}
+                >
+                  <Ionicons name="search-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
+                  <Text style={styles.waContextMenuText}>Search</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.waContextMenuItem}
+                  onPress={() => {
+                    setShowChatOptionsMenuModal(false);
+                    if (Platform.OS === 'android') {
+                      ToastAndroid.show('Notifications muted', ToastAndroid.SHORT);
+                    }
+                  }}
+                >
+                  <Ionicons name="notifications-off-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
+                  <Text style={styles.waContextMenuText}>Mute notifications</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.waContextMenuItem}
                   onPress={() => {
                     setShowChatOptionsMenuModal(false);
                     requestAnimationFrame(() => handleClearChat());
                   }}
-                  activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 18, marginRight: 12 }}>💬</Text>
-                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>Clear Chat History</Text>
+                  <Ionicons name="trash-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
+                  <Text style={styles.waContextMenuText}>Clear chat</Text>
                 </TouchableOpacity>
 
+                <View style={{ height: 1, backgroundColor: 'rgba(255, 255, 255, 0.08)', marginVertical: 4 }} />
+
                 <TouchableOpacity
-                  style={{
-                    paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderRadius: 12,
-                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                    marginBottom: 10,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                  }}
+                  style={styles.waContextMenuItem}
                   onPress={() => {
                     setShowChatOptionsMenuModal(false);
                     requestAnimationFrame(() => handleUnmatch(activeChat.id, activeChat.name));
                   }}
-                  activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 18, marginRight: 12 }}>🚫</Text>
-                  <Text style={{ color: '#FF453A', fontSize: 16, fontWeight: '600' }}>Unmatch User</Text>
+                  <Ionicons name="ban-outline" size={19} color="#F15C6D" style={{ marginRight: 14 }} />
+                  <Text style={[styles.waContextMenuText, { color: '#F15C6D' }]}>Unmatch user</Text>
                 </TouchableOpacity>
 
                 {(() => {
@@ -6785,15 +7998,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                   return (
                     <TouchableOpacity
-                      style={{
-                        paddingVertical: 14,
-                        paddingHorizontal: 16,
-                        borderRadius: 12,
-                        backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                        marginBottom: 10,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                      }}
+                      style={styles.waContextMenuItem}
                       onPress={() => {
                         setShowChatOptionsMenuModal(false);
                         if (isBlocked) {
@@ -6802,44 +8007,125 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           requestAnimationFrame(() => handleBlockUser(activeChat.id, activeChat.name));
                         }
                       }}
-                      activeOpacity={0.6}
                     >
-                      <Text style={{ fontSize: 18, marginRight: 12 }}>{isBlocked ? '🔓' : '🔒'}</Text>
-                      <Text style={{ color: isBlocked ? '#00E676' : '#FF453A', fontSize: 16, fontWeight: '600' }}>
-                        {isBlocked ? 'Unblock User' : 'Block User'}
+                      <Ionicons
+                        name={isBlocked ? "lock-open-outline" : "lock-closed-outline"}
+                        size={19}
+                        color={isBlocked ? "#00A884" : "#F15C6D"}
+                        style={{ marginRight: 14 }}
+                      />
+                      <Text style={[styles.waContextMenuText, { color: isBlocked ? "#00A884" : "#F15C6D" }]}>
+                        {isBlocked ? 'Unblock user' : 'Block user'}
                       </Text>
                     </TouchableOpacity>
                   );
                 })()}
 
                 <TouchableOpacity
-                  style={{
-                    paddingVertical: 14,
-                    paddingHorizontal: 16,
-                    borderRadius: 12,
-                    backgroundColor: 'rgba(255, 59, 48, 0.15)',
-                    marginBottom: 16,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                  }}
+                  style={styles.waContextMenuItem}
                   onPress={() => {
                     setShowChatOptionsMenuModal(false);
                     openReportForm(activeChat.id, activeChat.name);
                   }}
-                  activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 18, marginRight: 12 }}>⚠️</Text>
-                  <Text style={{ color: '#FF3B30', fontSize: 16, fontWeight: '600' }}>Report User</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.attachCancelBtn}
-                  onPress={() => setShowChatOptionsMenuModal(false)}
-                >
-                  <Text style={styles.attachCancelText}>Cancel</Text>
+                  <Ionicons name="alert-circle-outline" size={19} color="#F15C6D" style={{ marginRight: 14 }} />
+                  <Text style={[styles.waContextMenuText, { color: '#F15C6D' }]}>Report user</Text>
                 </TouchableOpacity>
               </TouchableOpacity>
             </TouchableOpacity>
+          </Modal>
+        )}
+
+        {/* WhatsApp Dark Mode Starred Messages Modal */}
+        {showStarredModal && activeChat && (
+          <Modal
+            visible={showStarredModal}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowStarredModal(false)}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' }}>
+              <View style={{
+                maxHeight: '80%',
+                backgroundColor: '#1F2C34',
+                borderTopLeftRadius: 20,
+                borderTopRightRadius: 20,
+                paddingHorizontal: 16,
+                paddingTop: 16,
+                paddingBottom: 24,
+              }}>
+                {/* Header */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)', paddingBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="star" size={22} color="#FFD700" style={{ marginRight: 10 }} />
+                    <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>Starred Messages</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setShowStarredModal(false)} style={{ padding: 4 }}>
+                    <Ionicons name="close" size={22} color="#8696A0" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Message List */}
+                {(() => {
+                  const starredMsgs = (activeChat.messages || []).filter((m) => m.isStarred);
+                  if (starredMsgs.length === 0) {
+                    return (
+                      <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="star-outline" size={48} color="rgba(255,255,255,0.2)" style={{ marginBottom: 12 }} />
+                        <Text style={{ color: '#8696A0', fontSize: 15, textAlign: 'center', paddingHorizontal: 20 }}>
+                          No starred messages yet.
+                        </Text>
+                        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textAlign: 'center', marginTop: 6, paddingHorizontal: 30 }}>
+                          Long press any message in the chat and tap Star to bookmark it here.
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <ScrollView style={{ maxHeight: 420 }}>
+                      {starredMsgs.map((sMsg) => {
+                        const isMe = sMsg.sender === 'you';
+                        return (
+                          <View
+                            key={sMsg.id}
+                            style={{
+                              backgroundColor: isMe ? '#005C4B' : '#202C33',
+                              borderRadius: 10,
+                              padding: 12,
+                              marginBottom: 10,
+                              borderLeftWidth: 3,
+                              borderLeftColor: '#FFD700',
+                            }}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                              <Text style={{ color: '#00A884', fontSize: 12, fontWeight: '700' }}>
+                                {isMe ? 'You' : (activeChat.name || 'Contact')}
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <Ionicons name="star" size={12} color="#FFD700" style={{ marginRight: 8 }} />
+                                <TouchableOpacity
+                                  onPress={() => handleToggleStarAction(sMsg)}
+                                  style={{ paddingHorizontal: 8, paddingVertical: 3, backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 4 }}
+                                >
+                                  <Text style={{ color: '#E9EDEF', fontSize: 11, fontWeight: '600' }}>Unstar</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                            <Text style={{ color: '#E9EDEF', fontSize: 14, marginVertical: 4 }}>
+                              {sMsg.text || (sMsg.mediaUrl ? (sMsg.messageType === 'image' ? '📷 Photo' : sMsg.messageType === 'voice' ? '🎤 Voice message' : '📄 Document') : 'Media')}
+                            </Text>
+                            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, textAlign: 'right', marginTop: 2 }}>
+                              {sMsg.createdAt ? new Date(sMsg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  );
+                })()}
+              </View>
+            </View>
           </Modal>
         )}
 
@@ -7084,6 +8370,464 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             fetchQuestionnaires();
           }}
         />
+
+        {/* Authentic WhatsApp Dark Mode Message Context Popover Modal */}
+        {showMessageActionModal && selectedMessageForAction && (
+          <Modal
+            visible={showMessageActionModal}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setShowMessageActionModal(false)}
+          >
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(11, 20, 26, 0.85)',
+                justifyContent: 'center',
+                alignItems: 'center',
+                paddingHorizontal: 20,
+              }}
+              activeOpacity={1}
+              onPress={() => setShowMessageActionModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={{
+                  width: '100%',
+                  maxWidth: 300,
+                  alignItems: selectedMessageForAction.sender === 'you' ? 'flex-end' : 'flex-start',
+                }}
+              >
+                {/* Floating Top Emoji Reaction Bar Pill */}
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: '#202C33',
+                    borderRadius: 25,
+                    paddingVertical: 6,
+                    paddingHorizontal: 12,
+                    marginBottom: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    elevation: 10,
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.4,
+                    shadowRadius: 8,
+                  }}
+                >
+                  {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => (
+                    <TouchableOpacity
+                      key={emoji}
+                      onPress={() => handleEmojiReaction(emoji)}
+                      style={{
+                        paddingHorizontal: 5,
+                        paddingVertical: 2,
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ fontSize: 24 }}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 14,
+                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      marginLeft: 4,
+                    }}
+                    onPress={() => {
+                      setReactingToMessageForEmoji(selectedMessageForAction);
+                      setShowMessageActionModal(false);
+                      setShowStickerPicker(true);
+                    }}
+                  >
+                    <Ionicons name="add" size={18} color="#AEBAC1" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Selected Message Bubble Highlighted Preview */}
+                <View
+                  style={{
+                    maxWidth: '90%',
+                    backgroundColor: selectedMessageForAction.sender === 'you' ? '#005C4B' : '#202C33',
+                    borderRadius: 12,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    marginBottom: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    alignSelf: selectedMessageForAction.sender === 'you' ? 'flex-end' : 'flex-start',
+                  }}
+                >
+                  <Text style={{ color: '#E9EDEF', fontSize: 15, lineHeight: 20 }}>
+                    {selectedMessageForAction.text || selectedMessageForAction.mediaUrl || 'Media Message'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 4 }}>
+                    <Text style={{ color: '#8696A0', fontSize: 11, marginRight: 4 }}>
+                      {selectedMessageForAction.createdAt ? formatMessageTime(selectedMessageForAction.createdAt) : 'Just now'}
+                    </Text>
+                    {selectedMessageForAction.sender === 'you' && (
+                      <Text style={{ color: selectedMessageForAction.status === 'seen' ? '#53BDEB' : '#8696A0', fontSize: 12 }}>
+                        ✓✓
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {/* Vertical WhatsApp Context Menu Card */}
+                <View
+                  style={{
+                    width: 230,
+                    backgroundColor: '#232D36',
+                    borderRadius: 16,
+                    paddingVertical: 6,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
+                    elevation: 12,
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 6 },
+                    shadowOpacity: 0.45,
+                    shadowRadius: 10,
+                    alignSelf: selectedMessageForAction.sender === 'you' ? 'flex-end' : 'flex-start',
+                  }}
+                >
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => {
+                      setShowMessageActionModal(false);
+                      setShowInfoModal(true);
+                    }}
+                  >
+                    <Ionicons name="information-circle-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
+                    <Text style={styles.waContextMenuText}>Message info</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => {
+                      setShowMessageActionModal(false);
+                      setReplyingToMessage(selectedMessageForAction);
+                      setTimeout(() => {
+                        chatInputRef.current?.focus();
+                      }, 150);
+                    }}
+                  >
+                    <Ionicons name="arrow-undo-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
+                    <Text style={styles.waContextMenuText}>Reply</Text>
+                  </TouchableOpacity>
+
+                  {selectedMessageForAction.sender === 'you' && !selectedMessageForAction.isDeletedForEveryone && (selectedMessageForAction.messageType === 'text' || !selectedMessageForAction.messageType || selectedMessageForAction.text) && (
+                    <TouchableOpacity
+                      style={styles.waContextMenuItem}
+                      onPress={() => {
+                        setShowMessageActionModal(false);
+                        setEditingMessage(selectedMessageForAction);
+                        setTypedMessage(selectedMessageForAction.text || '');
+                      }}
+                    >
+                      <Ionicons name="pencil-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
+                      <Text style={styles.waContextMenuText}>Edit</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => handleCopyMessageText(selectedMessageForAction)}
+                  >
+                    <Ionicons name="copy-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
+                    <Text style={styles.waContextMenuText}>Copy</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => {
+                      setShowMessageActionModal(false);
+                      setShowForwardModal(true);
+                    }}
+                  >
+                    <Ionicons name="arrow-redo-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
+                    <Text style={styles.waContextMenuText}>Forward</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => handlePinMessageAction(selectedMessageForAction)}
+                  >
+                    <Ionicons name="push-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
+                    <Text style={styles.waContextMenuText}>
+                      {selectedMessageForAction.isPinned ? 'Unpin' : 'Pin'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => handleToggleStarAction(selectedMessageForAction)}
+                  >
+                    <Ionicons
+                      name={selectedMessageForAction.isStarred ? 'star' : 'star-outline'}
+                      size={20}
+                      color={selectedMessageForAction.isStarred ? '#FFD700' : '#AEBAC1'}
+                      style={{ marginRight: 16 }}
+                    />
+                    <Text style={styles.waContextMenuText}>
+                      {selectedMessageForAction.isStarred ? 'Unstar' : 'Star'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <View style={{ height: 1, backgroundColor: 'rgba(255, 255, 255, 0.08)', marginVertical: 4 }} />
+
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => {
+                      setShowMessageActionModal(false);
+                      setShowDeleteConfirmModal(true);
+                    }}
+                  >
+                    <Ionicons name="trash-outline" size={20} color="#F15C6D" style={{ marginRight: 16 }} />
+                    <Text style={[styles.waContextMenuText, { color: '#F15C6D' }]}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        )}
+
+        {/* Authentic WhatsApp Dark Delete Confirmation Modal */}
+        {showDeleteConfirmModal && selectedMessageForAction && (
+          <Modal
+            visible={showDeleteConfirmModal}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setShowDeleteConfirmModal(false)}
+          >
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(11, 20, 26, 0.85)',
+                justifyContent: 'center',
+                alignItems: 'center',
+                paddingHorizontal: 24,
+              }}
+              activeOpacity={1}
+              onPress={() => setShowDeleteConfirmModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={{
+                  width: '100%',
+                  maxWidth: 320,
+                  backgroundColor: '#202C33',
+                  borderRadius: 18,
+                  padding: 20,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255, 255, 255, 0.08)',
+                }}
+              >
+                <Text style={{ color: '#E9EDEF', fontSize: 17, fontWeight: '700', marginBottom: 12 }}>
+                  Delete message?
+                </Text>
+                <Text style={{ color: '#8696A0', fontSize: 14, marginBottom: 20, lineHeight: 18 }}>
+                  Choose whether to delete this message only for yourself or for everyone in this chat.
+                </Text>
+
+                <View style={{ alignItems: 'flex-end', gap: 14 }}>
+                  {selectedMessageForAction.sender === 'you' && (
+                    <TouchableOpacity
+                      onPress={() => handleExecuteDeleteAction('everyone')}
+                      style={{ paddingVertical: 4, paddingHorizontal: 8 }}
+                    >
+                      <Text style={{ color: '#F15C6D', fontWeight: '700', fontSize: 15 }}>
+                        Delete for everyone
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity
+                    onPress={() => handleExecuteDeleteAction('me')}
+                    style={{ paddingVertical: 4, paddingHorizontal: 8 }}
+                  >
+                    <Text style={{ color: '#00A884', fontWeight: '700', fontSize: 15 }}>
+                      Delete for me
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setShowDeleteConfirmModal(false)}
+                    style={{ paddingVertical: 4, paddingHorizontal: 8 }}
+                  >
+                    <Text style={{ color: '#8696A0', fontWeight: '600', fontSize: 15 }}>
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        )}
+
+        {/* WhatsApp Message Info Modal */}
+        {showInfoModal && selectedMessageForAction && (
+          <Modal
+            visible={showInfoModal}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setShowInfoModal(false)}
+          >
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                justifyContent: 'center',
+                alignItems: 'center',
+                paddingHorizontal: 24,
+              }}
+              activeOpacity={1}
+              onPress={() => setShowInfoModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={{
+                  width: '100%',
+                  maxWidth: 320,
+                  backgroundColor: '#1E222B',
+                  borderRadius: 20,
+                  padding: 20,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255, 255, 255, 0.15)',
+                }}
+              >
+                <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '700', marginBottom: 14 }}>
+                  Message Details ℹ️
+                </Text>
+
+                <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 16 }}>
+                  <Text style={{ color: '#FFF', fontSize: 14 }}>
+                    {selectedMessageForAction.text || selectedMessageForAction.mediaUrl || 'Media'}
+                  </Text>
+                </View>
+
+                <View style={{ gap: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Sender:</Text>
+                    <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>
+                      {selectedMessageForAction.sender === 'you' ? 'You' : activeChat?.name || 'Partner'}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Status:</Text>
+                    <Text style={{ color: selectedMessageForAction.status === 'seen' ? '#00E676' : '#FFD700', fontSize: 13, fontWeight: '600' }}>
+                      {selectedMessageForAction.status ? selectedMessageForAction.status.toUpperCase() : 'SENT'}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Timestamp:</Text>
+                    <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>
+                      {selectedMessageForAction.createdAt ? formatMessageTime(selectedMessageForAction.createdAt) : 'Just now'}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#FE3C72',
+                    paddingVertical: 12,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    marginTop: 20,
+                  }}
+                  onPress={() => setShowInfoModal(false)}
+                >
+                  <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Close</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        )}
+
+        {/* WhatsApp Forward Message Modal */}
+        {showForwardModal && selectedMessageForAction && (
+          <Modal
+            visible={showForwardModal}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowForwardModal(false)}
+          >
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                justifyContent: 'flex-end',
+              }}
+              activeOpacity={1}
+              onPress={() => setShowForwardModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={{
+                  width: '100%',
+                  maxHeight: '60%',
+                  backgroundColor: '#1E222B',
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 24,
+                  padding: 20,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255, 255, 255, 0.15)',
+                }}
+              >
+                <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '700', marginBottom: 14 }}>
+                  Forward message to...
+                </Text>
+                <ScrollView style={{ flex: 1 }}>
+                  {chats && chats.length > 0 ? (
+                    chats.map((c) => {
+                      const cId = (c.id || c._id || c.userId);
+                      return (
+                        <TouchableOpacity
+                          key={cId}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            paddingVertical: 12,
+                            borderBottomWidth: 1,
+                            borderBottomColor: 'rgba(255,255,255,0.08)',
+                          }}
+                          onPress={() => handleForwardMessageAction(c)}
+                        >
+                          <Image
+                            source={{ uri: getImageUrl(c.image || c.profileImage) }}
+                            style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12 }}
+                          />
+                          <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '600' }}>{c.name || 'User'}</Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  ) : (
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginVertical: 20 }}>
+                      No other active chats available to forward
+                    </Text>
+                  )}
+                </ScrollView>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.1)',
+                    paddingVertical: 12,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    marginTop: 14,
+                  }}
+                  onPress={() => setShowForwardModal(false)}
+                >
+                  <Text style={{ color: '#FFF', fontWeight: '600', fontSize: 14 }}>Cancel</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        )}
       </View>
     </View>
   );
@@ -7743,6 +9487,41 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.3)',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  chatSearchHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#1F2C34',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  chatSearchInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2A3942',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'ios' ? 6 : 2,
+    marginHorizontal: 8,
+  },
+  chatSearchInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 15,
+    paddingVertical: 4,
+  },
+  chatSearchNavContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chatSearchCountText: {
+    color: '#8696A0',
+    fontSize: 13,
+    fontWeight: '600',
+    marginRight: 6,
   },
   chatBackButton: {
     paddingRight: 15,
@@ -10663,5 +12442,348 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '800',
+  },
+
+  // --- WhatsApp Rich Messaging Styles ---
+  pinnedBannerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1F2C34',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+  },
+  pinnedBannerTitle: {
+    color: '#00A884',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  pinnedBannerText: {
+    color: '#E9EDEF',
+    fontSize: 13,
+    marginTop: 1,
+  },
+  replyPreviewBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E2638',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  replyPreviewBar: {
+    width: 4,
+    height: '100%',
+    backgroundColor: '#FE3C72',
+    borderRadius: 2,
+  },
+  replyPreviewTitle: {
+    color: '#FE3C72',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  replyPreviewText: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  closeReplyBtn: {
+    padding: 6,
+  },
+  quotedMessageCard: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 6,
+    overflow: 'hidden',
+  },
+  quotedCardMe: {
+    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+  },
+  quotedCardThem: {
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  quotedAccentLine: {
+    width: 4,
+    borderRadius: 2,
+    marginRight: 8,
+  },
+  quotedLineMe: {
+    backgroundColor: '#06D755',
+  },
+  quotedLineThem: {
+    backgroundColor: '#0284C7',
+  },
+  quotedTextContainer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  quotedSenderName: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  quotedSenderNameMe: {
+    color: '#06D755',
+  },
+  quotedSenderNameThem: {
+    color: '#0284C7',
+  },
+  quotedSnippetText: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  quotedSnippetMe: {
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+  quotedSnippetThem: {
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  reactionBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    position: 'absolute',
+    bottom: -11,
+    borderWidth: 1.5,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    zIndex: 10,
+  },
+  reactionPillMe: {
+    left: 8,
+    backgroundColor: '#1E2B32',
+    borderColor: '#0B141A',
+  },
+  reactionPillThem: {
+    right: 8,
+    backgroundColor: '#202C33',
+    borderColor: '#111B21',
+  },
+  reactionBadgeEmoji: {
+    fontSize: 12,
+    marginHorizontal: 1,
+  },
+  reactionBadgeCount: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 10,
+    fontWeight: '700',
+    marginLeft: 3,
+  },
+
+  // --- WhatsApp Action Popover Modal Styles ---
+  waActionOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  waActionContentContainer: {
+    width: '85%',
+    maxWidth: 320,
+    alignItems: 'flex-end',
+  },
+  waEmojiReactionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#232D36',
+    borderRadius: 25,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+  },
+  waEmojiBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  waEmojiText: {
+    fontSize: 22,
+  },
+  waEmojiPlusBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 4,
+  },
+  waEmojiPlusText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  waMenuContainer: {
+    width: 210,
+    backgroundColor: '#232D36',
+    borderRadius: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  waMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  waMenuIcon: {
+    marginRight: 14,
+  },
+  waMenuText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  waMenuDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginVertical: 4,
+  },
+
+  // --- WhatsApp Delete Confirmation Modal Styles ---
+  waDeleteOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  waDeleteModalBox: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#232D36',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    elevation: 10,
+  },
+  waDeleteModalTitle: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 16,
+  },
+  waDeleteOptionBtn: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  waDeleteOptionText: {
+    color: '#38BDF8',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  waDeleteCancelBtn: {
+    paddingVertical: 12,
+    marginTop: 6,
+    alignItems: 'flex-end',
+  },
+  waDeleteCancelText: {
+    color: '#FE3C72',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  waInfoModalBox: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#232D36',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  waInfoLabel: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  waInfoValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  waForwardModalBox: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#232D36',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  waForwardUserRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  waForwardAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+    backgroundColor: '#334155',
+  },
+  waForwardUserName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  waModalOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  waModalOptionText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  waContextMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  waContextMenuText: {
+    color: '#E9EDEF',
+    fontSize: 15,
+    fontWeight: '400',
   },
 });

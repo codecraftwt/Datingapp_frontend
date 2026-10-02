@@ -1181,6 +1181,24 @@ export const apiClient = {
       return { success: true, reports: [] };
     }
   },
+  reactToMessage: async (messageId, emoji, receiverId, action = 'set') => {
+    return await request(`/api/chat/messages/${messageId}/react`, {
+      method: 'POST',
+      body: JSON.stringify({ emoji, receiverId, action }),
+    });
+  },
+  pinMessage: async (messageId, isPinned, receiverId) => {
+    return await request(`/api/chat/messages/${messageId}/pin`, {
+      method: 'POST',
+      body: JSON.stringify({ isPinned, receiverId }),
+    });
+  },
+  starMessage: async (messageId, isStarred, receiverId) => {
+    return await request(`/api/chat/messages/${messageId}/star`, {
+      method: 'POST',
+      body: JSON.stringify({ isStarred, receiverId }),
+    });
+  },
   resetResolvedUrl: () => {
     resetResolvedUrl();
   },

@@ -14,16 +14,75 @@ const chatSlice = createSlice({
   initialState,
   reducers: {
     setMessages: (state, action) => {
-      state.messages = action.payload;
+      const msgs = action.payload || [];
+      state.messages = msgs;
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        const msgsMap = new Map();
+        msgs.forEach((m) => {
+          const mId = (m._id || m.id)?.toString();
+          if (mId) msgsMap.set(mId, m);
+          if (m.tempId) msgsMap.set(m.tempId.toString(), m);
+        });
+        state.allMessages = (state.allMessages || []).map((m) => {
+          const mId = (m._id || m.id)?.toString();
+          const mTemp = m.tempId?.toString();
+          const match = (mId && msgsMap.get(mId)) || (mTemp && msgsMap.get(mTemp));
+          if (match) {
+            return {
+              ...m,
+              ...match,
+              isPinned: match.isPinned !== undefined ? match.isPinned : m.isPinned,
+              reactions: Array.isArray(match.reactions) ? match.reactions : m.reactions,
+              replyTo: match.replyTo || m.replyTo,
+            };
+          }
+          return m;
+        });
+      }
     },
     setAllMessages: (state, action) => {
-      state.allMessages = action.payload;
+      const newMsgs = action.payload || [];
+      // Keep any active thread optimistic isPinned or reactions
+      if (Array.isArray(state.messages) && state.messages.length > 0) {
+        const activePinned = state.messages.find((m) => m.isPinned);
+        if (activePinned) {
+          const pId = (activePinned._id || activePinned.id)?.toString();
+          const pTemp = activePinned.tempId?.toString();
+          state.allMessages = newMsgs.map((m) => {
+            const mId = (m._id || m.id)?.toString();
+            const mTemp = m.tempId?.toString();
+            if ((pId && mId === pId) || (pTemp && (mTemp === pTemp || mId === pTemp))) {
+              return { ...m, isPinned: true };
+            }
+            return m;
+          });
+          return;
+        }
+      }
+      state.allMessages = newMsgs;
     },
     addMessage: (state, action) => {
-      // Avoid duplicate messages
-      const exists = state.messages.some(msg => msg._id === action.payload._id || (action.payload.tempId && msg.tempId === action.payload.tempId));
-      if (!exists) {
-        state.messages.push(action.payload);
+      const msg = action.payload;
+      if (!msg) return;
+      const mId = msg._id || msg.id;
+      const msgTempId = msg.tempId;
+
+      const idxInMsgs = state.messages.findIndex(
+        m => (m._id || m.id) === mId || (msgTempId && (m.tempId === msgTempId || (m._id || m.id) === msgTempId))
+      );
+      if (idxInMsgs === -1) {
+        state.messages.push(msg);
+      } else {
+        state.messages[idxInMsgs] = { ...state.messages[idxInMsgs], ...msg };
+      }
+
+      const idxInAll = state.allMessages.findIndex(
+        m => (m._id || m.id) === mId || (msgTempId && (m.tempId === msgTempId || (m._id || m.id) === msgTempId))
+      );
+      if (idxInAll === -1) {
+        state.allMessages.push(msg);
+      } else {
+        state.allMessages[idxInAll] = { ...state.allMessages[idxInAll], ...msg };
       }
     },
     updateMessageStatus: (state, action) => {
@@ -52,6 +111,72 @@ const chatSlice = createSlice({
       const { userId, isTyping } = action.payload;
       state.typingUsers[userId] = isTyping;
     },
+    updateMessageReactions: (state, action) => {
+      const { messageId, tempId, reactions } = action.payload;
+      const targetIdStr = messageId?.toString();
+      const targetTempStr = tempId?.toString();
+      const updateList = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.map((msg) => {
+          const mIdStr = (msg.id || msg._id)?.toString();
+          const mTempStr = msg.tempId?.toString();
+          if (
+            (targetIdStr && (mIdStr === targetIdStr || mTempStr === targetIdStr)) ||
+            (targetTempStr && (mIdStr === targetTempStr || mTempStr === targetTempStr))
+          ) {
+            return { ...msg, reactions: Array.isArray(reactions) ? reactions : [] };
+          }
+          return msg;
+        });
+      };
+      state.messages = updateList(state.messages);
+      state.allMessages = updateList(state.allMessages);
+    },
+    updateMessagePinned: (state, action) => {
+      const { messageId, tempId, isPinned } = action.payload;
+      const targetIdStr = messageId?.toString();
+      const targetTempStr = tempId?.toString();
+      const updateList = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.map((msg) => {
+          const mIdStr = (msg.id || msg._id)?.toString();
+          const mTempStr = msg.tempId?.toString();
+          if (
+            (targetIdStr && (mIdStr === targetIdStr || mTempStr === targetIdStr)) ||
+            (targetTempStr && (mIdStr === targetTempStr || mTempStr === targetTempStr))
+          ) {
+            return { ...msg, isPinned: !!isPinned };
+          }
+          if (isPinned) {
+            return { ...msg, isPinned: false };
+          }
+          return msg;
+        });
+      };
+      state.messages = updateList(state.messages);
+      state.allMessages = updateList(state.allMessages);
+    },
+    updateMessageStarred: (state, action) => {
+      const { messageId, tempId, isStarred } = action.payload;
+      const targetIdStr = messageId?.toString();
+      const targetTempStr = tempId?.toString();
+      const updateList = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.map((msg) => {
+          const mIdStr = (msg.id || msg._id)?.toString();
+          const mTempStr = msg.tempId?.toString();
+          if (
+            (targetIdStr && (mIdStr === targetIdStr || mTempStr === targetIdStr)) ||
+            (targetTempStr && (mIdStr === targetTempStr || mTempStr === targetTempStr))
+          ) {
+            return { ...msg, isStarred: !!isStarred };
+          }
+          return msg;
+        });
+      };
+      state.messages = updateList(state.messages);
+      state.allMessages = updateList(state.allMessages);
+    },
     clearChat: (state) => {
       state.messages = [];
       state.activeChatUser = null;
@@ -70,6 +195,9 @@ export const {
   deleteMessageInState,
   setActiveChatUser,
   setTyping,
+  updateMessageReactions,
+  updateMessagePinned,
+  updateMessageStarred,
   clearChat,
 } = chatSlice.actions;
 
