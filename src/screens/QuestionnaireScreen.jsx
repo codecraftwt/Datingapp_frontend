@@ -28,22 +28,22 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import Video from 'react-native-video';
 
 const INTEREST_OPTIONS = [
-  ' Music',
-  ' Travel',
+  'Music',
+  'Travel',
   'Fitness',
-  ' Movies',
-  ' Gaming',
-  ' Cooking',
-  ' Art',
-  ' Photography',
-  ' Reading',
-  ' Dancing',
-  ' Coffee',
-  ' Pets',
-  ' Wine',
-  ' Yoga',
-  ' Foodie',
-  ' Camping',
+  'Movies',
+  'Gaming',
+  'Cooking',
+  'Art',
+  'Photography',
+  'Reading',
+  'Dancing',
+  'Coffee',
+  'Pets',
+  'Wine',
+  'Yoga',
+  'Foodie',
+  'Camping',
 ];
 
 const ORIENTATIONS = ['Straight', 'Gay', 'Lesbian', 'Bisexual', 'Pansexual', 'Queer'];
@@ -53,23 +53,59 @@ const SMOKE_HABITS = ['Never', 'Socially', 'Regularly'];
 const EXERCISE_HABITS = ['Active', 'Sometimes', 'Never'];
 const PETS_OPTIONS = ['Dog', 'Cat', 'Both', 'None'];
 const EDUCATION_LEVELS = [
-  ' High School',
-  ' Bachelors Degree',
-  ' Masters Degree',
-  ' Doctorate / PhD',
-  ' Trade / Vocational',
-  ' Other Education',
+  'High School',
+  'Bachelors Degree',
+  'Masters Degree',
+  'Doctorate / PhD',
+  'Trade / Vocational',
+  'Other Education',
 ];
 const ZODIAC_SIGNS = ['Aries', 'Taurus', 'Gemini', 'Cancer', 'Leo', 'Virgo', 'Libra', 'Scorpio', 'Sagittarius', 'Capricorn', 'Aquarius', 'Pisces'];
 const LANGUAGE_OPTIONS = ['English', 'Hindi', 'Spanish', 'French', 'German', 'Marathi', 'Mandarin', 'Japanese', 'Italian', 'Portuguese', 'Russian', 'Arabic'];
 
 const JOB_EXAMPLES = [
-  ' Software Engineer',
-  ' Teacher',
-  ' Doctor',
-  ' Student',
-  ' Business Owner',
+  'Software Engineer',
+  'Teacher',
+  'Doctor',
+  'Student',
+  'Business Owner',
 ];
+
+const getOptionIcon = (label, isSelected) => {
+  const clean = (label || '').trim().toLowerCase();
+  const iconColor = isSelected ? '#FFFFFF' : '#FFD700';
+  const size = 15;
+  const style = { marginRight: 6 };
+
+  if (clean.includes('music')) return <Ionicons name="musical-notes-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('travel')) return <Ionicons name="airplane-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('fitness')) return <Ionicons name="fitness-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('movies')) return <Ionicons name="film-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('gaming')) return <Ionicons name="game-controller-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('cooking')) return <Ionicons name="restaurant-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('art')) return <Ionicons name="color-palette-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('photography')) return <Ionicons name="camera-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('reading')) return <Ionicons name="book-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('dancing')) return <Ionicons name="body-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('coffee')) return <Ionicons name="cafe-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('pets') || clean.includes('dog') || clean.includes('cat')) return <Ionicons name="paw-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('wine')) return <Ionicons name="wine-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('yoga')) return <Ionicons name="accessibility-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('foodie')) return <Ionicons name="pizza-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('camping')) return <Ionicons name="compass-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('high school') || clean.includes('school')) return <Ionicons name="school-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('bachelors') || clean.includes('degree')) return <Ionicons name="ribbon-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('masters')) return <Ionicons name="ribbon" size={size} color={iconColor} style={style} />;
+  if (clean.includes('doctorate') || clean.includes('phd')) return <Ionicons name="trophy-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('trade') || clean.includes('vocational')) return <Ionicons name="construct-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('engineer') || clean.includes('software')) return <Ionicons name="code-slash-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('teacher')) return <Ionicons name="school-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('doctor')) return <Ionicons name="medkit-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('student')) return <Ionicons name="book-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('business') || clean.includes('owner')) return <Ionicons name="briefcase-outline" size={size} color={iconColor} style={style} />;
+
+  return null;
+};
 
 const HEIGHT_OPTIONS = [
   "5'2\" (157 cm)",
@@ -1297,9 +1333,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                         onPress={() => setEducationLevel(edu)}
                         activeOpacity={0.8}
                       >
-                        <Text style={[styles.chipText, educationLevel === edu && styles.chipTextSelected]}>
-                          {edu}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          {getOptionIcon(edu, educationLevel === edu)}
+                          <Text style={[styles.chipText, educationLevel === edu && styles.chipTextSelected]}>
+                            {edu}
+                          </Text>
+                        </View>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -1361,7 +1400,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   </View>
                   <View style={styles.wrapRow}>
                     {jobExamplesList.map((j) => {
-                      const titleOnly = j.replace(/^[^\s]+\s/, '');
+                      const titleOnly = j.trim();
                       const isSelected = job === titleOnly || job === j;
                       return (
                         <TouchableOpacity
@@ -1370,9 +1409,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                           onPress={() => setJob(titleOnly)}
                           activeOpacity={0.8}
                         >
-                          <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
-                            {j}
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            {getOptionIcon(j, isSelected)}
+                            <Text style={[styles.chipText, isSelected && styles.chipTextSelected]}>
+                              {j}
+                            </Text>
+                          </View>
                         </TouchableOpacity>
                       );
                     })}
@@ -1446,9 +1488,12 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                           onPress={() => toggleInterest(item)}
                           activeOpacity={0.8}
                         >
-                          <Text style={[styles.interestChipText, isSelected && styles.interestChipTextSelected]}>
-                            {item}
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            {getOptionIcon(item, isSelected)}
+                            <Text style={[styles.interestChipText, isSelected && styles.interestChipTextSelected]}>
+                              {item}
+                            </Text>
+                          </View>
                         </TouchableOpacity>
                       );
                     })}

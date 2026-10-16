@@ -21,6 +21,7 @@ function MainApp() {
   const [isInitializing, setIsInitializing] = useState(true);
   const [screenStack, setScreenStack] = useState(['LOGIN']);
   const [userProfile, setUserProfile] = useState(null);
+  const user = useSelector(selectCurrentUser);
   const [isConnected, setIsConnected] = useState(true);
   const [topToast, setTopToast] = useState({ visible: false, message: '', type: 'info' });
 
@@ -97,6 +98,7 @@ function MainApp() {
               dispatch(logout());
               setUserProfile(null);
               setScreenStack(['LOGIN']);
+              navigateTo('LOGIN');
               setTimeout(() => {
                 setIsDeactivationAlertShowing(false);
               }, 1500);
@@ -130,7 +132,6 @@ function MainApp() {
   };
   
   const dispatch = useDispatch();
-  const user = useSelector(selectCurrentUser);
 
   const checkUnreadNotifications = async () => {
     try {
@@ -391,6 +392,7 @@ function MainApp() {
     setUserProfile(null);
 
     // 1. Instantly navigate to LOGIN screen so transition is immediate without network delay
+    setScreenStack(['LOGIN']);
     navigateTo('LOGIN');
 
     // 2. Run backend logout API asynchronously in background

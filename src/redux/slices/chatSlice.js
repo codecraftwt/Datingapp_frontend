@@ -15,10 +15,49 @@ const chatSlice = createSlice({
   reducers: {
     setMessages: (state, action) => {
       const msgs = action.payload || [];
-      state.messages = msgs;
-      if (Array.isArray(msgs) && msgs.length > 0) {
+      const deletedIds = new Set();
+      (state.messages || []).forEach((m) => {
+        if (m.isDeletedForEveryone || m.text === 'This message was deleted') {
+          if (m._id) deletedIds.add(m._id.toString());
+          if (m.id) deletedIds.add(m.id.toString());
+          if (m.tempId) deletedIds.add(m.tempId.toString());
+        }
+      });
+      (state.allMessages || []).forEach((m) => {
+        if (m.isDeletedForEveryone || m.text === 'This message was deleted') {
+          if (m._id) deletedIds.add(m._id.toString());
+          if (m.id) deletedIds.add(m.id.toString());
+          if (m.tempId) deletedIds.add(m.tempId.toString());
+        }
+      });
+
+      state.messages = msgs.map((m) => {
+        const mId = (m._id || m.id)?.toString();
+        const mTemp = m.tempId?.toString();
+        const isDel = Boolean(
+          m.isDeletedForEveryone ||
+          m.text === 'This message was deleted' ||
+          (mId && deletedIds.has(mId)) ||
+          (mTemp && deletedIds.has(mTemp))
+        );
+        if (isDel) {
+          return {
+            ...m,
+            isDeletedForEveryone: true,
+            text: 'This message was deleted',
+            mediaUrl: null,
+            fileName: null,
+            fileSize: null,
+            reactions: [],
+            isPinned: false,
+          };
+        }
+        return m;
+      });
+
+      if (Array.isArray(state.messages) && state.messages.length > 0) {
         const msgsMap = new Map();
-        msgs.forEach((m) => {
+        state.messages.forEach((m) => {
           const mId = (m._id || m.id)?.toString();
           if (mId) msgsMap.set(mId, m);
           if (m.tempId) msgsMap.set(m.tempId.toString(), m);
@@ -28,12 +67,18 @@ const chatSlice = createSlice({
           const mTemp = m.tempId?.toString();
           const match = (mId && msgsMap.get(mId)) || (mTemp && msgsMap.get(mTemp));
           if (match) {
+            const isDel = Boolean(m.isDeletedForEveryone || match.isDeletedForEveryone);
             return {
               ...m,
               ...match,
-              isPinned: match.isPinned !== undefined ? match.isPinned : m.isPinned,
-              reactions: Array.isArray(match.reactions) ? match.reactions : m.reactions,
-              replyTo: match.replyTo || m.replyTo,
+              isDeletedForEveryone: isDel,
+              text: isDel ? 'This message was deleted' : (match.text || m.text),
+              mediaUrl: isDel ? null : (match.mediaUrl || m.mediaUrl),
+              fileName: isDel ? null : (match.fileName || m.fileName),
+              fileSize: isDel ? null : (match.fileSize || m.fileSize),
+              isPinned: isDel ? false : (match.isPinned !== undefined ? match.isPinned : m.isPinned),
+              reactions: isDel ? [] : (Array.isArray(match.reactions) ? match.reactions : m.reactions),
+              replyTo: isDel ? null : (match.replyTo || m.replyTo),
             };
           }
           return m;
@@ -42,24 +87,63 @@ const chatSlice = createSlice({
     },
     setAllMessages: (state, action) => {
       const newMsgs = action.payload || [];
-      // Keep any active thread optimistic isPinned or reactions
-      if (Array.isArray(state.messages) && state.messages.length > 0) {
-        const activePinned = state.messages.find((m) => m.isPinned);
-        if (activePinned) {
-          const pId = (activePinned._id || activePinned.id)?.toString();
-          const pTemp = activePinned.tempId?.toString();
-          state.allMessages = newMsgs.map((m) => {
-            const mId = (m._id || m.id)?.toString();
-            const mTemp = m.tempId?.toString();
-            if ((pId && mId === pId) || (pTemp && (mTemp === pTemp || mId === pTemp))) {
-              return { ...m, isPinned: true };
-            }
-            return m;
-          });
-          return;
+      const deletedIds = new Set();
+      (state.messages || []).forEach((m) => {
+        if (m.isDeletedForEveryone || m.text === 'This message was deleted') {
+          if (m._id) deletedIds.add(m._id.toString());
+          if (m.id) deletedIds.add(m.id.toString());
+          if (m.tempId) deletedIds.add(m.tempId.toString());
         }
+      });
+      (state.allMessages || []).forEach((m) => {
+        if (m.isDeletedForEveryone || m.text === 'This message was deleted') {
+          if (m._id) deletedIds.add(m._id.toString());
+          if (m.id) deletedIds.add(m.id.toString());
+          if (m.tempId) deletedIds.add(m.tempId.toString());
+        }
+      });
+
+      const activeMap = new Map();
+      if (Array.isArray(state.messages) && state.messages.length > 0) {
+        state.messages.forEach((m) => {
+          const mId = (m._id || m.id)?.toString();
+          if (mId) activeMap.set(mId, m);
+          if (m.tempId) activeMap.set(m.tempId.toString(), m);
+        });
       }
-      state.allMessages = newMsgs;
+
+      state.allMessages = newMsgs.map((m) => {
+        const mId = (m._id || m.id)?.toString();
+        const mTemp = m.tempId?.toString();
+        const match = (mId && activeMap.get(mId)) || (mTemp && activeMap.get(mTemp));
+        const isDel = Boolean(
+          m.isDeletedForEveryone ||
+          m.text === 'This message was deleted' ||
+          (match && match.isDeletedForEveryone) ||
+          (mId && deletedIds.has(mId)) ||
+          (mTemp && deletedIds.has(mTemp))
+        );
+        if (isDel) {
+          return {
+            ...m,
+            isDeletedForEveryone: true,
+            text: 'This message was deleted',
+            mediaUrl: null,
+            fileName: null,
+            fileSize: null,
+            isPinned: false,
+            reactions: [],
+          };
+        }
+        if (match) {
+          return {
+            ...m,
+            isPinned: match.isPinned !== undefined ? match.isPinned : m.isPinned,
+            reactions: Array.isArray(match.reactions) ? match.reactions : m.reactions,
+          };
+        }
+        return m;
+      });
     },
     addMessage: (state, action) => {
       const msg = action.payload;
@@ -101,8 +185,57 @@ const chatSlice = createSlice({
       }
     },
     deleteMessageInState: (state, action) => {
-      const messageId = action.payload;
-      state.messages = state.messages.filter(msg => msg._id !== messageId);
+      const targetIdStr = action.payload?.toString();
+      if (!targetIdStr) return;
+      const filterList = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.filter((msg) => {
+          const mIdStr = (msg.id || msg._id)?.toString();
+          const mTempStr = msg.tempId?.toString();
+          return mIdStr !== targetIdStr && mTempStr !== targetIdStr;
+        });
+      };
+      state.messages = filterList(state.messages);
+      state.allMessages = filterList(state.allMessages);
+    },
+    deleteForEveryoneInState: (state, action) => {
+      const targetIdStr = action.payload?.toString();
+      if (!targetIdStr) return;
+      const updateList = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.map((msg) => {
+          const mIdStr = (msg.id || msg._id)?.toString();
+          const mTempStr = msg.tempId?.toString();
+          if (mIdStr === targetIdStr || mTempStr === targetIdStr) {
+            return {
+              ...msg,
+              text: 'This message was deleted',
+              mediaUrl: null,
+              fileName: null,
+              fileSize: null,
+              reactions: [],
+              isDeletedForEveryone: true,
+            };
+          }
+          return msg;
+        });
+      };
+      state.messages = updateList(state.messages);
+      state.allMessages = updateList(state.allMessages);
+    },
+    deleteForMeInState: (state, action) => {
+      const targetIdStr = action.payload?.toString();
+      if (!targetIdStr) return;
+      const filterList = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.filter((msg) => {
+          const mIdStr = (msg.id || msg._id)?.toString();
+          const mTempStr = msg.tempId?.toString();
+          return mIdStr !== targetIdStr && mTempStr !== targetIdStr;
+        });
+      };
+      state.messages = filterList(state.messages);
+      state.allMessages = filterList(state.allMessages);
     },
     setActiveChatUser: (state, action) => {
       state.activeChatUser = action.payload;
@@ -193,6 +326,8 @@ export const {
   updateMessageStatus,
   editMessageInState,
   deleteMessageInState,
+  deleteForEveryoneInState,
+  deleteForMeInState,
   setActiveChatUser,
   setTyping,
   updateMessageReactions,

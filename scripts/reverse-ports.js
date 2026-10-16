@@ -12,9 +12,10 @@ try {
       if (deviceId) {
         console.log(`[reverse-ports] Setting up ports for device: ${deviceId}`);
         try {
+          execSync(`adb -s ${deviceId} reverse tcp:8081 tcp:8081`);
           execSync(`adb -s ${deviceId} reverse tcp:5000 tcp:5000`);
           execSync(`adb -s ${deviceId} reverse tcp:9090 tcp:9090`);
-          console.log(`[reverse-ports] Successfully reversed tcp:5000 and tcp:9090 on ${deviceId}`);
+          console.log(`[reverse-ports] Successfully reversed tcp:8081, tcp:5000, and tcp:9090 on ${deviceId}`);
         } catch (err) {
           console.warn(`[reverse-ports] Could not reverse ports on ${deviceId}: ${err.message}`);
         }

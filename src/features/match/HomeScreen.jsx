@@ -427,7 +427,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       if (audioRecorderPlayerRef.current) {
         try {
           audioRecorderPlayerRef.current.stopPlayer();
-        } catch (_) {}
+        } catch (_) { }
       }
       if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
       if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
@@ -473,7 +473,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const callStateRef = useRef(callState);
   const callSessionRef = useRef(callSession);
-  
+
   useEffect(() => {
     callStateRef.current = callState;
     callSessionRef.current = callSession;
@@ -485,7 +485,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       console.log('mediaDevices type:', typeof mediaDevices);
       console.log('mediaDevices keys:', mediaDevices ? Object.keys(mediaDevices) : 'null');
       console.log('mediaDevices.getUserMedia type:', mediaDevices ? typeof mediaDevices.getUserMedia : 'undefined');
-      
+
       const stream = await mediaDevices.getUserMedia({
         audio: true,
         video: false,
@@ -509,7 +509,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         { urls: 'stun:stun1.l.google.com:19302' },
       ],
     };
-    
+
     const pc = new RTCPeerConnection(configuration);
     peerConnectionRef.current = pc;
 
@@ -540,7 +540,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const makeVoiceCall = async () => {
     if (!activeChat || !currentUser || !socketRef.current) return;
     const currentId = currentUser.id || currentUser._id;
-    
+
     setCallSession({
       id: activeChat.id,
       name: activeChat.name,
@@ -614,7 +614,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       callerId: callSession.id,
       receiverId: currentId,
     });
-    
+
     setCallState('idle');
     setCallSession(null);
   };
@@ -624,7 +624,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
-    
+
     if (callTimerRef.current) {
       clearInterval(callTimerRef.current);
       callTimerRef.current = null;
@@ -1286,7 +1286,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('unmatched', ({ unmatchedBy }) => {
         console.log('Socket.IO unmatched event received:', unmatchedBy);
-        
+
         // Close the active chat if it's with the user who unmatched us
         setActiveChat((prevActive) => {
           if (prevActive && prevActive.id.toString() === unmatchedBy.toString()) {
@@ -1626,9 +1626,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           if (socketRef.current && socketRef.current.connected) {
             socketRef.current.emit('ping_presence', currentId);
           }
-          try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+          try { apiClient.updatePresence({ isOnline: true }).catch(() => { }); } catch (e) { }
         } else {
-          try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
+          try { apiClient.updatePresence({ isOnline: false }).catch(() => { }); } catch (e) { }
         }
       };
 
@@ -1655,10 +1655,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       if (finalOnlineStatus) {
-        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) {}
-        try { if (typeof refetchMessages === 'function') refetchMessages(); } catch (e) {}
-        try { if (typeof refetchMatchesList === 'function') refetchMatchesList(); } catch (e) {}
-        try { apiClient.updatePresence({ isOnline: true }).catch(() => {}); } catch (e) {}
+        try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) { }
+        try { if (typeof refetchMessages === 'function') refetchMessages(); } catch (e) { }
+        try { if (typeof refetchMatchesList === 'function') refetchMatchesList(); } catch (e) { }
+        try { apiClient.updatePresence({ isOnline: true }).catch(() => { }); } catch (e) { }
 
         if (socketRef.current) {
           if (!socketRef.current.connected) {
@@ -1677,11 +1677,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       } else if ((nextAppState === 'background' || nextAppState === 'inactive') && currentId) {
         console.log('[AppState] App in background/inactive (Match). Updating presence API to offline...');
-        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => { }); } catch (e) { }
         if (socketRef.current) {
           console.log('[AppState] Emitting going_offline and disconnecting synchronously for user:', currentId);
-          try { socketRef.current.emit('going_offline', currentId); } catch (e) {}
-          try { socketRef.current.disconnect(); } catch (e) {}
+          try { socketRef.current.emit('going_offline', currentId); } catch (e) { }
+          try { socketRef.current.disconnect(); } catch (e) { }
         }
       }
     };
@@ -1716,10 +1716,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       if (!finalOnlineStatus) {
         console.log('[NetInfo] Conditions not met (network/Wi-Fi off or inactive). Disconnecting socket and going offline...');
-        try { apiClient.updatePresence({ isOnline: false }).catch(() => {}); } catch (e) {}
+        try { apiClient.updatePresence({ isOnline: false }).catch(() => { }); } catch (e) { }
         if (socketRef.current) {
-          try { if (currentId) socketRef.current.emit('going_offline', currentId); } catch (e) {}
-          try { socketRef.current.disconnect(); } catch (e) {}
+          try { if (currentId) socketRef.current.emit('going_offline', currentId); } catch (e) { }
+          try { socketRef.current.disconnect(); } catch (e) { }
         }
       } else {
         console.log('[NetInfo] All 3 conditions met (Network + App Active + Logged In). Reconnecting socket if needed.');
@@ -2496,7 +2496,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
 
       if (audioRecorderPlayerRef.current) {
-        try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) {}
+        try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) { }
       }
       setPlayingMessageId(null);
 
@@ -2611,7 +2611,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       if (playingMessageId === msgId) {
         if (audioRecorderPlayerRef.current) {
-          try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) {}
+          try { await audioRecorderPlayerRef.current.stopPlayer(); } catch (_) { }
         }
         if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
         setPlayingMessageId(null);
@@ -2623,7 +2623,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         try {
           audioRecorderPlayerRef.current.removePlaybackEndListener();
           await audioRecorderPlayerRef.current.stopPlayer();
-        } catch (_) {}
+        } catch (_) { }
       }
       if (playbackIntervalRef.current) clearInterval(playbackIntervalRef.current);
 
@@ -2860,7 +2860,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         <View style={styles.likeGridInfo}>
                           <Text style={styles.likeGridName}>{item.name}, {item.age}</Text>
                           <Text style={styles.likeGridDistance}>{item.distance}</Text>
-                          
+
                           {/* Reject / Accept buttons */}
                           <View style={styles.likeGridCardActionRow}>
                             <TouchableOpacity
@@ -2870,7 +2870,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             >
                               <Text style={[styles.likeGridCardActionText, styles.likeGridCardActionTextDislike]}>✖</Text>
                             </TouchableOpacity>
-                            
+
                             <TouchableOpacity
                               style={[styles.likeGridCardActionBtn, styles.likeGridCardActionBtnLike]}
                               onPress={() => handleLikeMatch(item)}
@@ -3154,7 +3154,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           {(() => {
             const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
-            
+
             const chatsUnread = (chats || []).reduce((total, c) => {
               const count = (c.messages || []).filter(
                 (m) => (m.sender !== 'you' && (m.senderId || m.sender)?.toString() !== currentId) && m.id !== 'match-init' && m.status !== 'seen'
@@ -3301,79 +3301,79 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   <View style={styles.cardExpandedGrid}>
                     {MOCK_MATCHES[swipeIndex].gender && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>👤</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].gender}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].orientation && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🏳️‍🌈</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].orientation}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].lookingFor && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🎯</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].lookingFor}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].drinkHabit && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🍷</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].drinkHabit}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].smokeHabit && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🚭</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].smokeHabit}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].exercise && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>💪</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].exercise}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].pets && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🐕</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].pets}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].educationLevel && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🎓</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].educationLevel}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].height && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>📏</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].height}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].weight && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>⚖️</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].weight}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].job && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>💼</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].job}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].college && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🏛️</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].college}</Text>
                       </View>
                     )}
                     {MOCK_MATCHES[swipeIndex].zodiac && (
                       <View style={styles.cardExpandedItem}>
-                        <Text style={styles.cardExpandedEmoji}>🌌</Text>
+                        <Text style={styles.cardExpandedEmoji}></Text>
                         <Text style={styles.cardExpandedText}>{MOCK_MATCHES[swipeIndex].zodiac}</Text>
                       </View>
                     )}
@@ -3581,7 +3581,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           >
             <View style={styles.matchPopupOverlay}>
               <View style={styles.matchPopupCard}>
-                <Text style={styles.matchPopupTitle}>It's a Match! 🎉</Text>
+                <Text style={styles.matchPopupTitle}>It's a Match! </Text>
                 <Text style={styles.matchPopupSubtitle}>
                   You and {matchedUser.name} liked each other.
                 </Text>
@@ -3629,7 +3629,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             >
               <View style={styles.attachDialogContent}>
                 <Text style={styles.attachDialogTitle}>Options for {activeChat.name}</Text>
-                
+
                 <TouchableOpacity
                   style={{
                     paddingVertical: 14,
@@ -6152,7 +6152,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  
+
   // --- Voice Call Styles ---
   callChatHeaderButton: {
     paddingVertical: 6,

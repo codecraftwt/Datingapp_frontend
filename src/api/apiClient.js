@@ -717,7 +717,7 @@ export const apiClient = {
     });
   },
   deleteMessage: async (messageId, deleteForEveryone = false) => {
-    return await request(`/api/chat/messages/${messageId}`, {
+    return await request(`/api/chat/messages/${messageId}?deleteForEveryone=${deleteForEveryone}`, {
       method: 'DELETE',
       body: JSON.stringify({ deleteForEveryone }),
     });
