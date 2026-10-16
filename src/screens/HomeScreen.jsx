@@ -25,6 +25,7 @@ import {
   ActivityIndicator,
   ToastAndroid,
   Clipboard,
+  StatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
@@ -170,6 +171,14 @@ const getImageUrl = (url) => {
   return formatConfigUrl(url);
 };
 
+const formatPlayerSeconds = (sec) => {
+  if (!sec || isNaN(sec) || sec < 0) return '0:00';
+  const totalSecs = Math.floor(sec);
+  const mins = Math.floor(totalSecs / 60);
+  const remainingSecs = totalSecs % 60;
+  return `${mins}:${remainingSecs < 10 ? '0' : ''}${remainingSecs}`;
+};
+
 const parseReplyTo = (replyObj) => {
   if (!replyObj) return null;
   let parsed = replyObj;
@@ -215,9 +224,9 @@ const getQuotedSnippetText = (replyObj) => {
 
   if (type === 'image') {
     if (replyObj.text && typeof replyObj.text === 'string' && replyObj.text.trim().length > 0 && !replyObj.text.startsWith('http') && !replyObj.text.startsWith('data:image')) {
-      return `📷 ${replyObj.text.trim()}`;
+      return ` ${replyObj.text.trim()}`;
     }
-    return '📷 Photo';
+    return ' Photo';
   }
   if (type === 'video') return ' Video';
   if (type === 'voice' || type === 'audio') return '🎤 Voice message';
@@ -614,7 +623,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [selectedLikesProfile, setSelectedLikesProfile] = useState(null);
   const [likesActivePhotoIndex, setLikesActivePhotoIndex] = useState(0);
   const [likesPreviewStoryIndex, setLikesPreviewStoryIndex] = useState(null);
+  const [reactionDetailsModalMsg, setReactionDetailsModalMsg] = useState(null);
+  const [reactionModalActiveTab, setReactionModalActiveTab] = useState('all');
   const [viewMediaModal, setViewMediaModal] = useState({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
+  const [imageZoomScale, setImageZoomScale] = useState(1);
+  const [imageRotation, setImageRotation] = useState(0);
+  const [isAudioModalPaused, setIsAudioModalPaused] = useState(false);
+  const [audioModalPosition, setAudioModalPosition] = useState(0);
+  const [audioModalDuration, setAudioModalDuration] = useState(0);
+  const [audioPlaybackRate, setAudioPlaybackRate] = useState(1.0);
+  const [isAudioModalMuted, setIsAudioModalMuted] = useState(false);
+  const modalAudioPlayerRef = useRef(null);
+  const audioScrubberWidthRef = useRef(280);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const chatScrollViewRef = useRef(null);
   const messageYPositionsRef = useRef({});
@@ -862,8 +882,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   // Android / Emulator Hardware Back Button Handler for HomeScreen Tabs, Modals, and Active Chat
   useEffect(() => {
     const onHardwareBackPress = () => {
+      // 0. Close WhatsApp media preview modal if open
+      if (pendingMediaSend) {
+        setPendingMediaSend(null);
+        setMediaCaptionText('');
+        setIsMediaUploading(false);
+        return true;
+      }
+
+      // 0.2. Close likes story preview modal if open
+      if (likesPreviewStoryIndex !== null) {
+        setLikesPreviewStoryIndex(null);
+        return true;
+      }
+
+      // 0.3. Close reaction details modal if open
+      if (reactionDetailsModalMsg) {
+        setReactionDetailsModalMsg(null);
+        return true;
+      }
+
       // 1. Close active media preview modal if open
       if (viewMediaModal && viewMediaModal.visible) {
+        setIsAudioModalPaused(true);
+        setImageZoomScale(1);
+        setImageRotation(0);
         setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
         return true;
       }
@@ -916,7 +959,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     const backSubscription = BackHandler.addEventListener('hardwareBackPress', onHardwareBackPress);
     return () => backSubscription.remove();
-  }, [activeTab, activeChat, viewMediaModal, onGoBack]);
+  }, [activeTab, activeChat, viewMediaModal, pendingMediaSend, onGoBack]);
 
   useEffect(() => {
     if (activeTab === 'likes') {
@@ -1154,6 +1197,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [activeStickerCategory, setActiveStickerCategory] = useState('romance');
   const [recentStickers, setRecentStickers] = useState([]);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
+  const [pendingMediaSend, setPendingMediaSend] = useState(null); // { uri, fileName, fileSize, type, mediaType, asset }
+  const [mediaCaptionText, setMediaCaptionText] = useState('');
+  const [isMediaUploading, setIsMediaUploading] = useState(false);
   const [onlineUsersMap, setOnlineUsersMap] = useState({});
   const [lastSeenMap, setLastSeenMap] = useState({});
   const [offlineQueue, setOfflineQueue] = useState([]);
@@ -1239,6 +1285,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showForwardModal, setShowForwardModal] = useState(false);
+  const [messagesToForward, setMessagesToForward] = useState([]);
   const [forwardSearchQuery, setForwardSearchQuery] = useState('');
   const [selectedForwardUserIds, setSelectedForwardUserIds] = useState([]);
   const [isSendingForward, setIsSendingForward] = useState(false);
@@ -1564,7 +1611,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
               fileName: isDel ? null : (fMsg.fileName || existing.fileName),
               fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
-              reactions: isDel ? [] : ((Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+              reactions: isDel ? [] : (Array.isArray(fMsg.reactions)
                 ? fMsg.reactions
                 : (Array.isArray(existing.reactions) ? existing.reactions : [])),
               tempId: fMsg.tempId || existing.tempId || null,
@@ -1625,7 +1672,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
                 fileName: isDel ? null : (fMsg.fileName || existing.fileName),
                 fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
-                reactions: isDel ? [] : ((Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+                reactions: isDel ? [] : (Array.isArray(fMsg.reactions)
                   ? fMsg.reactions
                   : (Array.isArray(existing.reactions) ? existing.reactions : [])),
                 tempId: fMsg.tempId || existing.tempId || null,
@@ -3902,9 +3949,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           mediaUrl: isDel ? null : (dbMsg.mediaUrl || existing.mediaUrl),
           fileName: isDel ? null : (dbMsg.fileName || existing.fileName),
           fileSize: isDel ? null : (dbMsg.fileSize || existing.fileSize),
-          reactions: isDel ? [] : ((Array.isArray(dbMsg.reactions) && dbMsg.reactions.length > 0)
+          reactions: isDel ? [] : (Array.isArray(dbMsg.reactions)
             ? dbMsg.reactions
-            : (Array.isArray(existing.reactions) && existing.reactions.length > 0 ? existing.reactions : [])),
+            : (Array.isArray(existing.reactions) ? existing.reactions : [])),
           tempId: dbMsg.tempId || existing.tempId || null,
           replyTo: isDel ? null : (parseReplyTo(dbMsg.replyTo) || parseReplyTo(existing.replyTo) || null),
           isPinned: isDel ? false : resolveIsPinned(dbMsg.id, dbMsg.tempId || existing.tempId, dbMsg.isPinned, existing.isPinned),
@@ -4031,9 +4078,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
               fileName: isDel ? null : (fMsg.fileName || existing.fileName),
               fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
-              reactions: isDel ? [] : ((Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+              reactions: isDel ? [] : (Array.isArray(fMsg.reactions)
                 ? fMsg.reactions
-                : (Array.isArray(existing.reactions) && existing.reactions.length > 0 ? existing.reactions : [])),
+                : (Array.isArray(existing.reactions) ? existing.reactions : [])),
               tempId: fMsg.tempId || existing.tempId || null,
               replyTo: isDel ? null : (parseReplyTo(fMsg.replyTo) || parseReplyTo(existing.replyTo) || null),
               isPinned: isDel ? false : resolveIsPinned(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isPinned, existing.isPinned),
@@ -4104,9 +4151,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (!chatMessagesData || !activeChat || !currentUser) return;
 
     const currentId = (currentUser.id || currentUser._id)?.toString();
+    const activePartnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    if (!activePartnerId) return;
+
+    // Filter messages specifically for the active chat conversation so messages forwarded/sent to other users do not leak here
+    const relevantChatMsgs = chatMessagesData.filter((msg) => {
+      const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
+      const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
+      if (!sId || !rId) return true;
+      return (
+        (sId === currentId && rId === activePartnerId) ||
+        (sId === activePartnerId && rId === currentId)
+      );
+    });
 
     // Map DB messages to UI message structure
-    const formatted = chatMessagesData.map((msg) => {
+    const formatted = relevantChatMsgs.map((msg) => {
       const rawId = (msg._id || msg.id)?.toString();
       const rawTemp = msg.tempId?.toString();
       const isDel = Boolean(
@@ -4170,7 +4230,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
             fileName: isDel ? null : (fMsg.fileName || existing.fileName),
             fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
-            reactions: isDel ? [] : ((Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+            reactions: isDel ? [] : (Array.isArray(fMsg.reactions)
               ? fMsg.reactions
               : (Array.isArray(existing.reactions) ? existing.reactions : [])),
             tempId: fMsg.tempId || existing.tempId || null,
@@ -4249,7 +4309,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
               fileName: isDel ? null : (fMsg.fileName || existing.fileName),
               fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
-              reactions: isDel ? [] : ((Array.isArray(fMsg.reactions) && fMsg.reactions.length > 0)
+              reactions: isDel ? [] : (Array.isArray(fMsg.reactions)
                 ? fMsg.reactions
                 : (Array.isArray(existing.reactions) ? existing.reactions : [])),
               tempId: fMsg.tempId || existing.tempId || null,
@@ -4835,7 +4895,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     });
   };
 
-  const handleEmojiReaction = (emoji, targetMsg = null) => {
+  const handleEmojiReaction = (emoji, targetMsg = null, explicitAction = null) => {
     const msg = targetMsg || selectedMessageForAction;
     if (!msg || !activeChat || !currentUser) return;
     const sIdStr = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
@@ -4844,9 +4904,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (!sIdStr || !targetIdStr) return;
 
     const currentReactions = Array.isArray(msg.reactions) ? msg.reactions : [];
-    const existingIdx = currentReactions.findIndex((r) => (r.userId?.toString() || r.userId) === sIdStr);
-    const isRemoving = existingIdx > -1 && currentReactions[existingIdx]?.emoji === emoji;
-    const action = isRemoving ? 'remove' : 'set';
+    const existingIdx = currentReactions.findIndex((r) => {
+      const rUid = (r.userId?.toString() || r.userId);
+      if (rUid && sIdStr) return rUid === sIdStr;
+      return typeof r === 'string' ? r === emoji : r?.emoji === emoji;
+    });
+    const isRemoving = existingIdx > -1 && (typeof currentReactions[existingIdx] === 'string' ? currentReactions[existingIdx] === emoji : currentReactions[existingIdx]?.emoji === emoji);
+    const action = explicitAction || (isRemoving ? 'remove' : 'set');
 
     // 1. Socket real-time broadcast
     if (socketRef.current && socketRef.current.connected) {
@@ -4870,14 +4934,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const mTempStr = m.tempId?.toString();
       if (mIdStr !== targetIdStr && mTempStr !== targetIdStr) return m;
       const reactions = Array.isArray(m.reactions) ? [...m.reactions] : [];
-      const userIdx = reactions.findIndex((r) => (r.userId?.toString() || r.userId) === sIdStr);
+      let userIdx = reactions.findIndex((r) => (r.userId?.toString() || r.userId) === sIdStr);
+      if (userIdx === -1) {
+        userIdx = reactions.findIndex((r) => (typeof r === 'string' ? r === emoji : r?.emoji === emoji));
+      }
       if (action === 'remove') {
         if (userIdx > -1) {
           reactions.splice(userIdx, 1);
         }
       } else {
         if (userIdx > -1) {
-          reactions[userIdx] = { ...reactions[userIdx], emoji };
+          reactions[userIdx] = { ...reactions[userIdx], emoji, userId: sIdStr };
         } else {
           reactions.push({ userId: sIdStr, emoji });
         }
@@ -4897,6 +4964,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     dispatch(updateMessageReactions({ messageId: targetIdStr, tempId: msg.tempId, reactions: calculatedReactions }));
 
     setShowMessageActionModal(false);
+    setIsMultiSelectMode(false);
+    setSelectedMultiMessageIds([]);
+    setSelectedMessageForAction(null);
   };
 
   const handleCopyMessageText = (msg) => {
@@ -5109,6 +5179,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setSelectedForwardUserIds([]);
     setForwardSearchQuery('');
     setIsSendingForward(false);
+    setMessagesToForward([]);
+    setSelectedMessageForAction(null);
   };
 
   const toggleSelectForwardUser = (userId) => {
@@ -5124,13 +5196,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleExecuteForward = async () => {
-    if (!selectedMessageForAction || !currentUser) return;
+    const msgsToSend = (messagesToForward && messagesToForward.length > 0)
+      ? messagesToForward
+      : (selectedMessageForAction ? [selectedMessageForAction] : []);
+
+    if (msgsToSend.length === 0 || !currentUser) return;
     if (!selectedForwardUserIds || selectedForwardUserIds.length === 0) return;
     if (isSendingForward) return;
 
     setIsSendingForward(true);
 
-    const currentId = (currentUser.id || currentUser._id)?.toString();
+    const currentId = (currentUser.id || currentUser._id || userProfile?.id || userProfile?._id)?.toString();
+    const currentActivePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
+
     const targetUsers = forwardCandidates.filter((u) => {
       const uId = (u.id || u._id || u.userId)?.toString();
       return selectedForwardUserIds.includes(uId);
@@ -5141,165 +5219,154 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       return;
     }
 
-    // Check actual network state via NetInfo
-    let isNetworkOn = true;
-    try {
-      const netState = await NetInfo.fetch();
-      isNetworkOn = !!(netState.isConnected && netState.isInternetReachable !== false);
-    } catch (e) {
-      isNetworkOn = true;
-    }
-
     const recipientNames = targetUsers.map((u) => u.name || 'User').join(', ');
 
     for (const targetChatUser of targetUsers) {
       const receiverId = (targetChatUser.id || targetChatUser._id || targetChatUser.userId)?.toString();
+      if (!receiverId) continue;
       const receiverName = targetChatUser.name || targetChatUser.firstName || 'User';
-      const tempId = 'temp-fwd-' + Date.now() + '-' + Math.floor(Math.random() * 10000) + '-' + receiverId;
 
-      const forwardPayload = {
-        senderId: currentId,
-        receiverId: receiverId,
-        tempId: tempId,
-        text: selectedMessageForAction.text || '',
-        messageType: selectedMessageForAction.messageType || 'text',
-        mediaUrl: selectedMessageForAction.mediaUrl || null,
-        fileName: selectedMessageForAction.fileName || null,
-        fileSize: selectedMessageForAction.fileSize || null,
-        stickerId: selectedMessageForAction.stickerId || null,
-        isForwarded: true,
-      };
+      for (const msg of msgsToSend) {
+        const tempId = 'temp-fwd-' + Date.now() + '-' + Math.floor(Math.random() * 100000) + '-' + receiverId;
 
-      const localForwardMsg = {
-        id: tempId,
-        tempId: tempId,
-        sender: 'you',
-        senderId: currentId,
-        receiverId: receiverId,
-        text: forwardPayload.text,
-        messageType: forwardPayload.messageType,
-        mediaUrl: forwardPayload.mediaUrl,
-        fileName: forwardPayload.fileName,
-        fileSize: forwardPayload.fileSize,
-        stickerId: forwardPayload.stickerId,
-        replyTo: null,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        isForwarded: true,
-      };
+        const forwardPayload = {
+          senderId: currentId,
+          receiverId: receiverId,
+          tempId: tempId,
+          text: msg.text || '',
+          messageType: msg.messageType || (msg.mediaUrl ? 'image' : 'text'),
+          mediaUrl: msg.mediaUrl || null,
+          fileName: msg.fileName || null,
+          fileSize: msg.fileSize || null,
+          stickerId: msg.stickerId || null,
+          isForwarded: true,
+        };
 
-      // Optimistically update conversation list
-      setChats((prevChats) => {
-        let found = false;
-        const updated = (prevChats || []).map((c) => {
-          const cId = (c.id || c._id || c.userId)?.toString();
-          if (cId === receiverId) {
-            found = true;
-            return {
-              ...c,
-              messages: deduplicateMessages([...(c.messages || []).filter((m) => m.id !== 'match-init'), localForwardMsg]),
-            };
-          }
-          return c;
-        });
-        if (!found) {
-          updated.push({
-            id: receiverId,
-            name: receiverName,
-            image: targetChatUser.image || targetChatUser.profileImage,
-            messages: [localForwardMsg],
+        const localForwardMsg = {
+          id: tempId,
+          tempId: tempId,
+          sender: 'you',
+          senderId: currentId,
+          receiverId: receiverId,
+          text: forwardPayload.text,
+          messageType: forwardPayload.messageType,
+          mediaUrl: forwardPayload.mediaUrl,
+          fileName: forwardPayload.fileName,
+          fileSize: forwardPayload.fileSize,
+          stickerId: forwardPayload.stickerId,
+          replyTo: null,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          isForwarded: true,
+        };
+
+        // 1. Optimistically update recipient's conversation in chats list
+        setChats((prevChats) => {
+          let found = false;
+          const updated = (prevChats || []).map((c) => {
+            const cId = (c.id || c._id || c.userId)?.toString();
+            if (cId === receiverId) {
+              found = true;
+              return {
+                ...c,
+                lastMessage: localForwardMsg.text || (localForwardMsg.messageType === 'image' ? '📷 Photo' : 'Forwarded message'),
+                lastMessageTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                messages: deduplicateMessages([...(c.messages || []).filter((m) => m.id !== 'match-init'), localForwardMsg]),
+              };
+            }
+            return c;
           });
-        }
-        return sortChatsByRecent(updated);
-      });
+          if (!found) {
+            updated.push({
+              id: receiverId,
+              name: receiverName,
+              image: targetChatUser.image || targetChatUser.profileImage,
+              lastMessage: localForwardMsg.text || (localForwardMsg.messageType === 'image' ? '📷 Photo' : 'Forwarded message'),
+              lastMessageTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              messages: [localForwardMsg],
+            });
+          }
+          return sortChatsByRecent(updated);
+        });
 
-      // Optimistically update active chat if open with this receiver
-      setActiveChat((prevActive) => {
-        if (!prevActive) return prevActive;
-        const pId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
-        if (pId === receiverId) {
-          return {
-            ...prevActive,
-            messages: deduplicateMessages([...(prevActive.messages || []).filter((m) => m.id !== 'match-init'), localForwardMsg]),
+        // 2. ONLY update activeChat and Redux messages if the recipient IS the currently open chat!
+        if (currentActivePartnerId && currentActivePartnerId === receiverId) {
+          setActiveChat((prevActive) => {
+            if (!prevActive) return prevActive;
+            return {
+              ...prevActive,
+              messages: deduplicateMessages([...(prevActive.messages || []).filter((m) => m.id !== 'match-init'), localForwardMsg]),
+            };
+          });
+          dispatch(addMessage(localForwardMsg));
+        }
+
+        // 3. Send normally over live Socket or REST API fallback
+        const onSentSuccess = (serverMsg) => {
+          const actualMsg = {
+            id: (serverMsg._id || serverMsg.id).toString(),
+            tempId: tempId,
+            sender: 'you',
+            senderId: currentId,
+            receiverId: receiverId,
+            text: serverMsg.text !== undefined ? serverMsg.text : forwardPayload.text,
+            messageType: serverMsg.messageType || forwardPayload.messageType,
+            mediaUrl: serverMsg.mediaUrl || forwardPayload.mediaUrl,
+            fileName: serverMsg.fileName || forwardPayload.fileName,
+            fileSize: serverMsg.fileSize || forwardPayload.fileSize,
+            stickerId: serverMsg.stickerId || forwardPayload.stickerId,
+            status: serverMsg.status || 'sent',
+            createdAt: serverMsg.createdAt || new Date().toISOString(),
+            isForwarded: true,
           };
-        }
-        return prevActive;
-      });
 
-      dispatch(addMessage(localForwardMsg));
+          const replaceTemp = (m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m);
 
-      if (isNetworkOn) {
+          setChats((prev) => (prev || []).map((c) => {
+            const cId = (c.id || c._id || c.userId)?.toString();
+            return cId === receiverId ? { ...c, messages: (c.messages || []).map(replaceTemp) } : c;
+          }));
+
+          if (currentActivePartnerId && currentActivePartnerId === receiverId) {
+            dispatch(addMessage(actualMsg));
+            setActiveChat((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                messages: (prev.messages || []).map(replaceTemp),
+              };
+            });
+          }
+        };
+
         if (socketRef.current && socketRef.current.connected) {
+          console.log('⚡ Sending forwarded message via Socket:', forwardPayload);
           socketRef.current.emit('send_message', forwardPayload, (res) => {
             if (res && res.status === 'ok' && res.data) {
-              const actualMsg = {
-                id: (res.data._id || res.data.id).toString(),
-                tempId: tempId,
-                sender: 'you',
-                senderId: currentId,
-                receiverId: receiverId,
-                text: res.data.text,
-                messageType: res.data.messageType || 'text',
-                mediaUrl: res.data.mediaUrl,
-                fileName: res.data.fileName,
-                fileSize: res.data.fileSize,
-                stickerId: res.data.stickerId,
-                status: res.data.status || 'sent',
-                createdAt: res.data.createdAt || new Date().toISOString(),
-                isForwarded: true,
-              };
-              dispatch(addMessage(actualMsg));
-              const replaceTemp = (m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m);
-              setChats((prev) => prev.map((c) => {
-                const cId = (c.id || c._id || c.userId)?.toString();
-                return cId === receiverId ? { ...c, messages: (c.messages || []).map(replaceTemp) } : c;
-              }));
-              setActiveChat((prev) => {
-                const pId = (prev?.id || prev?._id || prev?.userId)?.toString();
-                return pId === receiverId ? { ...prev, messages: (prev.messages || []).map(replaceTemp) } : prev;
+              onSentSuccess(res.data);
+            } else if (res && res.status === 'error') {
+              console.log('Socket forward send error, falling back to REST:', res.message);
+              apiClient.sendMessage(forwardPayload).then((apiRes) => {
+                const sMsg = apiRes?.data || apiRes;
+                if (sMsg?._id || sMsg?.id) onSentSuccess(sMsg);
+              }).catch((e) => {
+                console.log('Forward REST fallback failed, queuing offline:', e);
+                setOfflineQueue((prev) => [...prev, { tempId, payload: forwardPayload }]);
               });
             }
           });
         } else {
+          console.log('Sending forwarded message via REST API:', forwardPayload);
           apiClient.sendMessage(forwardPayload).then((res) => {
             const sMsg = res?.data || res;
             if (sMsg?._id || sMsg?.id) {
-              const actualMsg = {
-                id: (sMsg._id || sMsg.id).toString(),
-                tempId: tempId,
-                sender: 'you',
-                senderId: currentId,
-                receiverId: receiverId,
-                text: sMsg.text,
-                messageType: sMsg.messageType || 'text',
-                mediaUrl: sMsg.mediaUrl,
-                fileName: sMsg.fileName,
-                fileSize: sMsg.fileSize,
-                stickerId: sMsg.stickerId,
-                status: sMsg.status || 'sent',
-                createdAt: sMsg.createdAt || new Date().toISOString(),
-                isForwarded: true,
-              };
-              dispatch(addMessage(actualMsg));
-              const replaceTemp = (m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m);
-              setChats((prev) => prev.map((c) => {
-                const cId = (c.id || c._id || c.userId)?.toString();
-                return cId === receiverId ? { ...c, messages: (c.messages || []).map(replaceTemp) } : c;
-              }));
-              setActiveChat((prev) => {
-                const pId = (prev?.id || prev?._id || prev?.userId)?.toString();
-                return pId === receiverId ? { ...prev, messages: (prev.messages || []).map(replaceTemp) } : prev;
-              });
+              onSentSuccess(sMsg);
             }
-          }).catch((e) => {
-            console.log('Forward message API catch, queuing offline:', e);
+          }).catch((err) => {
+            console.log('REST sendMessage forward error, queuing offline:', err);
             setOfflineQueue((prev) => [...prev, { tempId, payload: forwardPayload }]);
           });
         }
-      } else {
-        // Offline: queue in offlineQueue for automatic sending upon network restoration
-        console.log('Offline forward message queued for auto-sending:', tempId);
-        setOfflineQueue((prev) => [...prev, { tempId, payload: forwardPayload }]);
       }
     }
 
@@ -5307,6 +5374,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setShowForwardModal(false);
     setShowMessageActionModal(false);
     setSelectedMessageForAction(null);
+    setMessagesToForward([]);
     setSelectedForwardUserIds([]);
     setForwardSearchQuery('');
 
@@ -5473,6 +5541,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
       if (updated.length === 0) {
         setIsMultiSelectMode(false);
+        setSelectedMessageForAction(null);
+      } else if (updated.length === 1) {
+        const found = (activeChat?.messages || []).find((m) => (m.id || m._id)?.toString() === updated[0]);
+        if (found) setSelectedMessageForAction(found);
+      } else {
+        setSelectedMessageForAction(null);
       }
       return updated;
     });
@@ -5582,12 +5656,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (!activeChat || selectedMultiMessageIds.length === 0) return;
     const selectedMsgs = (activeChat.messages || []).filter((m) => {
       const mId = (m.id || m._id)?.toString();
-      return selectedMultiMessageIds.includes(mId);
+      const mTempId = m.tempId?.toString();
+      return selectedMultiMessageIds.includes(mId) || (mTempId && selectedMultiMessageIds.includes(mTempId));
     });
     if (selectedMsgs.length > 0) {
+      setMessagesToForward(selectedMsgs);
       setSelectedMessageForAction(selectedMsgs[0]);
       setIsMultiSelectMode(false);
       setSelectedMultiMessageIds([]);
+      setSelectedForwardUserIds([]);
+      setForwardSearchQuery('');
       setShowForwardModal(true);
     }
   };
@@ -6075,39 +6153,83 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setShowStickerPicker(false);
   };
 
+  const detectChatMediaType = (fileName = '', mimeType = '') => {
+    const lowerName = (fileName || '').toLowerCase();
+    const lowerMime = (mimeType || '').toLowerCase();
+    if (lowerMime.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm|3gp|m4v|flv)$/i.test(lowerName)) {
+      return 'video';
+    }
+    if (lowerMime.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp|heic)$/i.test(lowerName)) {
+      return 'image';
+    }
+    return 'document';
+  };
+
+  const resolveChatMimeType = (fileName = '', rawType = '', mediaType = 'document') => {
+    if (rawType && rawType !== 'application/octet-stream' && rawType !== '*/*') {
+      return rawType;
+    }
+    const ext = (fileName || '').split('.').pop()?.toLowerCase() || '';
+    if (['mp4', 'm4v'].includes(ext)) return 'video/mp4';
+    if (['mov', 'qt'].includes(ext)) return 'video/quicktime';
+    if (['mkv'].includes(ext)) return 'video/x-matroska';
+    if (['avi'].includes(ext)) return 'video/x-msvideo';
+    if (['webm'].includes(ext)) return 'video/webm';
+    if (['3gp'].includes(ext)) return 'video/3gpp';
+    if (['jpg', 'jpeg'].includes(ext)) return 'image/jpeg';
+    if (['png'].includes(ext)) return 'image/png';
+    if (['webp'].includes(ext)) return 'image/webp';
+    if (['gif'].includes(ext)) return 'image/gif';
+    if (['pdf'].includes(ext)) return 'application/pdf';
+    if (['doc', 'docx'].includes(ext)) return 'application/msword';
+    if (['xls', 'xlsx'].includes(ext)) return 'application/vnd.ms-excel';
+    if (['txt'].includes(ext)) return 'text/plain';
+    if (mediaType === 'video') return 'video/mp4';
+    if (mediaType === 'image') return 'image/jpeg';
+    return 'application/pdf';
+  };
+
   const handlePickImage = () => {
     setShowAttachmentModal(false);
     const options = {
-      mediaType: 'photo',
-      quality: 0.8,
+      mediaType: 'mixed',
+      quality: 0.85,
     };
-    launchImageLibrary(options, async (response) => {
+    launchImageLibrary(options, (response) => {
       if (response.didCancel) return;
       if (response.errorMessage) {
         Alert.alert('Error', response.errorMessage);
         return;
       }
       if (response.assets && response.assets.length > 0) {
-        const selectedUri = response.assets[0].uri;
-        const formData = new FormData();
-        formData.append('file', {
-          uri: Platform.OS === 'android' ? selectedUri : selectedUri.replace('file://', ''),
-          name: response.assets[0].fileName || 'photo.jpg',
-          type: response.assets[0].type || 'image/jpeg',
-        });
+        const asset = response.assets[0];
+        const selectedUri = asset.uri;
+        if (!selectedUri) return;
 
-        try {
-          const res = await apiClient.uploadChatMedia(formData);
-          handleSendMessage({
-            messageType: 'image',
-            mediaUrl: res.url,
-            fileName: res.fileName,
-            fileSize: res.fileSize,
-          });
-        } catch (err) {
-          console.log('Chat photo upload failed:', err);
-          Alert.alert('Upload Error', 'Failed to upload photo to server.');
+        // Validate max file size (100 MB)
+        const maxSizeBytes = 100 * 1024 * 1024;
+        if (asset.fileSize && asset.fileSize > maxSizeBytes) {
+          Alert.alert('File Too Large', 'The selected file/video exceeds the 100MB limit. Please select a smaller file.');
+          return;
         }
+
+        const rawFileName = asset.fileName || '';
+        const detectedType = detectChatMediaType(rawFileName, asset.type);
+        const fallbackExt = detectedType === 'video' ? 'mp4' : 'jpg';
+        const pickedFileName = rawFileName || `media_${Date.now()}.${fallbackExt}`;
+        const mimeType = resolveChatMimeType(pickedFileName, asset.type, detectedType);
+
+        // Open WhatsApp-style preview modal; do not send immediately
+        setPendingMediaSend({
+          uri: selectedUri,
+          fileName: pickedFileName,
+          fileSize: asset.fileSize || 0,
+          type: mimeType,
+          mediaType: detectedType,
+          asset: asset,
+        });
+        setMediaCaptionText('');
+        setIsMediaUploading(false);
       }
     });
   };
@@ -6144,7 +6266,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         asset = response.assets[0];
       }
 
-      if (!asset) return;
+      if (!asset || !asset.uri) return;
 
       // Validate max file size (100 MB)
       const maxSizeBytes = 100 * 1024 * 1024;
@@ -6153,48 +6275,88 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         return;
       }
 
-      const pickedFileName = asset.fileName || `document_${Date.now()}.${asset.type ? asset.type.split('/')[1] || 'pdf' : 'pdf'}`;
-      const pickedFileType = asset.type || '';
-      const lowerName = pickedFileName.toLowerCase();
+      const rawFileName = asset.fileName || '';
+      const detectedType = detectChatMediaType(rawFileName, asset.type);
+      const fallbackExt = detectedType === 'video' ? 'mp4' : detectedType === 'image' ? 'jpg' : 'pdf';
+      const pickedFileName = rawFileName || `document_${Date.now()}.${fallbackExt}`;
+      const mimeType = resolveChatMimeType(pickedFileName, asset.type, detectedType);
 
-      const formData = new FormData();
-      formData.append('file', {
-        uri: Platform.OS === 'android' ? asset.uri : asset.uri.replace('file://', ''),
-        name: pickedFileName,
-        type: pickedFileType || 'application/pdf',
-      });
-
-      let docUrl = '';
-      let fileSize = asset.fileSize || 0;
-
-      try {
-        const res = await apiClient.uploadChatMedia(formData);
-        docUrl = res.url;
-        fileSize = res.fileSize || fileSize;
-      } catch (uploadErr) {
-        console.log('Upload error:', uploadErr);
-        Alert.alert('Upload Error', 'Failed to upload file to server.');
-        return;
-      }
-
-      const isVideo = pickedFileType.startsWith('video/') || lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.avi') || lowerName.endsWith('.mkv');
-      const isImage = pickedFileType.startsWith('image/') || lowerName.endsWith('.jpg') || lowerName.endsWith('.png') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.webp');
-
-      let messageType = 'document';
-      if (isVideo) messageType = 'video';
-      else if (isImage) messageType = 'image';
-
-      handleSendMessage({
-        text: pickedFileName,
-        messageType: messageType,
-        mediaUrl: docUrl,
+      // Open WhatsApp-style preview modal; do not send immediately
+      setPendingMediaSend({
+        uri: asset.uri,
         fileName: pickedFileName,
-        fileSize: fileSize,
+        fileSize: asset.fileSize || 0,
+        type: mimeType,
+        mediaType: detectedType,
+        asset: asset,
       });
+      setMediaCaptionText('');
+      setIsMediaUploading(false);
     } catch (err) {
       console.error('Pick document error:', err);
       Alert.alert('Error', 'Failed to pick file from device.');
     }
+  };
+
+  const handleConfirmSendMedia = async () => {
+    if (!pendingMediaSend || isMediaUploading) return;
+    setIsMediaUploading(true);
+
+    try {
+      const { uri, fileName, fileSize, type, mediaType } = pendingMediaSend;
+      const formData = new FormData();
+
+      let uploadUri = uri;
+      if (Platform.OS === 'android') {
+        uploadUri = uri.startsWith('file://') || uri.startsWith('content://') ? uri : `file://${uri}`;
+      } else {
+        uploadUri = uri.replace('file://', '');
+      }
+
+      formData.append('file', {
+        uri: uploadUri,
+        name: fileName,
+        type: type,
+      });
+
+      console.log(`[handleConfirmSendMedia] Uploading ${mediaType} to server:`, fileName, type, uploadUri);
+      const res = await apiClient.uploadChatMedia(formData);
+
+      const uploadedUrl = res?.url || res?.data?.url;
+      const finalFileName = res?.fileName || fileName;
+      const finalFileSize = res?.fileSize || fileSize;
+
+      if (!uploadedUrl) {
+        throw new Error('Server did not return a valid media URL.');
+      }
+
+      const caption = mediaCaptionText.trim();
+      const messageText = caption || finalFileName || (mediaType === 'image' ? '📷 Photo' : mediaType === 'video' ? '🎬 Video' : '📄 Document');
+
+      handleSendMessage({
+        text: messageText,
+        messageType: mediaType,
+        mediaUrl: uploadedUrl,
+        fileName: finalFileName,
+        fileSize: finalFileSize,
+      });
+
+      setPendingMediaSend(null);
+      setMediaCaptionText('');
+    } catch (uploadErr) {
+      console.error('Confirm send media failed:', uploadErr);
+      const errMsg = uploadErr?.message || 'Failed to upload file to server. Please try again.';
+      Alert.alert('Upload Error', errMsg);
+    } finally {
+      setIsMediaUploading(false);
+    }
+  };
+
+  const handleCancelSendMedia = () => {
+    if (isMediaUploading) return;
+    setPendingMediaSend(null);
+    setMediaCaptionText('');
+    setIsMediaUploading(false);
   };
 
   // --- Voice Note Recording & Playback Implementation ---
@@ -6912,10 +7074,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       const isSingle = selectedMultiMessageIds.length === 1;
                       const singleMsg = isSingle
                         ? (activeChat?.messages || []).find(
-                            (m) =>
-                              (m.id || m._id)?.toString() === selectedMultiMessageIds[0] ||
-                              m.tempId?.toString() === selectedMultiMessageIds[0]
-                          ) || selectedMessageForAction
+                          (m) =>
+                            (m.id || m._id)?.toString() === selectedMultiMessageIds[0] ||
+                            m.tempId?.toString() === selectedMultiMessageIds[0]
+                        ) || selectedMessageForAction
                         : null;
 
                       const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
@@ -7243,11 +7405,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       const isVoice =
                         !isDeletedForEveryone &&
                         (msg.messageType === 'voice' ||
+                          msg.messageType === 'audio' ||
                           (msg.mediaUrl &&
                             typeof msg.mediaUrl === 'string' &&
                             (msg.mediaUrl.includes('voice_') ||
                               msg.mediaUrl.endsWith('.m4a') ||
-                              (msg.fileName && typeof msg.fileName === 'string' && msg.fileName.includes('voice_')))));
+                              msg.mediaUrl.endsWith('.mp3') ||
+                              msg.mediaUrl.endsWith('.wav') ||
+                              msg.mediaUrl.endsWith('.aac') ||
+                              msg.mediaUrl.endsWith('.ogg') ||
+                              (msg.fileName &&
+                                typeof msg.fileName === 'string' &&
+                                (msg.fileName.includes('voice_') ||
+                                  msg.fileName.endsWith('.mp3') ||
+                                  msg.fileName.endsWith('.m4a') ||
+                                  msg.fileName.endsWith('.wav') ||
+                                  msg.fileName.endsWith('.aac') ||
+                                  msg.fileName.endsWith('.ogg'))))));
 
                       const isVideo =
                         !isDeletedForEveryone &&
@@ -7320,440 +7494,691 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             }
                           ]}
                         >
-                          <Pressable
-                            delayLongPress={180}
-                            onPress={() => {
-                              if (isMultiSelectMode) {
-                                toggleSelectMessage(msg);
-                              }
-                            }}
-                            onLongPress={() => {
-                              if (isMultiSelectMode) {
-                                toggleSelectMessage(msg);
-                              } else {
-                                handleMessageLongPress(msg);
-                              }
-                            }}
-                            style={({ pressed }) => [
-                              { opacity: pressed ? 0.85 : 1 },
-                              isTransparentContainer ? styles.transparentBubble : styles.messageBubble,
-                              isMe ? (isTransparentContainer ? null : styles.bubbleMe) : (isTransparentContainer ? null : styles.bubbleThem),
-                              isSelectedInMultiMode && {
-                                borderWidth: 1.5,
-                                borderColor: '#00A884',
-                              },
-                              isMatched && {
-                                borderWidth: 1.5,
-                                borderColor: isActiveFocusedMatch ? '#00A884' : 'rgba(0, 168, 132, 0.45)',
-                                backgroundColor: isActiveFocusedMatch ? 'rgba(0, 168, 132, 0.22)' : undefined,
-                              },
-                              (highlightedMessageId && (msg.id === highlightedMessageId || msg._id === highlightedMessageId || msg.id?.toString() === highlightedMessageId)) && {
-                                borderWidth: 2,
-                                borderColor: '#00A884',
-                                backgroundColor: 'rgba(0, 168, 132, 0.28)',
-                              }
-                            ]}
-                          >
-                            {isSelectedInMultiMode && (
+                          <View style={{ flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                            {/* WhatsApp Floating Emoji Reaction Bar when message is selected */}
+                            {isSelectedInMultiMode && selectedMultiMessageIds.length === 1 && !isDeletedForEveryone && (
                               <View
                                 style={{
-                                  position: 'absolute',
-                                  top: -5,
-                                  right: isMe ? -5 : undefined,
-                                  left: !isMe ? -5 : undefined,
-                                  backgroundColor: '#00A884',
-                                  borderRadius: 9,
-                                  width: 18,
-                                  height: 18,
+                                  flexDirection: 'row',
                                   alignItems: 'center',
-                                  justifyContent: 'center',
-                                  zIndex: 10,
-                                  borderWidth: 1.5,
-                                  borderColor: '#121B22',
+                                  backgroundColor: '#202C33',
+                                  borderRadius: 24,
+                                  paddingVertical: 5,
+                                  paddingHorizontal: 8,
+                                  marginBottom: 6,
+                                  alignSelf: isMe ? 'flex-end' : 'flex-start',
+                                  borderWidth: 1,
+                                  borderColor: 'rgba(255, 255, 255, 0.12)',
+                                  elevation: 10,
+                                  shadowColor: '#000',
+                                  shadowOffset: { width: 0, height: 4 },
+                                  shadowOpacity: 0.45,
+                                  shadowRadius: 8,
+                                  zIndex: 100,
                                 }}
                               >
-                                <Ionicons name="checkmark" size={12} color="#FFFFFF" />
-                              </View>
-                            )}
+                                {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => {
+                                  const sIdStr = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+                                  const currentReactions = Array.isArray(msg.reactions) ? msg.reactions : [];
+                                  const isUserReacted = currentReactions.some((r) =>
+                                    (r.userId?.toString() || r.userId) === sIdStr && (typeof r === 'string' ? r === emoji : r.emoji === emoji)
+                                  );
 
-                            {Boolean(msg.isForwarded) && !isDeletedForEveryone && (
-                              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3, opacity: 0.85 }}>
-                                <Ionicons name="arrow-redo" size={12} color={isMe ? "#E9EDEF" : "#8696A0"} style={{ marginRight: 4 }} />
-                                <Text style={{ fontSize: 11, fontStyle: 'italic', color: isMe ? "#E9EDEF" : "#8696A0" }}>
-                                  Forwarded
-                                </Text>
-                              </View>
-                            )}
-                            {hasValidReplyTo && (
-                              <TouchableOpacity
-                                activeOpacity={0.8}
-                                onPress={() => {
-                                  if (isMultiSelectMode) {
-                                    toggleSelectMessage(msg);
-                                    return;
-                                  }
-                                  const targetMsgId = replyToObj.messageId?.toString();
-                                  if (targetMsgId && messageYPositionsRef.current[targetMsgId] !== undefined && chatScrollViewRef.current) {
-                                    chatScrollViewRef.current.scrollTo({
-                                      y: Math.max(0, messageYPositionsRef.current[targetMsgId] - 70),
-                                      animated: true,
-                                    });
-                                    setHighlightedMessageId(targetMsgId);
-                                    setTimeout(() => setHighlightedMessageId(null), 1500);
-                                  }
-                                }}
-                                style={[styles.quotedMessageCard, isMe ? styles.quotedCardMe : styles.quotedCardThem]}
-                              >
-                                <View style={[styles.quotedAccentLine, isMe ? styles.quotedLineMe : styles.quotedLineThem]} />
-                                <View style={styles.quotedTextContainer}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, marginBottom: 2 }}>
-                                    <Ionicons name="return-down-forward" size={13} color={isMe ? "#06D755" : "#38BDF8"} style={{ marginRight: 4 }} />
-                                    <Text
-                                      style={[styles.quotedSenderName, isMe ? styles.quotedSenderNameMe : styles.quotedSenderNameThem, { flexShrink: 1 }]}
-                                      numberOfLines={1}
-                                    >
-                                      {getQuotedSenderName(replyToObj, isMe, activeChat?.name, activeLoggedInUserId)}
-                                    </Text>
-                                  </View>
-                                  <Text
-                                    style={[styles.quotedSnippetText, isMe ? styles.quotedSnippetMe : styles.quotedSnippetThem, { flexShrink: 1 }]}
-                                    numberOfLines={2}
-                                  >
-                                    {getQuotedSnippetText(replyToObj)}
-                                  </Text>
-                                </View>
-                              </TouchableOpacity>
-                            )}
-                            {isSticker && (
-                              Boolean(msg.mediaUrl && typeof msg.mediaUrl === 'string' && (msg.mediaUrl.startsWith('http') || msg.mediaUrl.startsWith('data:image'))) ? (
-                                <Image
-                                  source={{ uri: msg.mediaUrl }}
-                                  style={styles.chatStickerImage}
-                                  resizeMode="contain"
-                                />
-                              ) : (
-                                <Text style={styles.stickerText}>{msg.mediaUrl || msg.text}</Text>
-                              )
-                            )}
-
-                            {isImage && (
-                              <TouchableOpacity
-                                activeOpacity={0.9}
-                                onPress={() => {
-                                  if (isMultiSelectMode) {
-                                    toggleSelectMessage(msg);
-                                  } else {
-                                    setViewMediaModal({
-                                      visible: true,
-                                      type: 'image',
-                                      url: imageUrlToRender,
-                                      fileName: msg.fileName || 'Photo',
-                                      fileSize: msg.fileSize || 0
-                                    });
-                                  }
-                                }}
-                                onLongPress={() => {
-                                  if (isMultiSelectMode) {
-                                    toggleSelectMessage(msg);
-                                  } else {
-                                    handleMessageLongPress(msg);
-                                  }
-                                }}
-                                style={styles.imageMessageContainer}
-                              >
-                                <Image
-                                  source={{ uri: imageUrlToRender }}
-                                  style={styles.imageMessage}
-                                  resizeMode="cover"
-                                />
-                              </TouchableOpacity>
-                            )}
-
-                            {isDocument && (
-                              <TouchableOpacity
-                                style={styles.documentMessageCard}
-                                activeOpacity={0.85}
-                                onPress={() => {
-                                  if (isMultiSelectMode) {
-                                    toggleSelectMessage(msg);
-                                  } else if (msg.mediaUrl) {
-                                    setViewMediaModal({
-                                      visible: true,
-                                      type: 'document',
-                                      url: getImageUrl(msg.mediaUrl),
-                                      fileName: msg.fileName || 'document.pdf',
-                                      fileSize: msg.fileSize || 0,
-                                    });
-                                  }
-                                }}
-                                onLongPress={() => {
-                                  if (isMultiSelectMode) {
-                                    toggleSelectMessage(msg);
-                                  } else {
-                                    handleMessageLongPress(msg);
-                                  }
-                                }}
-                              >
-                                <View style={styles.documentCardTop}>
-                                  <View style={[styles.documentBadge, getDocTypeStyle(msg.fileName)]}>
-                                    <Text style={styles.documentBadgeText}>{getDocExtensionBadge(msg.fileName)}</Text>
-                                  </View>
-                                  <View style={styles.documentTextContainer}>
-                                    <Text style={styles.documentNameText} numberOfLines={1}>
-                                      {msg.fileName || 'document.pdf'}
-                                    </Text>
-                                    <Text style={styles.documentSizeText}>
-                                      {formatFileSize(msg.fileSize)} • Tap to Preview
-                                    </Text>
-                                  </View>
-                                </View>
-                              </TouchableOpacity>
-                            )}
-
-                            {isVideo && (
-                              <TouchableOpacity
-                                style={styles.videoMessageContainer}
-                                activeOpacity={0.8}
-                                onPress={() => {
-                                  if (isMultiSelectMode) {
-                                    toggleSelectMessage(msg);
-                                  } else if (msg.mediaUrl) {
-                                    Linking.openURL(getImageUrl(msg.mediaUrl)).catch(() =>
-                                      Alert.alert('Error', 'Unable to play video.')
-                                    );
-                                  }
-                                }}
-                                onLongPress={() => {
-                                  if (isMultiSelectMode) {
-                                    toggleSelectMessage(msg);
-                                  } else {
-                                    handleMessageLongPress(msg);
-                                  }
-                                }}
-                              >
-                                <View style={styles.videoIconContainer}>
-                                  <Ionicons name="videocam" size={20} color="#00A884" />
-                                </View>
-                                <View style={styles.videoTextContainer}>
-                                  <Text style={styles.videoNameText} numberOfLines={1}>
-                                    {msg.fileName || 'video.mp4'}
-                                  </Text>
-                                  <Text style={styles.videoSizeText}>
-                                    {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : 'Video'} • Tap to Play
-                                  </Text>
-                                </View>
-                              </TouchableOpacity>
-                            )}
-
-                            {isVoice && (
-                              <View style={styles.waVoiceContainer}>
-                                {/* Top Row: Play/Pause Button + Dot Line Progress + Mic Icon */}
-                                <View style={styles.waVoiceMainRow}>
-                                  <TouchableOpacity
-                                    style={[styles.waVoicePlayBtn, isMe ? styles.waVoicePlayBtnMe : styles.waVoicePlayBtnThem]}
-                                    onPress={() => {
-                                      if (isMultiSelectMode) {
-                                        toggleSelectMessage(msg);
-                                      } else {
-                                        playVoiceNote(msg.id, msg.mediaUrl);
-                                      }
-                                    }}
-                                    onLongPress={() => {
-                                      if (isMultiSelectMode) {
-                                        toggleSelectMessage(msg);
-                                      } else {
-                                        handleMessageLongPress(msg);
-                                      }
-                                    }}
-                                    activeOpacity={0.75}
-                                  >
-                                    <Ionicons
-                                      name={playingMessageId === msg.id ? "pause" : "play"}
-                                      size={16}
-                                      color={isMe ? "#00A884" : "#FFFFFF"}
-                                    />
-                                  </TouchableOpacity>
-
-                                  <View style={styles.waVoiceTrackWrapper}>
-                                    {/* Track Line */}
-                                    <View style={[styles.waVoiceTrackLine, isMe ? styles.waVoiceTrackLineMe : styles.waVoiceTrackLineThem]} />
-
-                                    {/* Slider Dot Thumb */}
-                                    <View
+                                  return (
+                                    <TouchableOpacity
+                                      key={emoji}
+                                      onPress={() => {
+                                        handleEmojiReaction(emoji, msg);
+                                      }}
                                       style={[
-                                        styles.waVoiceDotThumb,
-                                        isMe ? styles.waVoiceDotThumbMe : styles.waVoiceDotThumbThem,
                                         {
-                                          left: `${playingMessageId === msg.id && playbackDuration > 0
-                                            ? Math.min(Math.max((playbackPosition / playbackDuration) * 92, 0), 92)
-                                            : 0
-                                            }%`,
+                                          paddingHorizontal: 6,
+                                          paddingVertical: 3,
+                                          borderRadius: 16,
                                         },
+                                        isUserReacted && {
+                                          backgroundColor: 'rgba(0, 168, 132, 0.35)',
+                                          borderWidth: 1,
+                                          borderColor: '#00A884',
+                                        }
                                       ]}
-                                    />
-                                  </View>
-                                </View>
-
-                                {/* Bottom Sub-row: Duration (Left) & Timestamp + Checkmarks (Right) */}
-                                <View style={styles.waVoiceSubRow}>
-                                  <Text style={[styles.waVoiceDurationText, isMe ? styles.waVoiceMetaTextMe : styles.waVoiceMetaTextThem]}>
-                                    {playingMessageId === msg.id && playbackPosition > 0
-                                      ? `${Math.floor(playbackPosition / 1000 / 60)}:${(Math.floor((playbackPosition / 1000) % 60) < 10 ? '0' : '')}${Math.floor((playbackPosition / 1000) % 60)}`
-                                      : (msg.fileSize && msg.fileSize > 0 ? `0:0${Math.min(Math.max(Math.floor(msg.fileSize / 1000), 2), 59)}` : '0:04')}
-                                  </Text>
-
-                                  <View style={styles.waVoiceMetaRight}>
-                                    {msg.isStarred && (
-                                      <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 4 }} />
-                                    )}
-                                    {msg.createdAt && msg.createdAt !== 'match-init' && (
-                                      <Text style={[styles.waVoiceTimeText, isMe ? styles.waVoiceMetaTextMe : styles.waVoiceMetaTextThem]}>
-                                        {formatMessageTime(msg.createdAt)}
-                                      </Text>
-                                    )}
-                                    {isMe && msg.createdAt !== 'match-init' && (
-                                      <Text style={[styles.statusTicks, (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? { color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' } : msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent]}>
-                                        {msg.status === 'failed' ? ' ⚠️ Failed (Tap to retry)' : (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
-                                      </Text>
-                                    )}
-                                  </View>
-                                </View>
-                              </View>
-                            )}
-
-                            {isCall && (
-                              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 6, minWidth: 160 }}>
-                                <View
+                                      activeOpacity={0.7}
+                                    >
+                                      <Text style={{ fontSize: 24 }}>{emoji}</Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                                <TouchableOpacity
                                   style={{
-                                    width: 36,
-                                    height: 36,
-                                    borderRadius: 18,
-                                    backgroundColor: (msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer'))))
-                                      ? 'rgba(255, 59, 48, 0.25)'
-                                      : 'rgba(52, 199, 89, 0.25)',
+                                    width: 28,
+                                    height: 28,
+                                    borderRadius: 14,
+                                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
                                     justifyContent: 'center',
                                     alignItems: 'center',
-                                    marginRight: 10,
+                                    marginLeft: 4,
+                                    marginRight: 2,
                                   }}
+                                  onPress={() => {
+                                    setReactingToMessageForEmoji(msg);
+                                    setShowEmojiPicker(true);
+                                  }}
+                                  activeOpacity={0.7}
                                 >
-                                  <Ionicons
-                                    name={(msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer')))) ? "call-outline" : "call-outline"}
-                                    size={18}
-                                    color={(msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer')))) ? "#FF3B30" : "#34C759"}
-                                  />
-                                </View>
-                                <View style={{ flex: 1 }}>
-                                  <Text
-                                    style={[
-                                      styles.messageText,
-                                      isMe ? styles.messageTextMe : styles.messageTextThem,
-                                      { fontWeight: '700', fontSize: 14 }
-                                    ]}
-                                  >
-                                    {msg.text || (isMe ? 'Outgoing voice call' : 'Incoming voice call')}
-                                  </Text>
-                                  <Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.6)', marginTop: 2 }}>
-                                    Voice Call
-                                  </Text>
-                                </View>
+                                  <Ionicons name="add" size={18} color="#AEBAC1" />
+                                </TouchableOpacity>
                               </View>
                             )}
 
-                            {isDeletedForEveryone ? (
-                              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2, paddingRight: 4 }}>
-                                <Ionicons
-                                  name="ban-outline"
-                                  size={15}
-                                  color={isMe ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.5)'}
-                                  style={{ marginRight: 6 }}
-                                />
-                                <Text
+                            <Pressable
+                              delayLongPress={180}
+                              onPress={() => {
+                                if (isMultiSelectMode) {
+                                  toggleSelectMessage(msg);
+                                }
+                              }}
+                              onLongPress={() => {
+                                if (isMultiSelectMode) {
+                                  toggleSelectMessage(msg);
+                                } else {
+                                  handleMessageLongPress(msg);
+                                }
+                              }}
+                              style={({ pressed }) => [
+                                { opacity: pressed ? 0.85 : 1 },
+                                isTransparentContainer ? styles.transparentBubble : styles.messageBubble,
+                                isMe ? (isTransparentContainer ? null : styles.bubbleMe) : (isTransparentContainer ? null : styles.bubbleThem),
+                                isVoice && styles.waVoiceBubble,
+                                { alignSelf: isMe ? 'flex-end' : 'flex-start' },
+                                isSelectedInMultiMode && {
+                                  borderWidth: 1.5,
+                                  borderColor: '#00A884',
+                                },
+                                isMatched && {
+                                  borderWidth: 1.5,
+                                  borderColor: isActiveFocusedMatch ? '#00A884' : 'rgba(0, 168, 132, 0.45)',
+                                  backgroundColor: isActiveFocusedMatch ? 'rgba(0, 168, 132, 0.22)' : undefined,
+                                },
+                                (highlightedMessageId && (msg.id === highlightedMessageId || msg._id === highlightedMessageId || msg.id?.toString() === highlightedMessageId)) && {
+                                  borderWidth: 2,
+                                  borderColor: '#00A884',
+                                  backgroundColor: 'rgba(0, 168, 132, 0.28)',
+                                }
+                              ]}
+                            >
+                              {isSelectedInMultiMode && !isImage && (
+                                <View
+                                  style={{
+                                    position: 'absolute',
+                                    top: -5,
+                                    right: isMe ? -5 : undefined,
+                                    left: !isMe ? -5 : undefined,
+                                    backgroundColor: '#00A884',
+                                    borderRadius: 10,
+                                    width: 20,
+                                    height: 20,
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    zIndex: 10,
+                                    borderWidth: 1.5,
+                                    borderColor: '#121B22',
+                                  }}
+                                >
+                                  <Ionicons name="checkmark" size={13} color="#FFFFFF" />
+                                </View>
+                              )}
+
+                              {Boolean(msg.isForwarded) && !isDeletedForEveryone && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3, opacity: 0.85 }}>
+                                  <Ionicons name="arrow-redo" size={12} color={isMe ? "#E9EDEF" : "#8696A0"} style={{ marginRight: 4 }} />
+                                  <Text style={{ fontSize: 11, fontStyle: 'italic', color: isMe ? "#E9EDEF" : "#8696A0" }}>
+                                    Forwarded
+                                  </Text>
+                                </View>
+                              )}
+                              {hasValidReplyTo && (
+                                <TouchableOpacity
+                                  activeOpacity={0.8}
+                                  onPress={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleSelectMessage(msg);
+                                      return;
+                                    }
+                                    const targetMsgId = replyToObj.messageId?.toString();
+                                    if (targetMsgId && messageYPositionsRef.current[targetMsgId] !== undefined && chatScrollViewRef.current) {
+                                      chatScrollViewRef.current.scrollTo({
+                                        y: Math.max(0, messageYPositionsRef.current[targetMsgId] - 70),
+                                        animated: true,
+                                      });
+                                      setHighlightedMessageId(targetMsgId);
+                                      setTimeout(() => setHighlightedMessageId(null), 1500);
+                                    }
+                                  }}
+                                  style={[styles.quotedMessageCard, isMe ? styles.quotedCardMe : styles.quotedCardThem]}
+                                >
+                                  <View style={[styles.quotedAccentLine, isMe ? styles.quotedLineMe : styles.quotedLineThem]} />
+                                  <View style={styles.quotedTextContainer}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, marginBottom: 2 }}>
+                                      <Ionicons name="return-down-forward" size={13} color={isMe ? "#06D755" : "#38BDF8"} style={{ marginRight: 4 }} />
+                                      <Text
+                                        style={[styles.quotedSenderName, isMe ? styles.quotedSenderNameMe : styles.quotedSenderNameThem, { flexShrink: 1 }]}
+                                        numberOfLines={1}
+                                      >
+                                        {getQuotedSenderName(replyToObj, isMe, activeChat?.name, activeLoggedInUserId)}
+                                      </Text>
+                                    </View>
+                                    <Text
+                                      style={[styles.quotedSnippetText, isMe ? styles.quotedSnippetMe : styles.quotedSnippetThem, { flexShrink: 1 }]}
+                                      numberOfLines={2}
+                                    >
+                                      {getQuotedSnippetText(replyToObj)}
+                                    </Text>
+                                  </View>
+                                </TouchableOpacity>
+                              )}
+                              {isSticker && (
+                                Boolean(msg.mediaUrl && typeof msg.mediaUrl === 'string' && (msg.mediaUrl.startsWith('http') || msg.mediaUrl.startsWith('data:image'))) ? (
+                                  <Image
+                                    source={{ uri: msg.mediaUrl }}
+                                    style={styles.chatStickerImage}
+                                    resizeMode="contain"
+                                  />
+                                ) : (
+                                  <Text style={styles.stickerText}>{msg.mediaUrl || msg.text}</Text>
+                                )
+                              )}
+
+                              {isImage && (
+                                <TouchableOpacity
+                                  activeOpacity={0.9}
+                                  onPress={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleSelectMessage(msg);
+                                    } else {
+                                      setImageZoomScale(1);
+                                      setImageRotation(0);
+                                      setViewMediaModal({
+                                        visible: true,
+                                        type: 'image',
+                                        url: imageUrlToRender,
+                                        fileName: msg.fileName || 'Photo',
+                                        fileSize: msg.fileSize || 0
+                                      });
+                                    }
+                                  }}
+                                  onLongPress={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleSelectMessage(msg);
+                                    } else {
+                                      handleMessageLongPress(msg);
+                                    }
+                                  }}
                                   style={[
-                                    styles.messageText,
-                                    {
-                                      fontStyle: 'italic',
-                                      color: isMe ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.6)',
-                                      fontSize: 14.5,
+                                    styles.imageMessageContainer,
+                                    isSelectedInMultiMode && {
+                                      borderWidth: 2.5,
+                                      borderColor: '#00A884',
                                     }
                                   ]}
                                 >
-                                  {isMe ? 'You deleted this message' : 'This message was deleted'}
-                                </Text>
-                              </View>
-                            ) : (!isSticker && !isImage && !isDocument && !isVoice && !isCall) && (
-                              <Text
-                                style={[
-                                  styles.messageText,
-                                  isMe ? styles.messageTextMe : styles.messageTextThem
-                                ]}
-                              >
-                                {msg.text}
-                              </Text>
-                            )}
-
-                            {!isVoice && (
-                              <View style={styles.messageMetaRow}>
-                                {msg.isPinned && !isDeletedForEveryone && (
-                                  <Ionicons name="pin" size={11} color={isMe ? "rgba(255,255,255,0.85)" : "#38BDF8"} style={{ marginRight: 4 }} />
-                                )}
-                                {msg.isStarred && !isDeletedForEveryone && (
-                                  <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 4 }} />
-                                )}
-                                {msg.isEdited && !isDeletedForEveryone && (
-                                  <Text
-                                    style={[
-                                      styles.messageTimeText,
-                                      isMe ? styles.messageTimeTextMe : styles.messageTimeTextThem,
-                                      { marginRight: 4, fontStyle: 'italic', fontSize: 10, opacity: 0.85 },
-                                      isSticker && { color: 'rgba(255,255,255,0.6)' }
-                                    ]}
-                                  >
-                                    Edited
-                                  </Text>
-                                )}
-                                {msg.createdAt && msg.createdAt !== 'match-init' && (
-                                  <Text
-                                    style={[
-                                      styles.messageTimeText,
-                                      isMe ? styles.messageTimeTextMe : styles.messageTimeTextThem,
-                                      isSticker && { color: 'rgba(255,255,255,0.6)' }
-                                    ]}
-                                  >
-                                    {formatMessageTime(msg.createdAt)}
-                                  </Text>
-                                )}
-                                {isMe && !isDeletedForEveryone && msg.createdAt !== 'match-init' && (
-                                  <Text
-                                    style={[
-                                      styles.statusTicks,
-                                      (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? { color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' } : msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent
-                                    ]}
-                                  >
-                                    {(msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
-                                  </Text>
-                                )}
-                              </View>
-                            )}
-
-                            {Array.isArray(msg.reactions) && msg.reactions.length > 0 && !isDeletedForEveryone && (() => {
-                              const emojiList = Array.from(new Set(msg.reactions.map(r => typeof r === 'string' ? r : (r?.emoji || r?.char || '')).filter(Boolean)));
-                              if (emojiList.length === 0) return null;
-                              return (
-                                <TouchableOpacity
-                                  activeOpacity={0.8}
-                                  onPress={() => handleEmojiReaction(emojiList[0], msg)}
-                                  style={[styles.reactionBadgePill, isMe ? styles.reactionPillMe : styles.reactionPillThem]}
-                                >
-                                  {emojiList.map((emoji, idx) => (
-                                    <Text key={idx} style={styles.reactionBadgeEmoji}>{emoji}</Text>
-                                  ))}
-                                  {msg.reactions.length > 0 && (
-                                    <Text style={styles.reactionBadgeCount}>{msg.reactions.length}</Text>
+                                  <Image
+                                    source={{ uri: imageUrlToRender }}
+                                    style={styles.imageMessage}
+                                    resizeMode="cover"
+                                  />
+                                  {isSelectedInMultiMode && (
+                                    <View
+                                      style={{
+                                        ...StyleSheet.absoluteFillObject,
+                                        backgroundColor: 'rgba(0, 168, 132, 0.28)',
+                                        padding: 8,
+                                        alignItems: isMe ? 'flex-end' : 'flex-start',
+                                        justifyContent: 'flex-start',
+                                      }}
+                                    >
+                                      <View
+                                        style={{
+                                          backgroundColor: '#00A884',
+                                          borderRadius: 13,
+                                          width: 26,
+                                          height: 26,
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          borderWidth: 2,
+                                          borderColor: '#FFFFFF',
+                                          elevation: 6,
+                                          shadowColor: '#000',
+                                          shadowOffset: { width: 0, height: 2 },
+                                          shadowOpacity: 0.35,
+                                          shadowRadius: 3,
+                                        }}
+                                      >
+                                        <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                                      </View>
+                                    </View>
                                   )}
                                 </TouchableOpacity>
-                              );
-                            })()}
-                          </Pressable>
+                              )}
+
+                              {isDocument && (
+                                <TouchableOpacity
+                                  style={styles.documentMessageCard}
+                                  activeOpacity={0.85}
+                                  onPress={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleSelectMessage(msg);
+                                    } else if (msg.mediaUrl) {
+                                      const isAudioDoc = Boolean(
+                                        (msg.fileName && /\.(mp3|m4a|wav|aac|ogg|opus)$/i.test(msg.fileName)) ||
+                                        (msg.mediaUrl && /\.(mp3|m4a|wav|aac|ogg|opus)$/i.test(msg.mediaUrl))
+                                      );
+                                      if (isAudioDoc) {
+                                        setIsAudioModalPaused(false);
+                                        setAudioModalPosition(0);
+                                        setAudioModalDuration(0);
+                                        setAudioPlaybackRate(1.0);
+                                        setIsAudioModalMuted(false);
+                                        setViewMediaModal({
+                                          visible: true,
+                                          type: 'audio',
+                                          url: getImageUrl(msg.mediaUrl),
+                                          fileName: msg.fileName || 'Audio File',
+                                          fileSize: msg.fileSize || 0,
+                                        });
+                                      } else {
+                                        setViewMediaModal({
+                                          visible: true,
+                                          type: 'document',
+                                          url: getImageUrl(msg.mediaUrl),
+                                          fileName: msg.fileName || 'document.pdf',
+                                          fileSize: msg.fileSize || 0,
+                                        });
+                                      }
+                                    }
+                                  }}
+                                  onLongPress={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleSelectMessage(msg);
+                                    } else {
+                                      handleMessageLongPress(msg);
+                                    }
+                                  }}
+                                >
+                                  <View style={styles.documentCardTop}>
+                                    <View style={[styles.documentBadge, getDocTypeStyle(msg.fileName)]}>
+                                      <Text style={styles.documentBadgeText}>{getDocExtensionBadge(msg.fileName)}</Text>
+                                    </View>
+                                    <View style={styles.documentTextContainer}>
+                                      <Text style={styles.documentNameText} numberOfLines={1}>
+                                        {msg.fileName || 'document.pdf'}
+                                      </Text>
+                                      <Text style={styles.documentSizeText}>
+                                        {formatFileSize(msg.fileSize)} • Tap to Preview
+                                      </Text>
+                                    </View>
+                                  </View>
+                                </TouchableOpacity>
+                              )}
+
+                              {isVideo && (
+                                <TouchableOpacity
+                                  style={styles.videoMessageContainer}
+                                  activeOpacity={0.8}
+                                  onPress={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleSelectMessage(msg);
+                                    } else if (msg.mediaUrl) {
+                                      setViewMediaModal({
+                                        visible: true,
+                                        type: 'video',
+                                        url: getImageUrl(msg.mediaUrl),
+                                        fileName: msg.fileName || 'video.mp4',
+                                        fileSize: msg.fileSize || 0,
+                                      });
+                                    }
+                                  }}
+                                  onLongPress={() => {
+                                    if (isMultiSelectMode) {
+                                      toggleSelectMessage(msg);
+                                    } else {
+                                      handleMessageLongPress(msg);
+                                    }
+                                  }}
+                                >
+                                  <View style={styles.videoIconContainer}>
+                                    <Ionicons name="videocam" size={20} color="#00A884" />
+                                  </View>
+                                  <View style={styles.videoTextContainer}>
+                                    <Text style={styles.videoNameText} numberOfLines={1}>
+                                      {msg.fileName || 'video.mp4'}
+                                    </Text>
+                                    <Text style={styles.videoSizeText}>
+                                      {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : 'Video'} • Tap to Play
+                                    </Text>
+                                  </View>
+                                </TouchableOpacity>
+                              )}
+
+                              {isVoice && (
+                                <View style={styles.waVoiceContainer}>
+                                  {/* Top Row: Play/Pause Button + Dot Line Progress + Mic Icon */}
+                                  <View style={styles.waVoiceMainRow}>
+                                    <TouchableOpacity
+                                      style={[styles.waVoicePlayBtn, isMe ? styles.waVoicePlayBtnMe : styles.waVoicePlayBtnThem]}
+                                      onPress={() => {
+                                        if (isMultiSelectMode) {
+                                          toggleSelectMessage(msg);
+                                        } else {
+                                          playVoiceNote(msg.id, msg.mediaUrl);
+                                        }
+                                      }}
+                                      onLongPress={() => {
+                                        if (isMultiSelectMode) {
+                                          toggleSelectMessage(msg);
+                                        } else {
+                                          handleMessageLongPress(msg);
+                                        }
+                                      }}
+                                      activeOpacity={0.75}
+                                    >
+                                      <Ionicons
+                                        name={playingMessageId === msg.id ? "pause" : "play"}
+                                        size={16}
+                                        color={isMe ? "#00A884" : "#FFFFFF"}
+                                      />
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                      style={styles.waVoiceTrackWrapper}
+                                      activeOpacity={0.75}
+                                      onPress={() => {
+                                        if (isMultiSelectMode) {
+                                          toggleSelectMessage(msg);
+                                        } else {
+                                          if (playingMessageId) {
+                                            if (audioRecorderPlayerRef.current) {
+                                              try {
+                                                audioRecorderPlayerRef.current.removePlayBackListener();
+                                                audioRecorderPlayerRef.current.removePlaybackEndListener();
+                                                audioRecorderPlayerRef.current.stopPlayer();
+                                              } catch (_) { }
+                                            }
+                                            setPlayingMessageId(null);
+                                          }
+                                          setIsAudioModalPaused(false);
+                                          setAudioModalPosition(0);
+                                          setAudioModalDuration(0);
+                                          setAudioPlaybackRate(1.0);
+                                          setIsAudioModalMuted(false);
+                                          setViewMediaModal({
+                                            visible: true,
+                                            type: 'audio',
+                                            url: getImageUrl(msg.mediaUrl),
+                                            fileName: msg.fileName || (msg.messageType === 'voice' ? 'Voice Message' : 'Audio Message'),
+                                            fileSize: msg.fileSize || 0
+                                          });
+                                        }
+                                      }}
+                                      onLongPress={() => {
+                                        if (isMultiSelectMode) {
+                                          toggleSelectMessage(msg);
+                                        } else {
+                                          handleMessageLongPress(msg);
+                                        }
+                                      }}
+                                    >
+                                      {/* Track Line */}
+                                      <View style={[styles.waVoiceTrackLine, isMe ? styles.waVoiceTrackLineMe : styles.waVoiceTrackLineThem]} />
+
+                                      {/* Slider Dot Thumb */}
+                                      <View
+                                        style={[
+                                          styles.waVoiceDotThumb,
+                                          isMe ? styles.waVoiceDotThumbMe : styles.waVoiceDotThumbThem,
+                                          {
+                                            left: `${playingMessageId === msg.id && playbackDuration > 0
+                                              ? Math.min(Math.max((playbackPosition / playbackDuration) * 92, 0), 92)
+                                              : 0
+                                              }%`,
+                                          },
+                                        ]}
+                                      />
+                                    </TouchableOpacity>
+                                  </View>
+
+                                  {/* Bottom Sub-row: Duration (Left) & Timestamp + Checkmarks (Right) */}
+                                  <View style={styles.waVoiceSubRow}>
+                                    <TouchableOpacity
+                                      activeOpacity={0.7}
+                                      onPress={() => {
+                                        if (isMultiSelectMode) {
+                                          toggleSelectMessage(msg);
+                                        } else {
+                                          if (playingMessageId) {
+                                            if (audioRecorderPlayerRef.current) {
+                                              try {
+                                                audioRecorderPlayerRef.current.removePlayBackListener();
+                                                audioRecorderPlayerRef.current.removePlaybackEndListener();
+                                                audioRecorderPlayerRef.current.stopPlayer();
+                                              } catch (_) { }
+                                            }
+                                            setPlayingMessageId(null);
+                                          }
+                                          setIsAudioModalPaused(false);
+                                          setAudioModalPosition(0);
+                                          setAudioModalDuration(0);
+                                          setAudioPlaybackRate(1.0);
+                                          setIsAudioModalMuted(false);
+                                          setViewMediaModal({
+                                            visible: true,
+                                            type: 'audio',
+                                            url: getImageUrl(msg.mediaUrl),
+                                            fileName: msg.fileName || (msg.messageType === 'voice' ? 'Voice Message' : 'Audio Message'),
+                                            fileSize: msg.fileSize || 0
+                                          });
+                                        }
+                                      }}
+                                      style={{ flexDirection: 'row', alignItems: 'center' }}
+                                    >
+                                      <Text style={[styles.waVoiceDurationText, isMe ? styles.waVoiceMetaTextMe : styles.waVoiceMetaTextThem]}>
+                                        {playingMessageId === msg.id && playbackPosition > 0
+                                          ? `${Math.floor(playbackPosition / 1000 / 60)}:${(Math.floor((playbackPosition / 1000) % 60) < 10 ? '0' : '')}${Math.floor((playbackPosition / 1000) % 60)}`
+                                          : (msg.fileSize && msg.fileSize > 0 ? `0:0${Math.min(Math.max(Math.floor(msg.fileSize / 1000), 2), 59)}` : '0:04')}
+                                      </Text>
+                                      <Ionicons name="expand-outline" size={11} color={isMe ? "#00A884" : "#8696A0"} style={{ marginLeft: 5 }} />
+                                    </TouchableOpacity>
+
+                                    <View style={styles.waVoiceMetaRight}>
+                                      {msg.isStarred && (
+                                        <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 4 }} />
+                                      )}
+                                      {msg.createdAt && msg.createdAt !== 'match-init' && (
+                                        <Text style={[styles.waVoiceTimeText, isMe ? styles.waVoiceMetaTextMe : styles.waVoiceMetaTextThem]}>
+                                          {formatMessageTime(msg.createdAt)}
+                                        </Text>
+                                      )}
+                                      {isMe && msg.createdAt !== 'match-init' && (
+                                        <Text style={[styles.statusTicks, (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? { color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' } : msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent]}>
+                                          {msg.status === 'failed' ? ' ⚠️ Failed (Tap to retry)' : (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                        </Text>
+                                      )}
+                                    </View>
+                                  </View>
+                                </View>
+                              )}
+
+                              {isCall && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 6, minWidth: 160 }}>
+                                  <View
+                                    style={{
+                                      width: 36,
+                                      height: 36,
+                                      borderRadius: 18,
+                                      backgroundColor: (msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer'))))
+                                        ? 'rgba(255, 59, 48, 0.25)'
+                                        : 'rgba(52, 199, 89, 0.25)',
+                                      justifyContent: 'center',
+                                      alignItems: 'center',
+                                      marginRight: 10,
+                                    }}
+                                  >
+                                    <Ionicons
+                                      name={(msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer')))) ? "call-outline" : "call-outline"}
+                                      size={18}
+                                      color={(msg.mediaUrl === 'missed' || msg.mediaUrl === 'declined' || (msg.text && (msg.text.includes('Missed') || msg.text.includes('declined') || msg.text.includes('No answer')))) ? "#FF3B30" : "#34C759"}
+                                    />
+                                  </View>
+                                  <View style={{ flex: 1 }}>
+                                    <Text
+                                      style={[
+                                        styles.messageText,
+                                        isMe ? styles.messageTextMe : styles.messageTextThem,
+                                        { fontWeight: '700', fontSize: 14 }
+                                      ]}
+                                    >
+                                      {msg.text || (isMe ? 'Outgoing voice call' : 'Incoming voice call')}
+                                    </Text>
+                                    <Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.6)', marginTop: 2 }}>
+                                      Voice Call
+                                    </Text>
+                                  </View>
+                                </View>
+                              )}
+
+                              {isDeletedForEveryone ? (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2, paddingRight: 4 }}>
+                                  <Ionicons
+                                    name="ban-outline"
+                                    size={15}
+                                    color={isMe ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.5)'}
+                                    style={{ marginRight: 6 }}
+                                  />
+                                  <Text
+                                    style={[
+                                      styles.messageText,
+                                      {
+                                        fontStyle: 'italic',
+                                        color: isMe ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.6)',
+                                        fontSize: 14.5,
+                                      }
+                                    ]}
+                                  >
+                                    {isMe ? 'You deleted this message' : 'This message was deleted'}
+                                  </Text>
+                                </View>
+                              ) : (() => {
+                                const hasMediaCaption = Boolean(
+                                  (isImage || isVideo || isDocument) &&
+                                  msg.text &&
+                                  typeof msg.text === 'string' &&
+                                  msg.text.trim() !== '' &&
+                                  msg.text !== msg.mediaUrl &&
+                                  msg.text !== msg.fileName &&
+                                  !msg.text.startsWith('http://') &&
+                                  !msg.text.startsWith('https://') &&
+                                  !msg.text.startsWith('data:') &&
+                                  msg.text !== '📷 Photo' &&
+                                  msg.text !== '🎬 Video' &&
+                                  msg.text !== '📄 Document' &&
+                                  msg.text !== '🎤 Voice Note'
+                                );
+
+                                if (hasMediaCaption) {
+                                  return (
+                                    <Text
+                                      style={[
+                                        styles.messageText,
+                                        isMe ? styles.messageTextMe : styles.messageTextThem,
+                                        { marginTop: 4, marginBottom: 2 }
+                                      ]}
+                                    >
+                                      {msg.text}
+                                    </Text>
+                                  );
+                                }
+
+                                if (!isSticker && !isImage && !isDocument && !isVideo && !isVoice && !isCall) {
+                                  return (
+                                    <Text
+                                      style={[
+                                        styles.messageText,
+                                        isMe ? styles.messageTextMe : styles.messageTextThem
+                                      ]}
+                                    >
+                                      {msg.text}
+                                    </Text>
+                                  );
+                                }
+                                return null;
+                              })()}
+
+                              {!isVoice && (
+                                <View style={styles.messageMetaRow}>
+                                  {msg.isPinned && !isDeletedForEveryone && (
+                                    <Ionicons name="pin" size={11} color={isMe ? "rgba(255,255,255,0.85)" : "#38BDF8"} style={{ marginRight: 4 }} />
+                                  )}
+                                  {msg.isStarred && !isDeletedForEveryone && (
+                                    <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 4 }} />
+                                  )}
+                                  {msg.isEdited && !isDeletedForEveryone && (
+                                    <Text
+                                      style={[
+                                        styles.messageTimeText,
+                                        isMe ? styles.messageTimeTextMe : styles.messageTimeTextThem,
+                                        { marginRight: 4, fontStyle: 'italic', fontSize: 10, opacity: 0.85 },
+                                        isSticker && { color: 'rgba(255,255,255,0.6)' }
+                                      ]}
+                                    >
+                                      Edited
+                                    </Text>
+                                  )}
+                                  {(msg.createdAt || msg.time) && msg.createdAt !== 'match-init' && (
+                                    <Text
+                                      style={[
+                                        styles.messageTimeText,
+                                        isMe ? styles.messageTimeTextMe : styles.messageTimeTextThem,
+                                        isSticker && { color: 'rgba(255,255,255,0.6)' }
+                                      ]}
+                                    >
+                                      {formatMessageTime(msg.createdAt) || msg.time || ''}
+                                    </Text>
+                                  )}
+                                  {isMe && !isDeletedForEveryone && msg.createdAt !== 'match-init' && (
+                                    <Text
+                                      style={[
+                                        styles.statusTicks,
+                                        (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? { color: 'rgba(255,255,255,0.5)', fontStyle: 'italic' } : msg.status === 'seen' ? styles.ticksSeen : styles.ticksSent
+                                      ]}
+                                    >
+                                      {(msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued') ? ' 🕒' : msg.status === 'seen' ? ' ✓✓' : msg.status === 'delivered' ? ' ✓✓' : ' ✓'}
+                                    </Text>
+                                  )}
+                                </View>
+                              )}
+
+                              {Array.isArray(msg.reactions) && msg.reactions.length > 0 && !isDeletedForEveryone && (() => {
+                                const emojiList = Array.from(new Set(msg.reactions.map(r => typeof r === 'string' ? r : (r?.emoji || r?.char || '')).filter(Boolean)));
+                                if (emojiList.length === 0) return null;
+                                return (
+                                  <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    onPress={() => {
+                                      setReactionModalActiveTab('all');
+                                      setReactionDetailsModalMsg(msg);
+                                    }}
+                                    style={[styles.reactionBadgePill, isMe ? styles.reactionPillMe : styles.reactionPillThem]}
+                                  >
+                                    {emojiList.map((emoji, idx) => (
+                                      <Text key={idx} style={styles.reactionBadgeEmoji}>{emoji}</Text>
+                                    ))}
+                                    {msg.reactions.length > 1 && (
+                                      <Text style={styles.reactionBadgeCount}>{msg.reactions.length}</Text>
+                                    )}
+                                  </TouchableOpacity>
+                                );
+                              })()}
+                            </Pressable>
+                          </View>
                         </View>
                       );
                     })}
@@ -8094,9 +8519,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             onPress={handlePickImage}
                           >
                             <View style={styles.attachOptionIconBg}>
-                              <Ionicons name="image-outline" size={26} color="#00A884" />
+                              <Ionicons name="images-outline" size={26} color="#00A884" />
                             </View>
-                            <Text style={styles.attachOptionLabel}>Photo / Gallery</Text>
+                            <Text style={styles.attachOptionLabel}>Photos & Videos</Text>
                           </TouchableOpacity>
 
                           <TouchableOpacity
@@ -8150,6 +8575,148 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       },
                     }}
                   />
+
+                  {/* WhatsApp-Style Media Preview and Send Modal */}
+                  <Modal
+                    visible={Boolean(pendingMediaSend)}
+                    transparent={false}
+                    animationType="slide"
+                    onRequestClose={handleCancelSendMedia}
+                  >
+                    <SafeAreaView style={styles.waPreviewModalOverlay}>
+                      <StatusBar barStyle="light-content" backgroundColor="#0B141A" />
+
+                      {/* Header */}
+                      <View style={styles.waPreviewHeader}>
+                        <TouchableOpacity
+                          style={styles.waPreviewBackBtn}
+                          onPress={handleCancelSendMedia}
+                          disabled={isMediaUploading}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="close" size={26} color="#FFFFFF" />
+                        </TouchableOpacity>
+
+                        <View style={styles.waPreviewHeaderTitleContainer}>
+                          <Text style={styles.waPreviewHeaderTitle} numberOfLines={1}>
+                            {activeChat?.name || 'Send Media'}
+                          </Text>
+                          <Text style={styles.waPreviewHeaderSubtitle} numberOfLines={1}>
+                            {pendingMediaSend?.mediaType === 'image'
+                              ? 'Photo'
+                              : pendingMediaSend?.mediaType === 'video'
+                                ? `Video • ${formatFileSize(pendingMediaSend?.fileSize)}`
+                                : `${pendingMediaSend?.fileName || 'Document'} • ${formatFileSize(pendingMediaSend?.fileSize)}`}
+                          </Text>
+                        </View>
+
+                        {isMediaUploading ? (
+                          <ActivityIndicator size="small" color="#00A884" style={{ marginRight: 8 }} />
+                        ) : (
+                          <TouchableOpacity
+                            onPress={handleCancelSendMedia}
+                            style={{ padding: 6 }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={{ color: '#8696A0', fontSize: 14 }}>Discard</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+
+                      {/* Media Body Preview */}
+                      <View style={styles.waPreviewContentArea}>
+                        {pendingMediaSend?.mediaType === 'image' ? (
+                          <Image
+                            source={{ uri: pendingMediaSend.uri }}
+                            style={styles.waPreviewImage}
+                            resizeMode="contain"
+                          />
+                        ) : pendingMediaSend?.mediaType === 'video' ? (
+                          <View style={styles.waPreviewVideoContainer}>
+                            <Video
+                              source={{ uri: pendingMediaSend.uri }}
+                              style={styles.waPreviewVideoPlayer}
+                              resizeMode="contain"
+                              controls={true}
+                              paused={false}
+                              repeat={true}
+                            />
+                            <View style={styles.waPreviewVideoBadge}>
+                              <Ionicons name="videocam" size={14} color="#00A884" style={{ marginRight: 5 }} />
+                              <Text style={styles.waPreviewVideoBadgeText}>
+                                {formatFileSize(pendingMediaSend.fileSize)}
+                              </Text>
+                            </View>
+                          </View>
+                        ) : (
+                          <View style={styles.waPreviewDocCard}>
+                            <View style={[styles.waPreviewDocIcon, getDocTypeStyle(pendingMediaSend?.fileName)]}>
+                              <Text style={styles.waPreviewDocIconText}>
+                                {getDocExtensionBadge(pendingMediaSend?.fileName)}
+                              </Text>
+                            </View>
+                            <Text style={styles.waPreviewDocName} numberOfLines={2}>
+                              {pendingMediaSend?.fileName || 'document.pdf'}
+                            </Text>
+                            <Text style={styles.waPreviewDocMeta}>
+                              {formatFileSize(pendingMediaSend?.fileSize)} • Ready to send
+                            </Text>
+                            <View style={styles.waPreviewDocPill}>
+                              <Ionicons name="paper-plane-outline" size={15} color="#00A884" />
+                              <Text style={styles.waPreviewDocPillText}>Tap send button below to share</Text>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Uploading Status Banner */}
+                      {isMediaUploading && (
+                        <View style={styles.waPreviewUploadingBanner}>
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.waPreviewUploadingText}>
+                            Uploading...
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Bottom Caption Input & WhatsApp Send Button */}
+                      <KeyboardAvoidingView
+                        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                      >
+                        <View style={styles.waPreviewBottomBar}>
+                          <View style={styles.waPreviewInputWrapper}>
+                            <Ionicons name="happy-outline" size={22} color="#8696A0" style={{ marginRight: 8 }} />
+                            <TextInput
+                              style={styles.waPreviewInput}
+                              placeholder="Add a caption..."
+                              placeholderTextColor="#8696A0"
+                              value={mediaCaptionText}
+                              onChangeText={setMediaCaptionText}
+                              multiline={true}
+                              maxLength={500}
+                              editable={!isMediaUploading}
+                            />
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.waPreviewSendBtn,
+                              isMediaUploading && { backgroundColor: '#0B8065', opacity: 0.85 }
+                            ]}
+                            onPress={handleConfirmSendMedia}
+                            disabled={isMediaUploading}
+                            activeOpacity={0.8}
+                          >
+                            {isMediaUploading ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                              <Ionicons name="send" size={20} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      </KeyboardAvoidingView>
+                    </SafeAreaView>
+                  </Modal>
                 </KeyboardAvoidingView>
               ) : (
                 /* Chat List view */
@@ -9087,6 +9654,145 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </Modal>
         )}
 
+        {/* WhatsApp-Style Message Reaction Details Modal */}
+        {reactionDetailsModalMsg && (
+          <Modal
+            visible={!!reactionDetailsModalMsg}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setReactionDetailsModalMsg(null)}
+          >
+            <TouchableOpacity
+              style={styles.reactionModalOverlay}
+              activeOpacity={1}
+              onPress={() => setReactionDetailsModalMsg(null)}
+            >
+              <TouchableOpacity
+                style={styles.reactionModalSheet}
+                activeOpacity={1}
+                onPress={(e) => e.stopPropagation()}
+              >
+                {/* Drag Handle Indicator */}
+                <View style={styles.reactionModalHandle} />
+
+                {(() => {
+                  const reactions = Array.isArray(reactionDetailsModalMsg.reactions) ? reactionDetailsModalMsg.reactions : [];
+                  const uniqueEmojis = Array.from(new Set(reactions.map((r) => (typeof r === 'string' ? r : r?.emoji)).filter(Boolean)));
+                  const filteredReactions = reactionModalActiveTab === 'all'
+                    ? reactions
+                    : reactions.filter((r) => (typeof r === 'string' ? r : r?.emoji) === reactionModalActiveTab);
+
+                  return (
+                    <>
+                      {/* Top Tabs Row */}
+                      <View style={styles.reactionModalTabsRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.reactionModalTab,
+                            reactionModalActiveTab === 'all' && styles.reactionModalTabActive
+                          ]}
+                          onPress={() => setReactionModalActiveTab('all')}
+                        >
+                          <Text
+                            style={[
+                              styles.reactionModalTabText,
+                              reactionModalActiveTab === 'all' && styles.reactionModalTabTextActive
+                            ]}
+                          >
+                            All {reactions.length}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {uniqueEmojis.map((em) => {
+                          const count = reactions.filter((r) => (typeof r === 'string' ? r : r?.emoji) === em).length;
+                          const isActive = reactionModalActiveTab === em;
+                          return (
+                            <TouchableOpacity
+                              key={em}
+                              style={[
+                                styles.reactionModalTab,
+                                isActive && styles.reactionModalTabActive
+                              ]}
+                              onPress={() => setReactionModalActiveTab(em)}
+                            >
+                              <Text style={styles.reactionModalTabEmoji}>{em}</Text>
+                              <Text
+                                style={[
+                                  styles.reactionModalTabText,
+                                  isActive && styles.reactionModalTabTextActive,
+                                  { marginLeft: 4 }
+                                ]}
+                              >
+                                {count}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      {/* Reactions User List */}
+                      <ScrollView style={styles.reactionModalList} showsVerticalScrollIndicator={false}>
+                        {filteredReactions.map((r, index) => {
+                          const emoji = typeof r === 'string' ? r : r?.emoji;
+                          const rUserId = typeof r === 'string' ? null : (r?.userId?.toString() || r?.userId);
+                          const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+                          const isCurrentUserReaction = Boolean((currentUserId && rUserId === currentUserId) || (!rUserId));
+
+                          const partnerName = activeChat?.name || activeChat?.firstName || 'Match';
+                          const partnerAvatar = activeChat?.profileImage || activeChat?.image || activeChat?.photos?.[0];
+
+                          const displayName = isCurrentUserReaction ? 'You' : partnerName;
+                          const displayAvatar = isCurrentUserReaction
+                            ? (userProfile?.profileImage || userProfile?.photos?.[0] || currentUser?.profileImage)
+                            : partnerAvatar;
+
+                          return (
+                            <TouchableOpacity
+                              key={index}
+                              style={styles.reactionModalUserRow}
+                              activeOpacity={isCurrentUserReaction ? 0.7 : 1}
+                              onPress={() => {
+                                if (isCurrentUserReaction) {
+                                  // Tab again to remove reacted emoji!
+                                  handleEmojiReaction(emoji, reactionDetailsModalMsg, 'remove');
+                                  setReactionDetailsModalMsg(null);
+                                  if (Platform.OS === 'android') {
+                                    ToastAndroid.show('Reaction removed', ToastAndroid.SHORT);
+                                  }
+                                }
+                              }}
+                            >
+                              <View style={styles.reactionModalUserLeft}>
+                                {displayAvatar ? (
+                                  <Image source={{ uri: getImageUrl(displayAvatar) }} style={styles.reactionModalAvatar} />
+                                ) : (
+                                  <View style={styles.reactionModalAvatarPlaceholder}>
+                                    <Text style={styles.reactionModalAvatarText}>
+                                      {displayName?.[0]?.toUpperCase() || 'U'}
+                                    </Text>
+                                  </View>
+                                )}
+                                <View style={{ marginLeft: 12 }}>
+                                  <Text style={styles.reactionModalUserName}>{displayName}</Text>
+                                  {isCurrentUserReaction && (
+                                    <Text style={styles.reactionModalRemoveHint}>Tap to remove</Text>
+                                  )}
+                                </View>
+                              </View>
+
+                              <Text style={styles.reactionModalUserEmoji}>{emoji}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </>
+                  );
+                })()}
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        )}
+
         {/* Full-Screen Story & Video Preview Modal for Likes Candidate */}
         {likesPreviewStoryIndex !== null && selectedLikesProfile && (
           <PreviewModal
@@ -9247,12 +9953,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         )
         */}
 
-        {/* Fullscreen Photo & Document Preview Modal */}
+        {/* Fullscreen Photo, Audio, Video & Document Preview Modal */}
         <Modal
           visible={viewMediaModal.visible}
           transparent={true}
           animationType="fade"
-          onRequestClose={() => setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 })}
+          onRequestClose={() => {
+            setIsAudioModalPaused(true);
+            setImageZoomScale(1);
+            setImageRotation(0);
+            setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
+          }}
         >
           <View style={styles.mediaViewerOverlay}>
             <SafeAreaView style={styles.mediaViewerSafeArea}>
@@ -9260,17 +9971,43 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               <View style={styles.mediaViewerHeader}>
                 <View style={styles.mediaViewerTitleContainer}>
                   <Text style={styles.mediaViewerTitle} numberOfLines={1}>
-                    {viewMediaModal.fileName || (viewMediaModal.type === 'image' ? 'Photo Preview' : 'Document Preview')}
+                    {viewMediaModal.fileName || (viewMediaModal.type === 'image' ? 'Photo Preview' : viewMediaModal.type === 'video' ? 'Video Player' : viewMediaModal.type === 'audio' ? 'Audio Player' : 'Document Preview')}
                   </Text>
-                  {viewMediaModal.fileSize > 0 && (
+                  {viewMediaModal.type === 'image' ? (
+                    <Text style={styles.mediaViewerSubTitle}>
+                      {Math.round(imageZoomScale * 100)}% • {imageRotation}°{viewMediaModal.fileSize > 0 ? ` • ${formatFileSize(viewMediaModal.fileSize)}` : ''}
+                    </Text>
+                  ) : viewMediaModal.type === 'audio' ? (
+                    <Text style={styles.mediaViewerSubTitle}>
+                      {formatPlayerSeconds(audioModalPosition)} / {formatPlayerSeconds(audioModalDuration || 0)} • {audioPlaybackRate}x{viewMediaModal.fileSize > 0 ? ` • ${formatFileSize(viewMediaModal.fileSize)}` : ''}
+                    </Text>
+                  ) : viewMediaModal.fileSize > 0 ? (
                     <Text style={styles.mediaViewerSubTitle}>
                       {formatFileSize(viewMediaModal.fileSize)}
                     </Text>
-                  )}
+                  ) : null}
                 </View>
+
+                {/* Header Action: Quick rotate for image */}
+                {viewMediaModal.type === 'image' && (
+                  <TouchableOpacity
+                    style={[styles.mediaViewerCloseButton, { marginRight: 8 }]}
+                    onPress={() => setImageRotation((r) => (r + 90) % 360)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="refresh" size={18} color="#00A884" />
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
                   style={styles.mediaViewerCloseButton}
-                  onPress={() => setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 })}
+                  onPress={() => {
+                    setIsAudioModalPaused(true);
+                    setImageZoomScale(1);
+                    setImageRotation(0);
+                    setViewMediaModal({ visible: false, type: 'image', url: '', fileName: '', fileSize: 0 });
+                  }}
+                  activeOpacity={0.7}
                 >
                   <Text style={styles.mediaViewerCloseText}>✕</Text>
                 </TouchableOpacity>
@@ -9279,11 +10016,276 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               {/* Viewer Content Body */}
               <View style={styles.mediaViewerBody}>
                 {viewMediaModal.type === 'image' ? (
-                  <Image
-                    source={{ uri: viewMediaModal.url }}
-                    style={styles.mediaViewerFullImage}
-                    resizeMode="contain"
-                  />
+                  <View style={styles.imageViewerContainer}>
+                    <TouchableOpacity
+                      activeOpacity={1}
+                      onPress={() => {
+                        setImageZoomScale((prev) => (prev > 1 ? 1 : 2));
+                      }}
+                      style={styles.imageViewerCanvas}
+                    >
+                      <Image
+                        source={{ uri: viewMediaModal.url }}
+                        style={[
+                          styles.mediaViewerFullImage,
+                          {
+                            transform: [
+                              { scale: imageZoomScale },
+                              { rotate: `${imageRotation}deg` }
+                            ]
+                          }
+                        ]}
+                        resizeMode="contain"
+                      />
+                    </TouchableOpacity>
+
+                    {/* WhatsApp-style Image Controller Pill Toolbar */}
+                    <View style={styles.imageViewerControlPill}>
+                      {/* Zoom Out Button */}
+                      <TouchableOpacity
+                        style={[styles.imageViewerControlBtn, imageZoomScale <= 1 && styles.imageViewerControlBtnDisabled]}
+                        disabled={imageZoomScale <= 1}
+                        onPress={() => setImageZoomScale((s) => Math.max(1, +(s - 0.35).toFixed(2)))}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="remove" size={20} color={imageZoomScale <= 1 ? '#536471' : '#FFFFFF'} />
+                      </TouchableOpacity>
+
+                      {/* Zoom Scale Badge (tap to reset scale) */}
+                      <TouchableOpacity
+                        style={styles.imageViewerScaleBadge}
+                        onPress={() => {
+                          setImageZoomScale(1);
+                          setImageRotation(0);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.imageViewerScaleText}>
+                          {Math.round(imageZoomScale * 100)}%
+                        </Text>
+                      </TouchableOpacity>
+
+                      {/* Zoom In Button */}
+                      <TouchableOpacity
+                        style={[styles.imageViewerControlBtn, imageZoomScale >= 3.5 && styles.imageViewerControlBtnDisabled]}
+                        disabled={imageZoomScale >= 3.5}
+                        onPress={() => setImageZoomScale((s) => Math.min(3.5, +(s + 0.35).toFixed(2)))}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="add" size={20} color={imageZoomScale >= 3.5 ? '#536471' : '#FFFFFF'} />
+                      </TouchableOpacity>
+
+                      <View style={styles.imageViewerDivider} />
+
+                      {/* 90° Rotate Clockwise Button */}
+                      <TouchableOpacity
+                        style={styles.imageViewerControlBtn}
+                        onPress={() => setImageRotation((r) => (r + 90) % 360)}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="reload" size={18} color="#00A884" />
+                      </TouchableOpacity>
+
+                      {/* Reset Fit View Button */}
+                      <TouchableOpacity
+                        style={styles.imageViewerControlBtn}
+                        onPress={() => {
+                          setImageZoomScale(1);
+                          setImageRotation(0);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="scan-outline" size={18} color="#E9EDEF" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : viewMediaModal.type === 'audio' ? (
+                  <View style={styles.audioViewerContainer}>
+                    {/* Invisible Video Component used as Audio Engine */}
+                    <Video
+                      ref={modalAudioPlayerRef}
+                      source={{ uri: viewMediaModal.url }}
+                      style={{ width: 0, height: 0, position: 'absolute' }}
+                      paused={isAudioModalPaused}
+                      rate={audioPlaybackRate}
+                      muted={isAudioModalMuted}
+                      onLoad={(meta) => {
+                        if (meta && meta.duration) {
+                          setAudioModalDuration(meta.duration);
+                        }
+                      }}
+                      onProgress={(prog) => {
+                        if (prog && typeof prog.currentTime === 'number') {
+                          setAudioModalPosition(prog.currentTime);
+                        }
+                      }}
+                      onEnd={() => {
+                        setIsAudioModalPaused(true);
+                        setAudioModalPosition(0);
+                        modalAudioPlayerRef.current?.seek(0);
+                      }}
+                      onError={(err) => {
+                        console.log('Audio Player Error:', err);
+                      }}
+                    />
+
+                    {/* WhatsApp-Style Center Audio Visualizer Card */}
+                    <View style={styles.audioViewerCard}>
+                      <View style={styles.audioViewerVisualizerCircle}>
+                        <View style={styles.audioViewerInnerCircle}>
+                          <Ionicons
+                            name={viewMediaModal.fileName?.toLowerCase().includes('voice') ? "mic" : "musical-notes"}
+                            size={52}
+                            color="#00A884"
+                          />
+                        </View>
+                      </View>
+
+                      <Text style={styles.audioViewerTitle} numberOfLines={1}>
+                        {viewMediaModal.fileName || 'Audio Message'}
+                      </Text>
+                      <Text style={styles.audioViewerSubtitle}>
+                        {viewMediaModal.fileSize > 0 ? `${formatFileSize(viewMediaModal.fileSize)} • ` : ''}
+                        {isAudioModalPaused ? 'Paused' : 'Playing'}
+                      </Text>
+
+                      {/* Interactive Progress Scrubber */}
+                      <TouchableOpacity
+                        style={styles.audioViewerScrubberWrapper}
+                        activeOpacity={0.9}
+                        onLayout={(e) => {
+                          audioScrubberWidthRef.current = e.nativeEvent.layout.width;
+                        }}
+                        onPress={(e) => {
+                          const { locationX } = e.nativeEvent;
+                          if (audioScrubberWidthRef.current > 0 && audioModalDuration > 0) {
+                            const fraction = Math.max(0, Math.min(1, locationX / audioScrubberWidthRef.current));
+                            const seekSec = fraction * audioModalDuration;
+                            modalAudioPlayerRef.current?.seek(seekSec);
+                            setAudioModalPosition(seekSec);
+                          }
+                        }}
+                      >
+                        <View style={styles.audioViewerTrackBar}>
+                          <View
+                            style={[
+                              styles.audioViewerTrackFill,
+                              {
+                                width: `${audioModalDuration > 0 ? Math.min(100, Math.max(0, (audioModalPosition / audioModalDuration) * 100)) : 0}%`
+                              }
+                            ]}
+                          />
+                        </View>
+                        <View
+                          style={[
+                            styles.audioViewerThumb,
+                            {
+                              left: `${audioModalDuration > 0 ? Math.min(96, Math.max(0, (audioModalPosition / audioModalDuration) * 96)) : 0}%`
+                            }
+                          ]}
+                        />
+                      </TouchableOpacity>
+
+                      {/* Time Row */}
+                      <View style={styles.audioViewerTimeRow}>
+                        <Text style={styles.audioViewerTimeText}>
+                          {formatPlayerSeconds(audioModalPosition)}
+                        </Text>
+                        <Text style={styles.audioViewerTimeText}>
+                          {formatPlayerSeconds(audioModalDuration > 0 ? audioModalDuration : 0)}
+                        </Text>
+                      </View>
+
+                      {/* Audio Controls Row: -5s, Play/Pause, +5s */}
+                      <View style={styles.audioViewerControlsRow}>
+                        <TouchableOpacity
+                          style={styles.audioViewerSecBtn}
+                          onPress={() => {
+                            const newSec = Math.max(0, audioModalPosition - 5);
+                            modalAudioPlayerRef.current?.seek(newSec);
+                            setAudioModalPosition(newSec);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="play-back" size={22} color="#E9EDEF" />
+                          <Text style={styles.audioViewerSecBtnText}>-5s</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.audioViewerPlayBtn}
+                          onPress={() => setIsAudioModalPaused(!isAudioModalPaused)}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons
+                            name={isAudioModalPaused ? "play" : "pause"}
+                            size={34}
+                            color="#FFFFFF"
+                            style={isAudioModalPaused ? { marginLeft: 3 } : null}
+                          />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.audioViewerSecBtn}
+                          onPress={() => {
+                            const newSec = Math.min(audioModalDuration || 9999, audioModalPosition + 5);
+                            modalAudioPlayerRef.current?.seek(newSec);
+                            setAudioModalPosition(newSec);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="play-forward" size={22} color="#E9EDEF" />
+                          <Text style={styles.audioViewerSecBtnText}>+5s</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Speed, Restart, Mute Row */}
+                      <View style={styles.audioViewerBottomRow}>
+                        <TouchableOpacity
+                          style={styles.audioViewerSpeedBtn}
+                          onPress={() => {
+                            setAudioPlaybackRate((prev) => (prev === 1.0 ? 1.5 : prev === 1.5 ? 2.0 : 1.0));
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.audioViewerSpeedText}>{audioPlaybackRate}x</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.audioViewerRestartBtn}
+                          onPress={() => {
+                            modalAudioPlayerRef.current?.seek(0);
+                            setAudioModalPosition(0);
+                            setIsAudioModalPaused(false);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="refresh" size={20} color="#8696A0" />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.audioViewerMuteBtn}
+                          onPress={() => setIsAudioModalMuted(!isAudioModalMuted)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name={isAudioModalMuted ? "volume-mute" : "volume-high"}
+                            size={22}
+                            color={isAudioModalMuted ? "#FF6B6B" : "#8696A0"}
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                ) : viewMediaModal.type === 'video' ? (
+                  <View style={{ width: '100%', height: '80%', justifyContent: 'center', alignItems: 'center' }}>
+                    <Video
+                      source={{ uri: viewMediaModal.url }}
+                      style={{ width: '100%', height: '100%' }}
+                      resizeMode="contain"
+                      controls={true}
+                      paused={false}
+                    />
+                  </View>
                 ) : (
                   <View style={styles.documentViewerCard}>
                     <View style={[styles.documentViewerIconCircle, getDocTypeStyle(viewMediaModal.fileName)]}>
@@ -10253,6 +11255,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       setShowMessageActionModal(false);
                       setSelectedForwardUserIds([]);
                       setForwardSearchQuery('');
+                      setMessagesToForward(selectedMessageForAction ? [selectedMessageForAction] : []);
                       setShowForwardModal(true);
                     }}
                   >
@@ -10540,11 +11543,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   >
                     {selectedForwardUserIds.length > 0
                       ? `${selectedForwardUserIds.length} contact${selectedForwardUserIds.length > 1 ? 's' : ''} selected`
-                      : selectedMessageForAction?.text
-                        ? `"${selectedMessageForAction.text}"`
-                        : selectedMessageForAction?.mediaUrl
-                          ? 'Media message'
-                          : 'Select contact to forward'}
+                      : (messagesToForward && messagesToForward.length > 1)
+                        ? `${messagesToForward.length} messages selected to forward`
+                        : selectedMessageForAction?.text
+                          ? `"${selectedMessageForAction.text}"`
+                          : selectedMessageForAction?.mediaUrl
+                            ? 'Media message'
+                            : 'Select contact to forward'}
                   </Text>
                 </View>
               </View>
@@ -11544,7 +12549,7 @@ const styles = StyleSheet.create({
   },
   messageBubbleWrapper: {
     flexDirection: 'row',
-    marginBottom: 10,
+    marginBottom: 4,
     width: '100%',
   },
   bubbleWrapperMe: {
@@ -11554,29 +12559,42 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   messageBubble: {
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    maxWidth: '75%',
+    borderRadius: 10,
+    paddingHorizontal: 11,
+    paddingTop: 6,
+    paddingBottom: 6,
+    minWidth: 75,
+    maxWidth: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 2,
   },
   bubbleMe: {
-    backgroundColor: '#FE3C72',
-    borderTopRightRadius: 4,
+    backgroundColor: '#005C4B',
+    borderTopRightRadius: 2,
+    borderTopLeftRadius: 10,
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
   },
   bubbleThem: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderTopLeftRadius: 4,
+    backgroundColor: '#202C33',
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 10,
+    borderBottomRightRadius: 10,
+    borderBottomLeftRadius: 10,
   },
   messageText: {
-    fontSize: 14,
-    lineHeight: 19,
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#E9EDEF',
   },
   messageTextMe: {
-    color: '#FFFFFF',
-    fontWeight: '500',
+    color: '#E9EDEF',
   },
   messageTextThem: {
-    color: '#FFFFFF',
+    color: '#E9EDEF',
   },
   chatInputRow: {
     flexDirection: 'row',
@@ -13814,9 +14832,15 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
   },
   // --- Voice Note WhatsApp Style Layout ---
+  waVoiceBubble: {
+    width: 245,
+    maxWidth: '100%',
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
   waVoiceContainer: {
-    minWidth: 200,
-    maxWidth: 245,
+    width: '100%',
     paddingVertical: 2,
     paddingHorizontal: 2,
   },
@@ -13826,9 +14850,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   waVoicePlayBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
@@ -13837,7 +14861,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
   waVoicePlayBtnThem: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#00A884',
   },
   waVoicePlayIcon: {
     fontSize: 15,
@@ -13857,19 +14881,15 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   waVoiceTrackLine: {
-    height: 2,
+    height: 3,
     width: '100%',
-    borderRadius: 1,
-    borderStyle: 'dotted',
-    borderWidth: 1,
+    borderRadius: 1.5,
   },
   waVoiceTrackLineMe: {
-    borderColor: 'rgba(255, 255, 255, 0.65)',
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
   },
   waVoiceTrackLineThem: {
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
   waVoiceDotThumb: {
     position: 'absolute',
@@ -13887,7 +14907,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   waVoiceDotThumbThem: {
-    backgroundColor: '#34B7F1',
+    backgroundColor: '#00A884',
   },
   waMicIconBadge: {
     width: 22,
@@ -14106,39 +15126,40 @@ const styles = StyleSheet.create({
   },
   activeChatWrapper: {
     flex: 1,
-    backgroundColor: '#0F0F1A',
+    backgroundColor: '#0B141A',
   },
   messageBubbleContainer: {
     flex: 1,
-    paddingHorizontal: 15,
+    paddingHorizontal: 12,
   },
   statusTicks: {
     fontSize: 12,
     fontWeight: 'bold',
-    marginLeft: 4,
+    marginLeft: 3,
   },
   ticksSent: {
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'rgba(233, 237, 239, 0.6)',
   },
   ticksSeen: {
-    color: '#00E5FF',
+    color: '#53BDEB',
   },
   messageMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    marginTop: 4,
+    marginTop: 2,
     alignSelf: 'flex-end',
+    marginLeft: 10,
   },
   messageTimeText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '400',
   },
   messageTimeTextMe: {
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: 'rgba(233, 237, 239, 0.6)',
   },
   messageTimeTextThem: {
-    color: 'rgba(255, 255, 255, 0.75)',
+    color: 'rgba(233, 237, 239, 0.6)',
   },
 
   // --- Direct Chat Image Preview Styles ---
@@ -14391,6 +15412,413 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  // --- WhatsApp-Style Image & Audio Viewer Styles ---
+  imageViewerContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerCanvas: {
+    width: '100%',
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerControlPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(24, 34, 41, 0.94)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+    marginBottom: 8,
+  },
+  imageViewerControlBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    marginHorizontal: 3,
+  },
+  imageViewerControlBtnDisabled: {
+    opacity: 0.35,
+  },
+  imageViewerScaleBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0, 168, 132, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 168, 132, 0.5)',
+    marginHorizontal: 4,
+  },
+  imageViewerScaleText: {
+    color: '#00A884',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  imageViewerDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    marginHorizontal: 6,
+  },
+  audioViewerContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  audioViewerCard: {
+    width: '92%',
+    maxWidth: 380,
+    backgroundColor: '#111B21',
+    borderRadius: 24,
+    paddingVertical: 26,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  audioViewerVisualizerCircle: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    backgroundColor: 'rgba(0, 168, 132, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(0, 168, 132, 0.35)',
+    marginBottom: 18,
+  },
+  audioViewerInnerCircle: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    backgroundColor: 'rgba(0, 168, 132, 0.22)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioViewerTitle: {
+    color: '#E9EDEF',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 4,
+    maxWidth: '92%',
+  },
+  audioViewerSubtitle: {
+    color: '#8696A0',
+    fontSize: 13,
+    marginBottom: 20,
+  },
+  audioViewerScrubberWrapper: {
+    width: '100%',
+    height: 28,
+    justifyContent: 'center',
+    marginVertical: 4,
+  },
+  audioViewerTrackBar: {
+    width: '100%',
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#2A3942',
+    overflow: 'hidden',
+  },
+  audioViewerTrackFill: {
+    height: '100%',
+    backgroundColor: '#00A884',
+    borderRadius: 3,
+  },
+  audioViewerThumb: {
+    position: 'absolute',
+    top: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#00A884',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.4,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  audioViewerTimeRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingHorizontal: 2,
+  },
+  audioViewerTimeText: {
+    color: '#8696A0',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  audioViewerControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+    width: '100%',
+  },
+  audioViewerPlayBtn: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: '#00A884',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 22,
+    shadowColor: '#00A884',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  audioViewerSecBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 8,
+  },
+  audioViewerSecBtnText: {
+    color: '#8696A0',
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  audioViewerBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '80%',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    paddingTop: 14,
+  },
+  audioViewerSpeedBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  audioViewerSpeedText: {
+    color: '#00A884',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  audioViewerRestartBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioViewerMuteBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // --- WhatsApp-Style Media Preview and Send Modal Styles ---
+  waPreviewModalOverlay: {
+    flex: 1,
+    backgroundColor: '#0B141A',
+  },
+  waPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#0B141A',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  waPreviewBackBtn: {
+    padding: 6,
+    marginRight: 8,
+  },
+  waPreviewHeaderTitleContainer: {
+    flex: 1,
+  },
+  waPreviewHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  waPreviewHeaderSubtitle: {
+    color: '#8696A0',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  waPreviewContentArea: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0B141A',
+    paddingHorizontal: 12,
+  },
+  waPreviewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  waPreviewVideoContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  waPreviewVideoPlayer: {
+    width: '100%',
+    height: '100%',
+  },
+  waPreviewVideoBadge: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  waPreviewVideoBadgeText: {
+    color: '#E9EDEF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  waPreviewDocCard: {
+    width: '88%',
+    backgroundColor: '#1F2C34',
+    borderRadius: 18,
+    padding: 26,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2A3942',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+  },
+  waPreviewDocIcon: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  waPreviewDocIconText: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFF',
+  },
+  waPreviewDocName: {
+    color: '#E9EDEF',
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  waPreviewDocMeta: {
+    color: '#8696A0',
+    fontSize: 13,
+    marginBottom: 16,
+  },
+  waPreviewDocPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#121B22',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  waPreviewDocPillText: {
+    color: '#8696A0',
+    fontSize: 12,
+    marginLeft: 6,
+  },
+  waPreviewUploadingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#00A884',
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+  },
+  waPreviewUploadingText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  waPreviewBottomBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#0B141A',
+  },
+  waPreviewInputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1F2C34',
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    maxHeight: 110,
+    marginRight: 8,
+  },
+  waPreviewInput: {
+    flex: 1,
+    color: '#E9EDEF',
+    fontSize: 15,
+    paddingVertical: 8,
+    maxHeight: 90,
+  },
+  waPreviewSendBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#00A884',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
   candidateVideoBadgeOverlay: {
     position: 'absolute',
     bottom: 12,
@@ -14592,23 +16020,128 @@ const styles = StyleSheet.create({
   },
   reactionPillMe: {
     left: 8,
-    backgroundColor: '#1E2B32',
+    backgroundColor: '#005C4B',
     borderColor: '#0B141A',
   },
   reactionPillThem: {
     right: 8,
     backgroundColor: '#202C33',
-    borderColor: '#111B21',
+    borderColor: '#0B141A',
   },
   reactionBadgeEmoji: {
     fontSize: 12,
     marginHorizontal: 1,
   },
   reactionBadgeCount: {
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: '#E9EDEF',
     fontSize: 10,
     fontWeight: '700',
     marginLeft: 3,
+  },
+  // --- WhatsApp-Style Reaction Details Modal Styles ---
+  reactionModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'flex-end',
+  },
+  reactionModalSheet: {
+    backgroundColor: '#1F2C34',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 32 : 18,
+    maxHeight: '60%',
+    minHeight: 220,
+  },
+  reactionModalHandle: {
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#8696A0',
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
+  reactionModalTabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    paddingBottom: 8,
+  },
+  reactionModalTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 18,
+    marginRight: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  reactionModalTabActive: {
+    backgroundColor: 'rgba(0, 168, 132, 0.2)',
+    borderWidth: 1,
+    borderColor: '#00A884',
+  },
+  reactionModalTabEmoji: {
+    fontSize: 16,
+  },
+  reactionModalTabText: {
+    color: '#8696A0',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  reactionModalTabTextActive: {
+    color: '#00A884',
+  },
+  reactionModalList: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  reactionModalUserRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  reactionModalUserLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  reactionModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  reactionModalAvatarPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#00A884',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reactionModalAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  reactionModalUserName: {
+    color: '#E9EDEF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  reactionModalRemoveHint: {
+    color: '#8696A0',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  reactionModalUserEmoji: {
+    fontSize: 26,
+    marginLeft: 12,
   },
 
   // --- WhatsApp Action Popover Modal Styles ---

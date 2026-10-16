@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
+  TextInput,
   View,
   TouchableOpacity,
   ScrollView,
@@ -11,6 +12,7 @@ import {
   Platform,
   ToastAndroid,
   useWindowDimensions,
+  ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch } from 'react-redux';
@@ -22,6 +24,63 @@ import { SimulatedGradientBackground } from '../components/SimulatedGradientBack
 import { TopToastBanner } from '../components/TopToastBanner';
 import { registerFcmToken } from '../services/notificationService';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+
+// Sleek Contact Form Field with customizable compact placeholder text size & glassmorphism
+const ContactFormField = ({
+  label,
+  icon,
+  required,
+  placeholder,
+  value,
+  onChangeText,
+  keyboardType = 'default',
+  multiline = false,
+  numberOfLines = 1,
+  autoCapitalize = 'sentences',
+}) => {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={styles.contactFieldContainer}>
+      <View style={styles.contactFieldHeader}>
+        <Text style={styles.contactFieldLabel}>{label}</Text>
+        {required ? (
+          <Text style={styles.contactFieldRequiredTag}>* Required</Text>
+        ) : (
+          <Text style={styles.contactFieldOptionalTag}>Optional</Text>
+        )}
+      </View>
+      <View
+        style={[
+          styles.contactFieldInputWrapper,
+          focused && styles.contactFieldInputWrapperFocused,
+          multiline && styles.contactFieldTextareaWrapper,
+        ]}
+      >
+        <Ionicons
+          name={icon}
+          size={17}
+          color={focused ? '#FE3C72' : 'rgba(255, 255, 255, 0.45)'}
+          style={[styles.contactFieldIcon, multiline && { marginTop: 8 }]}
+        />
+        <TextInput
+          style={[styles.contactFieldInput, multiline && styles.contactFieldTextarea]}
+          placeholder={placeholder}
+          placeholderTextColor="rgba(255, 255, 255, 0.36)"
+          value={value}
+          onChangeText={onChangeText}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          keyboardType={keyboardType}
+          multiline={multiline}
+          numberOfLines={numberOfLines}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={false}
+          spellCheck={false}
+        />
+      </View>
+    </View>
+  );
+};
 
 export const LoginScreen = ({ onNavigate }) => {
   const { width: windowWidth } = useWindowDimensions();
@@ -500,63 +559,112 @@ export const LoginScreen = ({ onNavigate }) => {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              <View style={[styles.otpCard, { width: cardWidth, maxWidth: '100%' }]}>
-                <View style={[styles.otpIconBadge, { backgroundColor: 'rgba(56, 189, 248, 0.15)', borderColor: '#38BDF8' }]}>
-                  <Ionicons name="chatbubbles-outline" size={30} color="#38BDF8" />
+              <View style={[styles.contactModalCard, { width: Math.min(cardWidth, 440) }]}>
+                {/* Header with Title, Status & Close Button */}
+                <View style={styles.contactModalHeader}>
+                  <View style={styles.contactModalHeaderLeft}>
+                    <View style={styles.contactModalIconBadge}>
+                      <Ionicons name="headset" size={20} color="#FE3C72" />
+                    </View>
+                    <View>
+                      <Text style={styles.contactModalTitle}>Contact Support</Text>
+                      <View style={styles.contactModalStatusRow}>
+                        <View style={styles.contactModalStatusDot} />
+                        <Text style={styles.contactModalStatusText}>Online • Quick Response</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.contactModalCloseBtn}
+                    onPress={() => setShowContactModal(false)}
+                    disabled={contactSubmitting}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="close" size={18} color="#E2E8F0" />
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.otpModalTitle}>Contact Support & Help</Text>
-                <Text style={styles.otpModalSubtitle}>
-                  Experiencing an issue? Fill out the form below and our admin team will assist you.
+
+                <Text style={styles.contactModalDescription}>
+                  Need help logging in or experiencing an issue? Fill out the form and our support team will assist you.
                 </Text>
 
-                <CustomInput
-                  label="Your Name (Optional)"
-                  placeholder="Enter your name"
+                {/* Name Field */}
+                <ContactFormField
+                  label="Your Name"
+                  icon="person-outline"
+                  placeholder="Enter your full name"
                   value={contactName}
                   onChangeText={setContactName}
+                  required={false}
                 />
 
-                <CustomInput
+                {/* Email Field */}
+                <ContactFormField
                   label="Email / Contact Info"
+                  icon="mail-outline"
                   placeholder="Enter your email or phone"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
                   value={contactEmail}
                   onChangeText={setContactEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  required={false}
                 />
 
-                <CustomInput
+                {/* Subject Field */}
+                <ContactFormField
                   label="Subject / Topic"
-                  placeholder="e.g. Cannot log in, App crash, Billing issue"
+                  icon="help-circle-outline"
+                  placeholder="e.g. Cannot log in, App crash, Account issue"
                   value={contactSubject}
                   onChangeText={setContactSubject}
+                  required={false}
                 />
 
-                <CustomInput
-                  label="Describe your problem *"
-                  placeholder="Please describe your issue in detail..."
-                  multiline
-                  numberOfLines={4}
+                {/* Message Field */}
+                <ContactFormField
+                  label="Describe Your Problem"
+                  icon="chatbox-ellipses-outline"
+                  placeholder="Describe your issue or question in detail..."
                   value={contactMessage}
                   onChangeText={setContactMessage}
-                  style={{ height: 90, textAlignVertical: 'top' }}
+                  multiline={true}
+                  numberOfLines={4}
+                  required={true}
                 />
 
-                <CustomButton
-                  title="SUBMIT REPORT"
-                  variant="accent"
-                  loading={contactSubmitting}
+                {/* Submit Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.contactSubmitBtn,
+                    contactSubmitting && styles.contactSubmitBtnDisabled,
+                  ]}
                   onPress={handleContactSubmit}
-                  style={{ marginTop: 14, width: '100%', backgroundColor: '#FE3C72' }}
-                  textStyle={{ color: '#FFFFFF', fontWeight: '800' }}
-                />
+                  disabled={contactSubmitting}
+                  activeOpacity={0.85}
+                >
+                  {contactSubmitting ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                      <Text style={styles.contactSubmitBtnText}>SUBMITTING...</Text>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="paper-plane" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                      <Text style={styles.contactSubmitBtnText}>SUBMIT REPORT</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
 
+                {/* Dismiss Button */}
                 <TouchableOpacity
                   onPress={() => setShowContactModal(false)}
                   disabled={contactSubmitting}
-                  style={{ marginTop: 14, paddingVertical: 8, paddingHorizontal: 20 }}
+                  style={styles.contactDismissBtn}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                  <Text style={styles.contactDismissBtnText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -853,6 +961,179 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+  // Contact Us Modal UI
+  contactModalCard: {
+    backgroundColor: '#181926',
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 20,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    elevation: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+  },
+  contactModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  contactModalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  contactModalIconBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(254, 60, 114, 0.15)',
+    borderWidth: 1.2,
+    borderColor: 'rgba(254, 60, 114, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  contactModalTitle: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  contactModalStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  contactModalStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+    marginRight: 6,
+  },
+  contactModalStatusText: {
+    fontSize: 11.5,
+    color: '#34D399',
+    fontWeight: '600',
+  },
+  contactModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  contactModalDescription: {
+    fontSize: 12.5,
+    color: 'rgba(255, 255, 255, 0.65)',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  contactFieldContainer: {
+    width: '100%',
+    marginBottom: 13,
+  },
+  contactFieldHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 5,
+    paddingHorizontal: 2,
+  },
+  contactFieldLabel: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#E2E8F0',
+  },
+  contactFieldRequiredTag: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#FE3C72',
+    backgroundColor: 'rgba(254, 60, 114, 0.12)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  contactFieldOptionalTag: {
+    fontSize: 10.5,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.4)',
+  },
+  contactFieldInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.07)',
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 12,
+    height: 46,
+  },
+  contactFieldInputWrapperFocused: {
+    borderColor: '#FE3C72',
+    backgroundColor: 'rgba(254, 60, 114, 0.05)',
+  },
+  contactFieldTextareaWrapper: {
+    height: 'auto',
+    minHeight: 88,
+    alignItems: 'flex-start',
+    paddingVertical: 4,
+  },
+  contactFieldIcon: {
+    marginRight: 9,
+  },
+  contactFieldInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    height: '100%',
+    paddingVertical: 0,
+  },
+  contactFieldTextarea: {
+    minHeight: 78,
+    textAlignVertical: 'top',
+    paddingTop: 8,
+    paddingBottom: 8,
+    lineHeight: 19,
+  },
+  contactSubmitBtn: {
+    backgroundColor: '#FE3C72',
+    height: 48,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 6,
+    elevation: 4,
+    shadowColor: '#FE3C72',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+  },
+  contactSubmitBtnDisabled: {
+    opacity: 0.65,
+  },
+  contactSubmitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  contactDismissBtn: {
+    marginTop: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactDismissBtnText: {
+    color: 'rgba(255, 255, 255, 0.55)',
+    fontSize: 13.5,
+    fontWeight: '600',
   },
 });
 

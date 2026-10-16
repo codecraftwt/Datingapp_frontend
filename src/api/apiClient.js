@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { BASE_URL, CANDIDATE_URLS, LIVE_URL, LOCAL_URL, EMULATOR_URL, NETWORK_URL, getBaseUrl, setBaseUrl } from './config';
+import { BASE_URL, CANDIDATE_URLS, LIVE_URL, LOCAL_URL, EMULATOR_URL, NETWORK_URL, HOTSPOT_URL, getBaseUrl, setBaseUrl } from './config';
 
 let isResolving = false;
 let activeResolvedUrl = null;
@@ -16,7 +16,9 @@ const resolveWorkingBaseUrl = async (forceRecheck = false) => {
   if (isResolving) return getBaseUrl();
   isResolving = true;
 
-  const candidateList = __DEV__ ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL] : [LIVE_URL, LOCAL_URL, NETWORK_URL, EMULATOR_URL];
+  const candidateList = __DEV__
+    ? [LOCAL_URL, HOTSPOT_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
+    : [LIVE_URL, HOTSPOT_URL, NETWORK_URL, LOCAL_URL];
 
   for (const candidate of candidateList) {
     try {
@@ -250,7 +252,7 @@ const request = async (url, options = {}, isRetry = false) => {
     } catch (jsonErr) {
       console.error(`[apiClient] Non-JSON response received from ${url} (status ${response.status}):`, responseText.substring(0, 150));
       if (response.status === 413) {
-        throw new Error('File Size Limit Exceeded: The uploaded video file is too large. Please select or trim a short video clip under 15 seconds (max 35MB).');
+        throw new Error('File Size Limit Exceeded: The uploaded file is too large (max 100MB allowed).');
       }
       if (response.status === 404) {
         throw new Error(`Endpoint Not Found (404): ${url}`);
@@ -733,10 +735,56 @@ export const apiClient = {
     });
   },
   uploadChatMedia: async (formData) => {
-    return await request('/api/chat/upload', {
-      method: 'POST',
-      body: formData,
-    });
+    try {
+      return await request('/api/chat/upload', {
+        method: 'POST',
+        body: formData,
+      });
+    } catch (err) {
+      // If server returned 413 (e.g. Vercel Serverless 4.5MB payload limit),
+      // directly upload to Cloudinary using Dating_Profiles preset!
+      const status = err?.status || err?.data?.status;
+      const is413 = status === 413 || err?.message?.includes('413') || err?.message?.includes('Limit Exceeded');
+
+      if (is413) {
+        console.log('[uploadChatMedia] Server returned 413 (Payload Too Large). Uploading directly to Cloudinary...');
+        try {
+          let filePart = null;
+          if (formData._parts && Array.isArray(formData._parts)) {
+            const found = formData._parts.find((p) => p[0] === 'file');
+            if (found) filePart = found[1];
+          }
+
+          if (filePart) {
+            const directFormData = new FormData();
+            directFormData.append('file', filePart);
+            directFormData.append('upload_preset', 'Dating_Profiles');
+            directFormData.append('folder', 'dating_app_chat_media');
+
+            const isVideo = (filePart.type && filePart.type.startsWith('video/')) ||
+              (filePart.name && /\.(mp4|mov|mkv|avi|webm|3gp)$/i.test(filePart.name));
+            const resourceType = isVideo ? 'video' : 'auto';
+
+            const cRes = await fetch(`https://api.cloudinary.com/v1_1/dwwykeft2/${resourceType}/upload`, {
+              method: 'POST',
+              body: directFormData,
+            });
+            const cData = await cRes.json();
+            if (cData && cData.secure_url) {
+              return {
+                success: true,
+                url: cData.secure_url,
+                fileName: filePart.name,
+                fileSize: cData.bytes || 0,
+              };
+            }
+          }
+        } catch (directErr) {
+          console.error('[uploadChatMedia] Direct Cloudinary fallback failed:', directErr);
+        }
+      }
+      throw err;
+    }
   },
 
   // Match endpoints

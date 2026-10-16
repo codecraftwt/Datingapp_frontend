@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
+  TextInput,
   View,
   TouchableOpacity,
   ScrollView,
@@ -80,6 +81,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [contactSubmitting, setContactSubmitting] = useState(false);
   const [mySupportReports, setMySupportReports] = useState([]);
   const [mySupportLoading, setMySupportLoading] = useState(false);
+  const [contactFocusedField, setContactFocusedField] = useState(null);
 
   const fetchMySupportReports = async () => {
     try {
@@ -189,6 +191,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [passwordFocusedField, setPasswordFocusedField] = useState(null);
 
   // Reported Users Modal State
   const [isReportedUsersModalOpen, setIsReportedUsersModalOpen] = useState(false);
@@ -431,6 +437,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       setCurrentPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
+      setShowCurrentPassword(false);
+      setShowNewPassword(false);
+      setShowConfirmPassword(false);
+      setPasswordFocusedField(null);
     } catch (err) {
       console.log('Error changing password:', err);
       const msg = err.data?.message || err.message || 'Failed to change password. Please check your current password.';
@@ -1505,194 +1515,292 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         transparent
         animationType="fade"
         statusBarTranslucent
-        onRequestClose={() => setShowContactModal(false)}
+        onRequestClose={() => {
+          setShowContactModal(false);
+          setContactFocusedField(null);
+        }}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.78)' }}
+          style={styles.formModalBackdrop}
         >
           <ScrollView
-            contentContainerStyle={{
-              flexGrow: 1,
-              justifyContent: 'center',
-              alignItems: 'center',
-              paddingHorizontal: 16,
-              paddingVertical: 24,
-              width: '100%',
-            }}
+            contentContainerStyle={styles.formModalScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <View
-              style={{
-                width: Math.min(width * 0.92, 420),
-                maxWidth: '100%',
-                maxHeight: '90%',
-                backgroundColor: '#1E1E2E',
-                borderRadius: 24,
-                padding: 20,
-                borderWidth: 1,
-                borderColor: 'rgba(255, 255, 255, 0.2)',
-                alignSelf: 'center',
-                elevation: 10,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 6 },
-                shadowOpacity: 0.4,
-                shadowRadius: 12,
-              }}
-            >
+            <View style={styles.formModalCard}>
               {/* Header */}
-              <View style={styles.passwordModalHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor: 'rgba(56, 189, 248, 0.15)',
-                      borderWidth: 1,
-                      borderColor: '#38BDF8',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Ionicons name="chatbubbles-outline" size={20} color="#38BDF8" />
+              <View style={styles.formModalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                  <View style={[styles.headerIconBadge, { backgroundColor: 'rgba(56, 189, 248, 0.14)', borderColor: 'rgba(56, 189, 248, 0.38)' }]}>
+                    <Ionicons name="chatbubbles-outline" size={22} color="#38BDF8" />
                   </View>
-                  <Text style={[styles.passwordModalTitle, { fontSize: 18, fontWeight: '800' }]}>
-                    Contact Support & Help
-                  </Text>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.formModalTitle}>Contact Support & Help</Text>
+                    <Text style={styles.formModalSubtitle}>We're here to assist you 24/7</Text>
+                  </View>
                 </View>
                 <TouchableOpacity
-                  onPress={() => setShowContactModal(false)}
-                  style={styles.passwordCloseBtn}
+                  onPress={() => {
+                    setShowContactModal(false);
+                    setContactFocusedField(null);
+                  }}
+                  style={styles.formCloseBtn}
                   disabled={contactSubmitting}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <Ionicons name="close" size={20} color="#FFF" />
+                  <Ionicons name="close" size={18} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
 
               {/* 2-Segment Tab Control */}
-              <View style={{
-                flexDirection: 'row',
-                backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                borderRadius: 14,
-                padding: 4,
-                marginVertical: 12,
-              }}>
+              <View style={styles.formTabContainer}>
                 <TouchableOpacity
-                  style={{
-                    flex: 1,
-                    paddingVertical: 9,
-                    alignItems: 'center',
-                    borderRadius: 10,
-                    backgroundColor: contactModalTab === 'submit' ? '#FE3C72' : 'transparent',
-                  }}
+                  style={[
+                    styles.formTabButton,
+                    contactModalTab === 'submit' && styles.formTabButtonActivePink,
+                  ]}
                   onPress={() => setContactModalTab('submit')}
+                  activeOpacity={0.8}
                 >
-                  <Text style={{
-                    color: contactModalTab === 'submit' ? '#FFFFFF' : '#A0A0B0',
-                    fontSize: 13,
-                    fontWeight: '700',
-                  }}>
-                    📝 New Ticket
+                  <Ionicons
+                    name="create-outline"
+                    size={14}
+                    color={contactModalTab === 'submit' ? '#FFFFFF' : '#8E8E9F'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.formTabText,
+                      contactModalTab === 'submit' && styles.formTabTextActive,
+                    ]}
+                  >
+                    New Ticket
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={{
-                    flex: 1,
-                    paddingVertical: 9,
-                    alignItems: 'center',
-                    borderRadius: 10,
-                    backgroundColor: contactModalTab === 'history' ? '#38BDF8' : 'transparent',
-                  }}
+                  style={[
+                    styles.formTabButton,
+                    contactModalTab === 'history' && styles.formTabButtonActiveBlue,
+                  ]}
                   onPress={() => {
                     setContactModalTab('history');
                     fetchMySupportReports();
                   }}
+                  activeOpacity={0.8}
                 >
-                  <Text style={{
-                    color: contactModalTab === 'history' ? '#000000' : '#A0A0B0',
-                    fontSize: 13,
-                    fontWeight: '700',
-                  }}>
-                    📋 Ticket History {mySupportReports.length > 0 ? `(${mySupportReports.length})` : ''}
+                  <Ionicons
+                    name="time-outline"
+                    size={14}
+                    color={contactModalTab === 'history' ? '#000000' : '#8E8E9F'}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.formTabText,
+                      contactModalTab === 'history' && { color: '#000000', fontWeight: '800' },
+                    ]}
+                  >
+                    Ticket History {mySupportReports.length > 0 ? `(${mySupportReports.length})` : ''}
                   </Text>
                 </TouchableOpacity>
               </View>
 
               {/* Tab 1: Submit Form */}
               {contactModalTab === 'submit' ? (
-                <View style={{ flexShrink: 1 }}>
-                  <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }}>
-                    <Text style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: 13, marginBottom: 12, lineHeight: 18 }}>
-                      Experiencing an issue? Fill out the form below and our support team will assist you.
-                    </Text>
+                <View style={{ width: '100%' }}>
+                  <Text style={styles.formIntroText}>
+                    Experiencing an issue? Let us know the details and our support team will respond quickly.
+                  </Text>
 
-                    <CustomInput
-                      label="Your Name (Optional)"
-                      placeholder="Enter your name"
-                      value={contactName}
-                      onChangeText={setContactName}
-                    />
+                  {/* Name field */}
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>YOUR NAME (OPTIONAL)</Text>
+                    <View
+                      style={[
+                        styles.modernInputWrapper,
+                        contactFocusedField === 'name' && styles.modernInputWrapperFocused,
+                      ]}
+                    >
+                      <Ionicons
+                        name="person-outline"
+                        size={16}
+                        color={contactFocusedField === 'name' ? '#FE3C72' : '#7E7E94'}
+                        style={styles.modernInputLeftIcon}
+                      />
+                      <TextInput
+                        style={styles.modernTextInput}
+                        placeholder="Enter your name"
+                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                        value={contactName}
+                        onChangeText={setContactName}
+                        onFocus={() => setContactFocusedField('name')}
+                        onBlur={() => setContactFocusedField(null)}
+                      />
+                    </View>
+                  </View>
 
-                    <CustomInput
-                      label="Email / Contact Info"
-                      placeholder="Enter your email or phone"
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      value={contactEmail}
-                      onChangeText={setContactEmail}
-                    />
+                  {/* Email field */}
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>EMAIL / CONTACT INFO</Text>
+                    <View
+                      style={[
+                        styles.modernInputWrapper,
+                        contactFocusedField === 'email' && styles.modernInputWrapperFocused,
+                      ]}
+                    >
+                      <Ionicons
+                        name="mail-outline"
+                        size={16}
+                        color={contactFocusedField === 'email' ? '#FE3C72' : '#7E7E94'}
+                        style={styles.modernInputLeftIcon}
+                      />
+                      <TextInput
+                        style={styles.modernTextInput}
+                        placeholder="Enter your email"
+                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        value={contactEmail}
+                        onChangeText={setContactEmail}
+                        onFocus={() => setContactFocusedField('email')}
+                        onBlur={() => setContactFocusedField(null)}
+                      />
+                    </View>
+                  </View>
 
-                    <CustomInput
-                      label="Subject / Topic"
-                      placeholder="e.g. Profile issue, App crash, Subscription question"
-                      value={contactSubject}
-                      onChangeText={setContactSubject}
-                    />
+                  {/* Phone field */}
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>PHONE NUMBER (OPTIONAL)</Text>
+                    <View
+                      style={[
+                        styles.modernInputWrapper,
+                        contactFocusedField === 'phone' && styles.modernInputWrapperFocused,
+                      ]}
+                    >
+                      <Ionicons
+                        name="call-outline"
+                        size={16}
+                        color={contactFocusedField === 'phone' ? '#FE3C72' : '#7E7E94'}
+                        style={styles.modernInputLeftIcon}
+                      />
+                      <TextInput
+                        style={styles.modernTextInput}
+                        placeholder="Enter your mobile number"
+                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                        keyboardType="phone-pad"
+                        value={contactPhone}
+                        onChangeText={setContactPhone}
+                        onFocus={() => setContactFocusedField('phone')}
+                        onBlur={() => setContactFocusedField(null)}
+                      />
+                    </View>
+                  </View>
 
-                    <CustomInput
-                      label="Describe your problem *"
-                      placeholder="Please describe your issue in detail..."
-                      multiline
-                      numberOfLines={4}
-                      value={contactMessage}
-                      onChangeText={setContactMessage}
-                      style={{ height: 80, textAlignVertical: 'top' }}
-                    />
+                  {/* Subject field */}
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>SUBJECT / CATEGORY</Text>
+                    <View
+                      style={[
+                        styles.modernInputWrapper,
+                        contactFocusedField === 'subject' && styles.modernInputWrapperFocused,
+                      ]}
+                    >
+                      <Ionicons
+                        name="pricetag-outline"
+                        size={16}
+                        color={contactFocusedField === 'subject' ? '#FE3C72' : '#7E7E94'}
+                        style={styles.modernInputLeftIcon}
+                      />
+                      <TextInput
+                        style={styles.modernTextInput}
+                        placeholder="e.g. Account issue, Match bug, Subscription"
+                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                        value={contactSubject}
+                        onChangeText={setContactSubject}
+                        onFocus={() => setContactFocusedField('subject')}
+                        onBlur={() => setContactFocusedField(null)}
+                      />
+                    </View>
+                  </View>
 
-                    <CustomButton
-                      title="SUBMIT REPORT"
-                      variant="accent"
-                      loading={contactSubmitting}
-                      onPress={handleContactSubmit}
-                      style={{ marginTop: 14, width: '100%', backgroundColor: '#FE3C72' }}
-                      textStyle={{ color: '#FFFFFF', fontWeight: '800' }}
-                    />
+                  {/* Message field */}
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>DESCRIBE YOUR PROBLEM *</Text>
+                    <View
+                      style={[
+                        styles.modernInputWrapper,
+                        styles.modernTextareaWrapper,
+                        contactFocusedField === 'message' && styles.modernInputWrapperFocused,
+                      ]}
+                    >
+                      <Ionicons
+                        name="chatbox-ellipses-outline"
+                        size={16}
+                        color={contactFocusedField === 'message' ? '#FE3C72' : '#7E7E94'}
+                        style={[styles.modernInputLeftIcon, { marginTop: 4 }]}
+                      />
+                      <TextInput
+                        style={[styles.modernTextInput, styles.modernTextareaInput]}
+                        placeholder="Please describe your issue or question in detail..."
+                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                        multiline
+                        numberOfLines={4}
+                        value={contactMessage}
+                        onChangeText={setContactMessage}
+                        onFocus={() => setContactFocusedField('message')}
+                        onBlur={() => setContactFocusedField(null)}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Buttons Row */}
+                  <View style={styles.formBtnRow}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setShowContactModal(false);
+                        setContactFocusedField(null);
+                      }}
+                      disabled={contactSubmitting}
+                      style={styles.modernCancelBtn}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.modernCancelBtnText}>CANCEL</Text>
+                    </TouchableOpacity>
 
                     <TouchableOpacity
-                      onPress={() => setShowContactModal(false)}
+                      onPress={handleContactSubmit}
                       disabled={contactSubmitting}
-                      style={{ marginTop: 10, paddingVertical: 8, alignItems: 'center' }}
+                      style={[styles.modernPrimaryBtn, contactSubmitting && { opacity: 0.7 }]}
+                      activeOpacity={0.85}
                     >
-                      <Text style={styles.cancelBtnText}>CANCEL</Text>
+                      {contactSubmitting ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="paper-plane" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={styles.modernPrimaryBtnText}>SUBMIT TICKET</Text>
+                        </View>
+                      )}
                     </TouchableOpacity>
-                  </ScrollView>
+                  </View>
                 </View>
               ) : (
                 /* Tab 2: Ticket History */
-                <View style={{ flexShrink: 1, minHeight: 200, maxHeight: 440 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <Text style={{ color: 'rgba(255, 255, 255, 0.75)', fontSize: 13 }}>
+                <View style={{ width: '100%', minHeight: 200, maxHeight: 440 }}>
+                  <View style={styles.historyTopBar}>
+                    <Text style={styles.historyTopSub}>
                       Live Status from Admin Panel
                     </Text>
                     <TouchableOpacity
                       onPress={fetchMySupportReports}
                       disabled={mySupportLoading}
-                      style={{ flexDirection: 'row', alignItems: 'center', padding: 4 }}
+                      style={styles.historyRefreshBtn}
                     >
-                      <Ionicons name="refresh" size={16} color="#38BDF8" style={{ marginRight: 4 }} />
+                      <Ionicons name="refresh" size={13} color="#38BDF8" style={{ marginRight: 4 }} />
                       <Text style={{ color: '#38BDF8', fontSize: 12, fontWeight: '700' }}>Refresh</Text>
                     </TouchableOpacity>
                   </View>
@@ -1705,28 +1813,34 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                       </Text>
                     </View>
                   ) : mySupportReports.length === 0 ? (
-                    <View style={{ paddingVertical: 36, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="chatbox-ellipses-outline" size={44} color="rgba(255,255,255,0.2)" style={{ marginBottom: 10 }} />
-                      <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '700' }}>No Support Tickets Yet</Text>
-                      <Text style={{ color: '#8A8A9E', fontSize: 13, marginTop: 4, textAlign: 'center' }}>
-                        You have not submitted any help requests yet. Tap "New Ticket" tab to submit an issue.
+                    <View style={styles.historyEmptyState}>
+                      <View style={styles.historyEmptyIconCircle}>
+                        <Ionicons name="chatbox-ellipses-outline" size={32} color="rgba(255,255,255,0.3)" />
+                      </View>
+                      <Text style={styles.historyEmptyTitle}>No Support Tickets Yet</Text>
+                      <Text style={styles.historyEmptySubtitle}>
+                        You have not submitted any help requests yet. Tap "New Ticket" to submit an issue.
                       </Text>
                     </View>
                   ) : (
                     <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }}>
                       {mySupportReports.map((report, idx) => {
                         const rawStatus = (report.status || 'pending').toLowerCase();
-                        let badgeBg = '#FF9800'; // pending: amber
+                        let badgeBg = '#FF9800';
+                        let badgeColor = '#000000';
                         let badgeLabel = 'PENDING ⏳';
 
                         if (rawStatus === 'in-progress' || rawStatus === 'in_progress') {
-                          badgeBg = '#2196F3'; // in-progress: blue
+                          badgeBg = '#0284C7';
+                          badgeColor = '#FFFFFF';
                           badgeLabel = 'IN PROGRESS ⚙️';
                         } else if (rawStatus === 'resolved') {
-                          badgeBg = '#00E676'; // resolved: green
+                          badgeBg = '#00E676';
+                          badgeColor = '#000000';
                           badgeLabel = 'RESOLVED ✅';
                         } else if (rawStatus === 'dismissed' || rawStatus === 'closed') {
-                          badgeBg = '#78909C'; // gray
+                          badgeBg = '#64748B';
+                          badgeColor = '#FFFFFF';
                           badgeLabel = 'CLOSED 📁';
                         }
 
@@ -1743,49 +1857,35 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                         return (
                           <View
                             key={report._id || report.id || idx}
-                            style={{
-                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                              borderRadius: 16,
-                              padding: 14,
-                              marginBottom: 12,
-                              borderWidth: 1,
-                              borderColor: 'rgba(255, 255, 255, 0.09)',
-                            }}
+                            style={styles.ticketCard}
                           >
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                              <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '700', flex: 1, marginRight: 8 }} numberOfLines={1}>
+                            <View style={styles.ticketCardHeader}>
+                              <Text style={styles.ticketCardTitle} numberOfLines={1}>
                                 {report.subject || 'General Inquiry'}
                               </Text>
-                              <View style={{ backgroundColor: badgeBg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
-                                <Text style={{ color: '#000', fontSize: 10, fontWeight: '900' }}>
+                              <View style={[styles.ticketStatusBadge, { backgroundColor: badgeBg }]}>
+                                <Text style={[styles.ticketStatusBadgeText, { color: badgeColor }]}>
                                   {badgeLabel}
                                 </Text>
                               </View>
                             </View>
 
-                            <Text style={{ color: '#A0A0B0', fontSize: 11, marginBottom: 8 }}>
-                              📅 Submitted on: {dateStr}
-                            </Text>
+                            <View style={styles.ticketDateRow}>
+                              <Ionicons name="calendar-outline" size={12} color="#8E8E9F" style={{ marginRight: 4 }} />
+                              <Text style={styles.ticketDateText}>{dateStr}</Text>
+                            </View>
 
-                            <Text style={{ color: '#D0D0E0', fontSize: 13, lineHeight: 18 }}>
+                            <Text style={styles.ticketMessageText}>
                               {report.message}
                             </Text>
 
                             {!!report.adminNotes && (
-                              <View
-                                style={{
-                                  backgroundColor: 'rgba(56, 189, 248, 0.12)',
-                                  borderRadius: 12,
-                                  padding: 10,
-                                  marginTop: 10,
-                                  borderLeftWidth: 3,
-                                  borderLeftColor: '#38BDF8',
-                                }}
-                              >
-                                <Text style={{ color: '#38BDF8', fontSize: 12, fontWeight: '700', marginBottom: 3 }}>
-                                  💬 Admin Response:
-                                </Text>
-                                <Text style={{ color: '#FFFFFF', fontSize: 13, lineHeight: 18 }}>
+                              <View style={styles.adminReplyBox}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                  <Ionicons name="chatbubble-ellipses" size={13} color="#38BDF8" style={{ marginRight: 4 }} />
+                                  <Text style={styles.adminReplyTitle}>Admin Response</Text>
+                                </View>
+                                <Text style={styles.adminReplyText}>
                                   {report.adminNotes}
                                 </Text>
                               </View>
@@ -1797,10 +1897,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                   )}
 
                   <TouchableOpacity
-                    onPress={() => setShowContactModal(false)}
-                    style={{ marginTop: 8, paddingVertical: 8, alignItems: 'center' }}
+                    onPress={() => {
+                      setShowContactModal(false);
+                      setContactFocusedField(null);
+                    }}
+                    style={styles.historyCloseBtn}
+                    activeOpacity={0.8}
                   >
-                    <Text style={styles.cancelBtnText}>CLOSE</Text>
+                    <Text style={styles.modernCancelBtnText}>CLOSE</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -1821,65 +1925,266 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       </Modal>
 
       {/* Reset / Change Password Modal */}
-      <Modal visible={isPasswordModalOpen} animationType="slide" transparent>
-        <View style={styles.passwordModalOverlay}>
-          <View style={styles.passwordModalCard}>
-            <View style={styles.passwordModalHeader}>
-              <Text style={styles.passwordModalTitle}>Reset / Change Password</Text>
-              <TouchableOpacity
-                onPress={() => setIsPasswordModalOpen(false)}
-                style={styles.passwordCloseBtn}
-              >
-                <Ionicons name="close" size={20} color="#FFF" />
-              </TouchableOpacity>
+      <Modal
+        visible={isPasswordModalOpen}
+        animationType="fade"
+        transparent
+        statusBarTranslucent
+        onRequestClose={() => {
+          setIsPasswordModalOpen(false);
+          setShowCurrentPassword(false);
+          setShowNewPassword(false);
+          setShowConfirmPassword(false);
+          setPasswordFocusedField(null);
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.formModalBackdrop}
+        >
+          <ScrollView
+            contentContainerStyle={styles.formModalScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.formModalCard}>
+              {/* Header */}
+              <View style={styles.formModalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                  <View style={[styles.headerIconBadge, { backgroundColor: 'rgba(254, 60, 114, 0.14)', borderColor: 'rgba(254, 60, 114, 0.38)' }]}>
+                    <Ionicons name="shield-checkmark-outline" size={22} color="#FE3C72" />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.formModalTitle}>Change Password</Text>
+                    <Text style={styles.formModalSubtitle}>Protect your account with a secure password</Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setIsPasswordModalOpen(false);
+                    setShowCurrentPassword(false);
+                    setShowNewPassword(false);
+                    setShowConfirmPassword(false);
+                    setPasswordFocusedField(null);
+                  }}
+                  style={styles.formCloseBtn}
+                  disabled={passwordLoading}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={18} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Current Password */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>CURRENT PASSWORD</Text>
+                <View
+                  style={[
+                    styles.modernInputWrapper,
+                    passwordFocusedField === 'current' && styles.modernInputWrapperFocused,
+                  ]}
+                >
+                  <Ionicons
+                    name="key-outline"
+                    size={16}
+                    color={passwordFocusedField === 'current' ? '#FE3C72' : '#7E7E94'}
+                    style={styles.modernInputLeftIcon}
+                  />
+                  <TextInput
+                    style={styles.modernTextInput}
+                    placeholder="Enter current password"
+                    placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                    secureTextEntry={!showCurrentPassword}
+                    value={currentPassword}
+                    onChangeText={setCurrentPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onFocus={() => setPasswordFocusedField('current')}
+                    onBlur={() => setPasswordFocusedField(null)}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowCurrentPassword(!showCurrentPassword)}
+                    style={styles.modernEyeBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={showCurrentPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color="rgba(255, 255, 255, 0.55)"
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* New Password */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>NEW PASSWORD</Text>
+                <View
+                  style={[
+                    styles.modernInputWrapper,
+                    passwordFocusedField === 'new' && styles.modernInputWrapperFocused,
+                  ]}
+                >
+                  <Ionicons
+                    name="lock-closed-outline"
+                    size={16}
+                    color={passwordFocusedField === 'new' ? '#FE3C72' : '#7E7E94'}
+                    style={styles.modernInputLeftIcon}
+                  />
+                  <TextInput
+                    style={styles.modernTextInput}
+                    placeholder="Enter new password (min 8 chars)"
+                    placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                    secureTextEntry={!showNewPassword}
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onFocus={() => setPasswordFocusedField('new')}
+                    onBlur={() => setPasswordFocusedField(null)}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowNewPassword(!showNewPassword)}
+                    style={styles.modernEyeBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={showNewPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color="rgba(255, 255, 255, 0.55)"
+                    />
+                  </TouchableOpacity>
+                </View>
+                {/* Length requirement indicator */}
+                {newPassword.length > 0 && (
+                  <View style={styles.fieldHintRow}>
+                    <Ionicons
+                      name={newPassword.length >= 8 ? 'checkmark-circle' : 'alert-circle-outline'}
+                      size={13}
+                      color={newPassword.length >= 8 ? '#00E676' : '#FFB74D'}
+                      style={{ marginRight: 5 }}
+                    />
+                    <Text
+                      style={[
+                        styles.fieldHintText,
+                        { color: newPassword.length >= 8 ? '#00E676' : '#FFB74D' },
+                      ]}
+                    >
+                      {newPassword.length >= 8
+                        ? 'Password meets length requirement (8+ chars)'
+                        : `Must be at least 8 characters (${newPassword.length}/8)`}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Confirm New Password */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>CONFIRM NEW PASSWORD</Text>
+                <View
+                  style={[
+                    styles.modernInputWrapper,
+                    passwordFocusedField === 'confirm' && styles.modernInputWrapperFocused,
+                  ]}
+                >
+                  <Ionicons
+                    name="shield-outline"
+                    size={16}
+                    color={passwordFocusedField === 'confirm' ? '#FE3C72' : '#7E7E94'}
+                    style={styles.modernInputLeftIcon}
+                  />
+                  <TextInput
+                    style={styles.modernTextInput}
+                    placeholder="Re-enter new password"
+                    placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                    secureTextEntry={!showConfirmPassword}
+                    value={confirmNewPassword}
+                    onChangeText={setConfirmNewPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onFocus={() => setPasswordFocusedField('confirm')}
+                    onBlur={() => setPasswordFocusedField(null)}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                    style={styles.modernEyeBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color="rgba(255, 255, 255, 0.55)"
+                    />
+                  </TouchableOpacity>
+                </View>
+                {/* Match indicator */}
+                {confirmNewPassword.length > 0 && (
+                  <View style={styles.fieldHintRow}>
+                    <Ionicons
+                      name={
+                        newPassword === confirmNewPassword
+                          ? 'checkmark-circle'
+                          : 'close-circle'
+                      }
+                      size={13}
+                      color={
+                        newPassword === confirmNewPassword ? '#00E676' : '#FF5252'
+                      }
+                      style={{ marginRight: 5 }}
+                    />
+                    <Text
+                      style={[
+                        styles.fieldHintText,
+                        {
+                          color:
+                            newPassword === confirmNewPassword ? '#00E676' : '#FF5252',
+                        },
+                      ]}
+                    >
+                      {newPassword === confirmNewPassword
+                        ? 'Passwords match'
+                        : 'Passwords do not match'}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Action Buttons */}
+              <View style={styles.formBtnRow}>
+                <TouchableOpacity
+                  style={styles.modernCancelBtn}
+                  onPress={() => {
+                    setIsPasswordModalOpen(false);
+                    setShowCurrentPassword(false);
+                    setShowNewPassword(false);
+                    setShowConfirmPassword(false);
+                    setPasswordFocusedField(null);
+                  }}
+                  disabled={passwordLoading}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.modernCancelBtnText}>CANCEL</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modernPrimaryBtn, passwordLoading && { opacity: 0.7 }]}
+                  onPress={handleChangePasswordSubmit}
+                  disabled={passwordLoading}
+                  activeOpacity={0.85}
+                >
+                  {passwordLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="lock-closed" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.modernPrimaryBtnText}>UPDATE PASSWORD</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
-
-            <CustomInput
-              label="Current Password"
-              secureTextEntry
-              iconType="password"
-              placeholder="Enter current password"
-              value={currentPassword}
-              onChangeText={setCurrentPassword}
-            />
-
-            <CustomInput
-              label="New Password"
-              secureTextEntry
-              iconType="password"
-              placeholder="Enter new password (min 8 chars)"
-              value={newPassword}
-              onChangeText={setNewPassword}
-            />
-
-            <CustomInput
-              label="Confirm New Password"
-              secureTextEntry
-              iconType="password"
-              placeholder="Re-enter new password"
-              value={confirmNewPassword}
-              onChangeText={setConfirmNewPassword}
-            />
-
-            <View style={styles.passwordBtnRow}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setIsPasswordModalOpen(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.cancelBtnText}>CANCEL</Text>
-              </TouchableOpacity>
-
-              <CustomButton
-                title="UPDATE PASSWORD"
-                variant="primary"
-                loading={passwordLoading}
-                onPress={handleChangePasswordSubmit}
-                style={styles.submitPasswordBtn}
-              />
-            </View>
-          </View>
-        </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Reported Users Modal */}
@@ -2923,6 +3228,343 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+
+  // Attractive Form Modals (Contact Support & Change Password)
+  formModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 5, 14, 0.85)',
+  },
+  formModalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 24,
+    width: '100%',
+  },
+  formModalCard: {
+    width: Math.min(width * 0.92, 420),
+    maxWidth: '100%',
+    backgroundColor: '#161624',
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    alignSelf: 'center',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.6,
+    shadowRadius: 18,
+  },
+  formModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  headerIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  formModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  formModalSubtitle: {
+    fontSize: 11.5,
+    color: '#8E8E9F',
+    marginTop: 2,
+  },
+  formCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  formTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 14,
+    padding: 4,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  formTabButton: {
+    flex: 1,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: 'transparent',
+  },
+  formTabButtonActivePink: {
+    backgroundColor: '#FE3C72',
+    shadowColor: '#FE3C72',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  formTabButtonActiveBlue: {
+    backgroundColor: '#38BDF8',
+    shadowColor: '#38BDF8',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  formTabText: {
+    color: '#8E8E9F',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  formTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  formIntroText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12.5,
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  inputGroup: {
+    marginBottom: 13,
+    width: '100%',
+  },
+  inputLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9E9EB2',
+    letterSpacing: 0.5,
+    marginBottom: 5,
+    marginLeft: 3,
+  },
+  modernInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1C1C2C',
+    borderRadius: 14,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255, 255, 255, 0.09)',
+    height: 48,
+    paddingHorizontal: 12,
+  },
+  modernInputWrapperFocused: {
+    borderColor: '#FE3C72',
+    backgroundColor: '#202034',
+    shadowColor: '#FE3C72',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  modernTextareaWrapper: {
+    height: 90,
+    alignItems: 'flex-start',
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  modernInputLeftIcon: {
+    marginRight: 9,
+  },
+  modernTextInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#FFFFFF',
+    paddingVertical: 0,
+    height: '100%',
+  },
+  modernTextareaInput: {
+    textAlignVertical: 'top',
+    height: 70,
+  },
+  modernEyeBtn: {
+    padding: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fieldHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  fieldHintText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  formBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    gap: 10,
+  },
+  modernCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  modernCancelBtnText: {
+    color: '#B0B0C4',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  modernPrimaryBtn: {
+    flex: 1.5,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: '#FE3C72',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#FE3C72',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  modernPrimaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  historyTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  historyTopSub: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12,
+  },
+  historyRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+  },
+  historyEmptyState: {
+    paddingVertical: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyEmptyIconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  historyEmptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  historyEmptySubtitle: {
+    color: '#8A8A9E',
+    fontSize: 12.5,
+    marginTop: 4,
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 16,
+  },
+  ticketCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  ticketCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  ticketCardTitle: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '700',
+    flex: 1,
+    marginRight: 8,
+  },
+  ticketStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  ticketStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  ticketDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  ticketDateText: {
+    color: '#8E8E9F',
+    fontSize: 11,
+  },
+  ticketMessageText: {
+    color: '#D8D8E6',
+    fontSize: 12.5,
+    lineHeight: 18,
+  },
+  adminReplyBox: {
+    backgroundColor: 'rgba(56, 189, 248, 0.09)',
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#38BDF8',
+  },
+  adminReplyTitle: {
+    color: '#38BDF8',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  adminReplyText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    lineHeight: 17,
+  },
+  historyCloseBtn: {
+    marginTop: 12,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
 

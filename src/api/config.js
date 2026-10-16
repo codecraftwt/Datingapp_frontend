@@ -3,7 +3,8 @@ import { Platform } from 'react-native';
 export const LIVE_URL = 'https://datingapp-backend-api.vercel.app';
 export const LOCAL_URL = 'http://localhost:5000';
 export const EMULATOR_URL = 'http://10.0.2.2:5000';
-export const NETWORK_URL = 'http://10.0.3.64:5000';
+export const NETWORK_URL = 'http://10.0.2.156:5000';
+export const HOTSPOT_URL = 'http://192.168.137.1:5000';
 
 export const STRIPE_PUBLISHABLE_KEY = 'pk_test_51UIPtESNVBh57Ub9dg7BgWRA8KgUvVfkFtyov0Etl0OCG3Uh3Xjrj39wr5C3FhO60Zes39Ioi9kDAROGYP3PPqpD00oCTzeHvY';
 
@@ -23,13 +24,14 @@ export const SUBSCRIPTION_PLANS = {
 /**
  * Candidate URLs used in Development mode:
  * - USB/ADB Reverse Debugging: 'http://localhost:5000'
+ * - Mobile Hotspot Loopback: 'http://192.168.137.1:5000'
+ * - Local Wi-Fi Network: 'http://10.0.2.156:5000'
  * - Android Emulator Host Loopback: 'http://10.0.2.2:5000'
- * - Local Wi-Fi Network: 'http://10.0.3.64:5000'
  * - Live Production Fallback: LIVE_URL
  */
 export const CANDIDATE_URLS = __DEV__
-  ? [LOCAL_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
-  : [LIVE_URL, NETWORK_URL, LOCAL_URL];
+  ? [LOCAL_URL, HOTSPOT_URL, NETWORK_URL, EMULATOR_URL, LIVE_URL]
+  : [LIVE_URL, HOTSPOT_URL, NETWORK_URL, LOCAL_URL];
 
 // Default to LOCAL_URL (http://localhost:5000) with ADB reverse in DEV, LIVE_URL in production APK
 let workingBaseUrl = __DEV__ ? LOCAL_URL : LIVE_URL;

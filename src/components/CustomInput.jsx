@@ -12,6 +12,9 @@ export const CustomInput = ({
   iconType = 'none',
   secureTextEntry,
   style,
+  inputStyle,
+  wrapperStyle,
+  placeholderTextColor = '#666666',
   ...props
 }) => {
   const [isFocused, setIsFocused] = useState(false);
@@ -73,12 +76,13 @@ export const CustomInput = ({
           styles.inputWrapper,
           isFocused && styles.inputWrapperFocused,
           props.multiline && { height: 'auto', minHeight: 90, borderRadius: 16, alignItems: 'flex-start', paddingTop: 10, paddingBottom: 10 },
+          wrapperStyle,
         ]}
       >
         {renderIcon()}
         <TextInput
-          style={[styles.input, props.multiline && { textAlignVertical: 'top' }, style]}
-          placeholderTextColor="#666666"
+          style={[styles.input, props.multiline && { textAlignVertical: 'top' }, style, inputStyle]}
+          placeholderTextColor={placeholderTextColor}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           secureTextEntry={shouldSecureText}
