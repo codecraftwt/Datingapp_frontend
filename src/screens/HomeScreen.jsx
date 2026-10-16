@@ -76,21 +76,90 @@ import soundService from '../services/soundService';
 import { registerFcmToken } from '../services/notificationService';
 import { WarningModal } from '../components/WarningModal';
 import { DeactivatedModal } from '../components/DeactivatedModal';
+import EmojiPicker from 'rn-emoji-keyboard';
 
-const MOCK_STICKERS = [
-  { id: 'heart', char: '❤️', label: 'Heart' },
-  { id: 'thumbs_up', char: '👍', label: 'Thumbs Up' },
-  { id: 'fire', char: '🔥', label: 'Fire' },
-  { id: 'lol', char: '😂', label: 'LOL' },
-  { id: 'cry', char: '😢', label: 'Cry' },
-  { id: 'celebrate', char: '🎉', label: 'Celebrate' },
-  { id: 'cool', char: '😎', label: 'Cool' },
-  { id: 'wink', char: '😉', label: 'Wink' },
-  { id: 'wow', char: '😮', label: 'Wow' },
-  { id: 'blow_kiss', char: '😘', label: 'Kiss' },
-  { id: 'star_eyes', char: '🤩', label: 'Star' },
-  { id: 'mind_blown', char: '🤯', label: 'Explode' },
+const STICKER_CATEGORIES = [
+  { id: 'romance', label: 'Love', icon: 'heart', emoji: '❤️' },
+  { id: 'flirt', label: 'Flirt', icon: 'flame', emoji: '🔥' },
+  { id: 'moods', label: 'Moods', icon: 'happy', emoji: '😂' },
+  { id: 'cute', label: 'Cute', icon: 'paw', emoji: '🧸' },
+  { id: 'party', label: 'Party', icon: 'sparkles', emoji: '🎉' },
 ];
+
+const STICKER_PACKS = {
+  romance: [
+    { id: 'stk_heart', char: '❤️', label: 'Heart', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/2764.png' },
+    { id: 'stk_sparkle_heart', char: '💖', label: 'Sparkle Heart', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f496.png' },
+    { id: 'stk_arrow_heart', char: '💘', label: 'Love Arrow', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f498.png' },
+    { id: 'stk_heart_eyes', char: '😍', label: 'Heart Eyes', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f60d.png' },
+    { id: 'stk_blow_kiss', char: '😘', label: 'Blow Kiss', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f618.png' },
+    { id: 'stk_rose', char: '🌹', label: 'Red Rose', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f339.png' },
+    { id: 'stk_bouquet', char: '💐', label: 'Bouquet', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f490.png' },
+    { id: 'stk_love_letter', char: '💌', label: 'Love Letter', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f48c.png' },
+    { id: 'stk_warm_smile', char: '🥰', label: 'Adore', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f970.png' },
+    { id: 'stk_kiss_mark', char: '💋', label: 'Kiss Mark', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f48b.png' },
+    { id: 'stk_ring', char: '💍', label: 'Diamond Ring', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f48d.png' },
+    { id: 'stk_couple_love', char: '👩‍❤️‍👨', label: 'In Love', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f491.png' },
+  ],
+  flirt: [
+    { id: 'stk_fire', char: '🔥', label: 'On Fire', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f525.png' },
+    { id: 'stk_wink', char: '😉', label: 'Wink', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f609.png' },
+    { id: 'stk_smirk', char: '😏', label: 'Smirk', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f60f.png' },
+    { id: 'stk_hot_face', char: '🥵', label: 'Hot', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f975.png' },
+    { id: 'stk_tongue_wink', char: '😜', label: 'Cheeky', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f61c.png' },
+    { id: 'stk_drool', char: '🤤', label: 'Drooling', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f924.png' },
+    { id: 'stk_clinking_wine', char: '🥂', label: 'Cheers', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f942.png' },
+    { id: 'stk_cocktail', char: '🍸', label: 'Cocktail', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f378.png' },
+    { id: 'stk_chocolate', char: '🍫', label: 'Chocolate', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f36b.png' },
+    { id: 'stk_strawberry', char: '🍓', label: 'Sweet Strawberry', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f353.png' },
+    { id: 'stk_cherry', char: '🍒', label: 'Cherries', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f352.png' },
+    { id: 'stk_sparkles', char: '✨', label: 'Sparks', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/2728.png' },
+  ],
+  moods: [
+    { id: 'stk_lol', char: '😂', label: 'LOL', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f602.png' },
+    { id: 'stk_rofl', char: '🤣', label: 'ROFL', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f923.png' },
+    { id: 'stk_cool', char: '😎', label: 'Cool', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f60e.png' },
+    { id: 'stk_star_eyes', char: '🤩', label: 'Starstruck', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f929.png' },
+    { id: 'stk_mind_blown', char: '🤯', label: 'Mind Blown', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f92f.png' },
+    { id: 'stk_shy_blush', char: '🥺', label: 'Pleading', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f97a.png' },
+    { id: 'stk_see_no_evil', char: '🙈', label: 'Shy Monkey', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f648.png' },
+    { id: 'stk_thumbs_up', char: '👍', label: 'Thumbs Up', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f44d.png' },
+    { id: 'stk_clap', char: '👏', label: 'Applause', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f44f.png' },
+    { id: 'stk_hundred', char: '💯', label: '100% Real', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f4af.png' },
+    { id: 'stk_cry', char: '😢', label: 'Sad Cry', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f622.png' },
+    { id: 'stk_screaming', char: '😱', label: 'Shocked', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f631.png' },
+  ],
+  cute: [
+    { id: 'stk_teddy', char: '🧸', label: 'Teddy Bear', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9f8.png' },
+    { id: 'stk_puppy', char: '🐶', label: 'Cute Pup', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f436.png' },
+    { id: 'stk_kitty', char: '🐱', label: 'Sweet Kitty', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f431.png' },
+    { id: 'stk_panda', char: '🐼', label: 'Panda Hug', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f43c.png' },
+    { id: 'stk_bunny', char: '🐰', label: 'Bunny Love', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f430.png' },
+    { id: 'stk_butterfly', char: '🦋', label: 'Butterfly', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f98b.png' },
+    { id: 'stk_blossom', char: '🌸', label: 'Blossom', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f338.png' },
+    { id: 'stk_sunflower', char: '🌻', label: 'Sunflower', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f33b.png' },
+    { id: 'stk_coffee', char: '☕', label: 'Coffee Date', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/2615.png' },
+    { id: 'stk_boba', char: '🧋', label: 'Boba Tea', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9cb.png' },
+    { id: 'stk_icecream', char: '🍦', label: 'Ice Cream', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f366.png' },
+    { id: 'stk_cupcake', char: '🧁', label: 'Cupcake', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f9c1.png' },
+  ],
+  party: [
+    { id: 'stk_party_popper', char: '🎉', label: 'Party Popper', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f389.png' },
+    { id: 'stk_celebrate', char: '🥳', label: 'Celebrate', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f973.png' },
+    { id: 'stk_balloons', char: '🎈', label: 'Balloons', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f388.png' },
+    { id: 'stk_confetti_ball', char: '🎊', label: 'Confetti', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f38a.png' },
+    { id: 'stk_gift', char: '🎁', label: 'Special Gift', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f381.png' },
+    { id: 'stk_star', char: '⭐', label: 'Gold Star', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/2b50.png' },
+    { id: 'stk_rainbow', char: '🌈', label: 'Rainbow', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f308.png' },
+    { id: 'stk_music_notes', char: '🎶', label: 'Melody', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f3b6.png' },
+    { id: 'stk_disco', char: '🪩', label: 'Mirror Ball', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1fa99.png' },
+    { id: 'stk_cake', char: '🎂', label: 'Birthday Cake', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f382.png' },
+    { id: 'stk_crown', char: '👑', label: 'Royalty Crown', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f451.png' },
+    { id: 'stk_trophy', char: '🏆', label: 'Winner Trophy', url: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f3c6.png' },
+  ],
+};
+
+const MOCK_STICKERS = STICKER_PACKS.romance;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -150,12 +219,12 @@ const getQuotedSnippetText = (replyObj) => {
     }
     return '📷 Photo';
   }
-  if (type === 'video') return '🎬 Video';
+  if (type === 'video') return ' Video';
   if (type === 'voice' || type === 'audio') return '🎤 Voice message';
-  if (type === 'document') return `📄 ${replyObj.fileName || 'Document'}`;
-  if (type === 'sticker') return '😊 Sticker';
-  if (type === 'call' || type === 'voice_call') return '📞 Voice call';
-  if (type === 'location') return '📍 Location';
+  if (type === 'document') return ` ${replyObj.fileName || 'Document'}`;
+  if (type === 'sticker') return ' Sticker';
+  if (type === 'call' || type === 'voice_call') return ' Voice call';
+  if (type === 'location') return ' Location';
 
   if (replyObj.text && typeof replyObj.text === 'string' && replyObj.text.trim().length > 0) {
     return replyObj.text;
@@ -212,15 +281,15 @@ const formatFileSize = (bytes) => {
 };
 
 const getDocExtensionBadge = (filename) => {
-  if (!filename) return '📄 PDF';
+  if (!filename) return ' PDF';
   const ext = filename.split('.').pop().toLowerCase();
-  if (ext === 'pdf') return '📄 PDF';
+  if (ext === 'pdf') return ' PDF';
   if (ext === 'doc' || ext === 'docx') return '📝 DOC';
-  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return '📊 XLS';
-  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp') return '🖼️ IMG';
-  if (ext === 'zip' || ext === 'rar' || ext === '7z') return '📁 ZIP';
-  if (ext === 'txt') return '📜 TXT';
-  return '📄 FILE';
+  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return ' XLS';
+  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp') return ' IMG';
+  if (ext === 'zip' || ext === 'rar' || ext === '7z') return ' ZIP';
+  if (ext === 'txt') return ' TXT';
+  return ' FILE';
 };
 
 const getDocTypeStyle = (filename) => {
@@ -987,6 +1056,87 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
+
+  // WhatsApp-like instant scroll to recent chats without unnecessary scrolling animation
+  const isInitialChatScrollDoneRef = useRef(false);
+  const prevActiveChatIdRef = useRef(null);
+  const prevMessagesCountRef = useRef(0);
+  const isUserNearBottomRef = useRef(true);
+  const [isChatReadyForDisplay, setIsChatReadyForDisplay] = useState(false);
+
+  const activeChatId = (activeChat?.id || activeChat?._id || activeChat?.userId)?.toString() || null;
+
+  useEffect(() => {
+    if (activeChatId) {
+      if (prevActiveChatIdRef.current !== activeChatId) {
+        prevActiveChatIdRef.current = activeChatId;
+        isInitialChatScrollDoneRef.current = false;
+        setIsChatReadyForDisplay(false);
+        prevMessagesCountRef.current = activeChat?.messages?.length || 0;
+        isUserNearBottomRef.current = true;
+      }
+    } else {
+      prevActiveChatIdRef.current = null;
+      isInitialChatScrollDoneRef.current = false;
+      setIsChatReadyForDisplay(false);
+      prevMessagesCountRef.current = 0;
+      isUserNearBottomRef.current = true;
+    }
+  }, [activeChatId]);
+
+  useEffect(() => {
+    if (activeChatId && !isChatReadyForDisplay) {
+      const timer = setTimeout(() => {
+        if (chatScrollViewRef.current && !isInitialChatScrollDoneRef.current) {
+          chatScrollViewRef.current.scrollToEnd({ animated: false });
+          isInitialChatScrollDoneRef.current = true;
+        }
+        setIsChatReadyForDisplay(true);
+      }, 70);
+      return () => clearTimeout(timer);
+    }
+  }, [activeChatId, isChatReadyForDisplay]);
+
+  const handleChatContentSizeChange = () => {
+    if (!chatScrollViewRef.current) return;
+
+    if (!isInitialChatScrollDoneRef.current) {
+      // First layout: jump directly to latest messages without visible scrolling animation (WhatsApp style)
+      chatScrollViewRef.current.scrollToEnd({ animated: false });
+      isInitialChatScrollDoneRef.current = true;
+      setIsChatReadyForDisplay(true);
+      return;
+    }
+
+    const currentCount = activeChat?.messages?.length || 0;
+    if (currentCount > prevMessagesCountRef.current) {
+      prevMessagesCountRef.current = currentCount;
+      if (isSendingMessageRef.current || isUserNearBottomRef.current) {
+        chatScrollViewRef.current.scrollToEnd({ animated: true });
+      }
+    } else {
+      prevMessagesCountRef.current = currentCount;
+      if (isUserNearBottomRef.current) {
+        chatScrollViewRef.current.scrollToEnd({ animated: false });
+      }
+    }
+  };
+
+  const handleChatLayout = () => {
+    if (!chatScrollViewRef.current) return;
+    if (!isInitialChatScrollDoneRef.current) {
+      chatScrollViewRef.current.scrollToEnd({ animated: false });
+    }
+  };
+
+  const handleChatScroll = (event) => {
+    if (!event || !event.nativeEvent) return;
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    if (layoutMeasurement && contentOffset && contentSize) {
+      const distanceFromBottom = contentSize.height - (layoutMeasurement.height + contentOffset.y);
+      isUserNearBottomRef.current = distanceFromBottom < 100;
+    }
+  };
   const [typedMessage, setTypedMessage] = useState('');
   const [isSearchInChatActive, setIsSearchInChatActive] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
@@ -1000,6 +1150,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const [isTyping, setIsTyping] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [activeStickerCategory, setActiveStickerCategory] = useState('romance');
+  const [recentStickers, setRecentStickers] = useState([]);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [onlineUsersMap, setOnlineUsersMap] = useState({});
   const [lastSeenMap, setLastSeenMap] = useState({});
@@ -4466,6 +4619,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     });
 
     dispatch(addMessage(localMsg));
+    setTimeout(() => {
+      if (chatScrollViewRef.current) {
+        chatScrollViewRef.current.scrollToEnd({ animated: true });
+      }
+    }, 40);
 
     let hasConfirmed = false;
     const handleServerConfirmation = (serverMsg) => {
@@ -5870,11 +6028,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const handleAttachPress = () => {
     Keyboard.dismiss();
     setShowStickerPicker(false);
+    setShowEmojiPicker(false);
     setShowAttachmentModal(true);
+  };
+
+  const handleEmojiPress = () => {
+    Keyboard.dismiss();
+    setShowStickerPicker(false);
+    setShowEmojiPicker(!showEmojiPicker);
+  };
+
+  const handleEmojiSelected = (emojiObj) => {
+    const char = emojiObj?.emoji;
+    if (!char) return;
+    if (reactingToMessageForEmoji) {
+      handleEmojiReaction(char, reactingToMessageForEmoji);
+      setReactingToMessageForEmoji(null);
+      setShowEmojiPicker(false);
+    } else {
+      setTypedMessage((prev) => (prev || '') + char);
+    }
   };
 
   const handleStickerPress = () => {
     Keyboard.dismiss();
+    setShowEmojiPicker(false);
     setShowStickerPicker(!showStickerPicker);
   };
 
@@ -5886,7 +6064,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       handleSendMessage({
         messageType: 'sticker',
         stickerId: sticker.id,
-        mediaUrl: sticker.char,
+        mediaUrl: sticker.url || sticker.char,
+        text: sticker.label || 'Sticker',
+      });
+      setRecentStickers((prev) => {
+        const filtered = prev.filter((s) => s.id !== sticker.id);
+        return [sticker, ...filtered].slice(0, 16);
       });
     }
     setShowStickerPicker(false);
@@ -6725,51 +6908,189 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       })()}
                     </View>
                   ) : isMultiSelectMode ? (
-                    <View style={[styles.chatHeader, { backgroundColor: '#1F2C34', paddingHorizontal: 16, justifyContent: 'space-between' }]}>
-                      {/* Left: Close button + Selection Count */}
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18, flex: 1 }}>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setIsMultiSelectMode(false);
-                            setSelectedMultiMessageIds([]);
-                          }}
-                          style={{ padding: 6, borderRadius: 20 }}
-                          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                        >
-                          <Ionicons name="close" size={24} color="#E9EDEF" />
-                        </TouchableOpacity>
-                        <Text style={{ color: '#E9EDEF', fontSize: 19, fontWeight: '700' }}>
-                          {selectedMultiMessageIds.length}
-                        </Text>
-                      </View>
+                    (() => {
+                      const isSingle = selectedMultiMessageIds.length === 1;
+                      const singleMsg = isSingle
+                        ? (activeChat?.messages || []).find(
+                            (m) =>
+                              (m.id || m._id)?.toString() === selectedMultiMessageIds[0] ||
+                              m.tempId?.toString() === selectedMultiMessageIds[0]
+                          ) || selectedMessageForAction
+                        : null;
 
-                      {/* Right: Actions (Delete, Copy, Forward) */}
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                        <TouchableOpacity
-                          onPress={() => setShowDeleteConfirmModal(true)}
-                          style={{ padding: 6, borderRadius: 20 }}
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        >
-                          <Ionicons name="trash-outline" size={22} color="#F15C6D" />
-                        </TouchableOpacity>
+                      const isStarred = singleMsg ? Boolean(singleMsg.isStarred) : false;
+                      const isPinned = singleMsg ? Boolean(singleMsg.isPinned) : false;
+                      const isMyTextMessage = Boolean(
+                        isSingle &&
+                        singleMsg &&
+                        (singleMsg.sender === 'you' || singleMsg.senderId === (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString()) &&
+                        !singleMsg.isDeletedForEveryone &&
+                        (singleMsg.messageType === 'text' || !singleMsg.messageType)
+                      );
 
-                        <TouchableOpacity
-                          onPress={handleCopyMultiMessages}
-                          style={{ padding: 6, borderRadius: 20 }}
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        >
-                          <Ionicons name="copy-outline" size={21} color="#E9EDEF" />
-                        </TouchableOpacity>
+                      return (
+                        <View style={[styles.chatHeader, { backgroundColor: '#1F2C34', paddingHorizontal: 10, justifyContent: 'space-between' }]}>
+                          {/* Left: Back / Close button + Selection Count */}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setIsMultiSelectMode(false);
+                                setSelectedMultiMessageIds([]);
+                                setSelectedMessageForAction(null);
+                              }}
+                              style={{ padding: 4, borderRadius: 20 }}
+                              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                            >
+                              <Ionicons name="arrow-back" size={24} color="#E9EDEF" />
+                            </TouchableOpacity>
+                            <Text style={{ color: '#E9EDEF', fontSize: 18, fontWeight: '700' }}>
+                              {selectedMultiMessageIds.length}
+                            </Text>
+                          </View>
 
-                        <TouchableOpacity
-                          onPress={handleForwardMultiMessages}
-                          style={{ padding: 6, borderRadius: 20 }}
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        >
-                          <Ionicons name="arrow-redo-outline" size={22} color="#E9EDEF" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
+                          {/* Right: WhatsApp-style Action Bar Icons */}
+                          <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 6 }}
+                          >
+                            {/* 1. Reply (when 1 message selected) */}
+                            {isSingle && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (singleMsg) {
+                                    setReplyingToMessage(singleMsg);
+                                    setIsMultiSelectMode(false);
+                                    setSelectedMultiMessageIds([]);
+                                    setTimeout(() => {
+                                      chatInputRef.current?.focus();
+                                    }, 150);
+                                  }
+                                }}
+                                style={{ padding: 6, borderRadius: 20 }}
+                                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                              >
+                                <Ionicons name="arrow-undo" size={22} color="#E9EDEF" />
+                              </TouchableOpacity>
+                            )}
+
+                            {/* 2. Star / Unstar */}
+                            <TouchableOpacity
+                              onPress={() => {
+                                if (isSingle && singleMsg) {
+                                  handleToggleStarAction(singleMsg);
+                                } else if (selectedMultiMessageIds.length > 0) {
+                                  selectedMultiMessageIds.forEach((id) => {
+                                    const target = (activeChat?.messages || []).find((m) => (m.id || m._id)?.toString() === id || m.tempId?.toString() === id);
+                                    if (target) handleToggleStarAction(target);
+                                  });
+                                }
+                                setIsMultiSelectMode(false);
+                                setSelectedMultiMessageIds([]);
+                              }}
+                              style={{ padding: 6, borderRadius: 20 }}
+                              hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                            >
+                              <Ionicons
+                                name={isStarred ? "star" : "star-outline"}
+                                size={22}
+                                color={isStarred ? "#FFD700" : "#E9EDEF"}
+                              />
+                            </TouchableOpacity>
+
+                            {/* 3. Pin / Unpin (when 1 message selected) */}
+                            {isSingle && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (singleMsg) {
+                                    handlePinMessageAction(singleMsg);
+                                  }
+                                  setIsMultiSelectMode(false);
+                                  setSelectedMultiMessageIds([]);
+                                }}
+                                style={{ padding: 6, borderRadius: 20 }}
+                                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                              >
+                                <Ionicons
+                                  name={isPinned ? "pin" : "pin-outline"}
+                                  size={21}
+                                  color={isPinned ? "#00A884" : "#E9EDEF"}
+                                />
+                              </TouchableOpacity>
+                            )}
+
+                            {/* 4. Info (when 1 message selected) */}
+                            {isSingle && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (singleMsg) {
+                                    setSelectedMessageForAction(singleMsg);
+                                    setShowInfoModal(true);
+                                  }
+                                  setIsMultiSelectMode(false);
+                                  setSelectedMultiMessageIds([]);
+                                }}
+                                style={{ padding: 6, borderRadius: 20 }}
+                                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                              >
+                                <Ionicons name="information-circle-outline" size={23} color="#E9EDEF" />
+                              </TouchableOpacity>
+                            )}
+
+                            {/* 5. Edit (when 1 text message sent by me is selected) */}
+                            {isMyTextMessage && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (singleMsg) {
+                                    setEditingMessage(singleMsg);
+                                    setTypedMessage(singleMsg.text || '');
+                                    setIsMultiSelectMode(false);
+                                    setSelectedMultiMessageIds([]);
+                                    setTimeout(() => {
+                                      chatInputRef.current?.focus();
+                                    }, 150);
+                                  }
+                                }}
+                                style={{ padding: 6, borderRadius: 20 }}
+                                hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                              >
+                                <Ionicons name="pencil-outline" size={21} color="#E9EDEF" />
+                              </TouchableOpacity>
+                            )}
+
+                            {/* 6. Copy */}
+                            <TouchableOpacity
+                              onPress={handleCopyMultiMessages}
+                              style={{ padding: 6, borderRadius: 20 }}
+                              hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                            >
+                              <Ionicons name="copy-outline" size={21} color="#E9EDEF" />
+                            </TouchableOpacity>
+
+                            {/* 7. Forward */}
+                            <TouchableOpacity
+                              onPress={handleForwardMultiMessages}
+                              style={{ padding: 6, borderRadius: 20 }}
+                              hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                            >
+                              <Ionicons name="arrow-redo-outline" size={22} color="#E9EDEF" />
+                            </TouchableOpacity>
+
+                            {/* 8. Delete */}
+                            <TouchableOpacity
+                              onPress={() => {
+                                if (singleMsg) setSelectedMessageForAction(singleMsg);
+                                setShowDeleteConfirmModal(true);
+                              }}
+                              style={{ padding: 6, borderRadius: 20 }}
+                              hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                            >
+                              <Ionicons name="trash-outline" size={22} color="#F15C6D" />
+                            </TouchableOpacity>
+                          </ScrollView>
+                        </View>
+                      );
+                    })()
                   ) : (
                     <View style={styles.chatHeader}>
                       <TouchableOpacity
@@ -6900,10 +7221,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                   <ScrollView
                     ref={chatScrollViewRef}
-                    style={styles.messageBubbleContainer}
+                    style={[
+                      styles.messageBubbleContainer,
+                      { opacity: isChatReadyForDisplay ? 1 : 0 }
+                    ]}
                     contentContainerStyle={{ paddingVertical: 15 }}
-                    onContentSizeChange={() => chatScrollViewRef.current && chatScrollViewRef.current.scrollToEnd && chatScrollViewRef.current.scrollToEnd({ animated: true })}
-                    onLayout={() => chatScrollViewRef.current && chatScrollViewRef.current.scrollToEnd && chatScrollViewRef.current.scrollToEnd({ animated: true })}
+                    onContentSizeChange={handleChatContentSizeChange}
+                    onLayout={handleChatLayout}
+                    onScroll={handleChatScroll}
+                    scrollEventThrottle={16}
                   >
                     {deduplicateMessages(activeChat.messages).map((msg) => {
                       const isDeletedForEveryone = Boolean(msg.isDeletedForEveryone || msg.text === 'This message was deleted');
@@ -7094,7 +7420,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               </TouchableOpacity>
                             )}
                             {isSticker && (
-                              <Text style={styles.stickerText}>{msg.mediaUrl || msg.text}</Text>
+                              Boolean(msg.mediaUrl && typeof msg.mediaUrl === 'string' && (msg.mediaUrl.startsWith('http') || msg.mediaUrl.startsWith('data:image'))) ? (
+                                <Image
+                                  source={{ uri: msg.mediaUrl }}
+                                  style={styles.chatStickerImage}
+                                  resizeMode="contain"
+                                />
+                              ) : (
+                                <Text style={styles.stickerText}>{msg.mediaUrl || msg.text}</Text>
+                              )
                             )}
 
                             {isImage && (
@@ -7500,16 +7834,64 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                   {showStickerPicker && (
                     <View style={styles.stickerPickerContainer}>
-                      <Text style={styles.stickerPickerTitle}>Send a sticker</Text>
+                      {/* Category Navigation Tabs */}
+                      <View style={styles.stickerCategoryTabBar}>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center' }}>
+                          {recentStickers.length > 0 && (
+                            <TouchableOpacity
+                              style={[styles.stickerCategoryTab, activeStickerCategory === 'recents' && styles.stickerCategoryTabActive]}
+                              onPress={() => setActiveStickerCategory('recents')}
+                              activeOpacity={0.7}
+                            >
+                              <Ionicons name="time-outline" size={15} color={activeStickerCategory === 'recents' ? '#00A884' : '#8696A0'} style={{ marginRight: 4 }} />
+                              <Text style={[styles.stickerCategoryTabText, activeStickerCategory === 'recents' && styles.stickerCategoryTabTextActive]}>Recent</Text>
+                            </TouchableOpacity>
+                          )}
+                          {STICKER_CATEGORIES.map((cat) => {
+                            const isActive = activeStickerCategory === cat.id;
+                            return (
+                              <TouchableOpacity
+                                key={cat.id}
+                                style={[styles.stickerCategoryTab, isActive && styles.stickerCategoryTabActive]}
+                                onPress={() => setActiveStickerCategory(cat.id)}
+                                activeOpacity={0.7}
+                              >
+                                <Text style={{ fontSize: 13, marginRight: 5 }}>{cat.emoji}</Text>
+                                <Text style={[styles.stickerCategoryTabText, isActive && styles.stickerCategoryTabTextActive]}>
+                                  {cat.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+
+                        <TouchableOpacity
+                          style={styles.stickerPickerCloseBtn}
+                          onPress={() => setShowStickerPicker(false)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="close" size={20} color="#8696A0" />
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Sticker Grid */}
                       <ScrollView contentContainerStyle={styles.stickerGrid} showsVerticalScrollIndicator={false}>
-                        {MOCK_STICKERS.map((st) => (
+                        {(activeStickerCategory === 'recents' ? recentStickers : (STICKER_PACKS[activeStickerCategory] || STICKER_PACKS.romance)).map((st) => (
                           <TouchableOpacity
                             key={st.id}
                             style={styles.stickerItem}
                             onPress={() => selectSticker(st)}
-                            activeOpacity={0.7}
+                            activeOpacity={0.65}
                           >
-                            <Text style={styles.stickerItemText}>{st.char}</Text>
+                            {st.url ? (
+                              <Image
+                                source={{ uri: st.url }}
+                                style={styles.stickerItemImage}
+                                resizeMode="contain"
+                              />
+                            ) : (
+                              <Text style={styles.stickerItemText}>{st.char}</Text>
+                            )}
                           </TouchableOpacity>
                         ))}
                       </ScrollView>
@@ -7637,9 +8019,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                         <TouchableOpacity
                           style={styles.chatActionButton}
+                          onPress={handleEmojiPress}
+                        >
+                          <Ionicons name={showEmojiPicker ? "happy" : "happy-outline"} size={24} color={showEmojiPicker ? "#00A884" : "#8696A0"} />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.chatActionButton}
                           onPress={handleStickerPress}
                         >
-                          <Ionicons name="happy-outline" size={24} color="#8696A0" />
+                          <Ionicons name={showStickerPicker ? "sparkles" : "sparkles-outline"} size={22} color={showStickerPicker ? "#00A884" : "#8696A0"} />
                         </TouchableOpacity>
 
                         <TextInput
@@ -7651,6 +8040,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           onChangeText={handleInputChange}
                           onFocus={() => {
                             setShowStickerPicker(false);
+                            setShowEmojiPicker(false);
                             setTimeout(() => {
                               if (chatScrollViewRef.current) {
                                 chatScrollViewRef.current.scrollToEnd({ animated: true });
@@ -7724,6 +8114,37 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       </View>
                     </TouchableOpacity>
                   </Modal>
+
+                  <EmojiPicker
+                    open={showEmojiPicker}
+                    onClose={() => {
+                      setShowEmojiPicker(false);
+                      setReactingToMessageForEmoji(null);
+                    }}
+                    onEmojiSelected={handleEmojiSelected}
+                    enableSearchBar={true}
+                    enableRecentlyUsed={true}
+                    categoryPosition="top"
+                    theme={{
+                      backdrop: 'rgba(0, 0, 0, 0.55)',
+                      knob: '#00A884',
+                      container: '#1F2C34',
+                      header: '#E9EDEF',
+                      skinTonesContainer: '#121B22',
+                      category: {
+                        icon: '#8696A0',
+                        iconActive: '#00A884',
+                        container: '#121B22',
+                        containerActive: 'rgba(0, 168, 132, 0.22)',
+                      },
+                      search: {
+                        background: '#121B22',
+                        text: '#E9EDEF',
+                        placeholder: '#8696A0',
+                        icon: '#8696A0',
+                      },
+                    }}
+                  />
                 </KeyboardAvoidingView>
               ) : (
                 /* Chat List view */
@@ -9719,7 +10140,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     onPress={() => {
                       setReactingToMessageForEmoji(selectedMessageForAction);
                       setShowMessageActionModal(false);
-                      setShowStickerPicker(true);
+                      setShowEmojiPicker(true);
                     }}
                   >
                     <Ionicons name="add" size={18} color="#AEBAC1" />
@@ -12842,6 +13263,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  chatStickerImage: {
+    width: 125,
+    height: 125,
+    marginVertical: 4,
+  },
   stickerText: {
     fontSize: 50,
   },
@@ -12889,32 +13315,64 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   stickerPickerContainer: {
-    height: 180,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    height: 250,
+    backgroundColor: '#1F2C34',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.1)',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    borderTopColor: 'rgba(255,255,255,0.08)',
   },
-  stickerPickerTitle: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 11,
+  stickerCategoryTabBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: '#121B22',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  stickerCategoryTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 11,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    marginRight: 6,
+  },
+  stickerCategoryTabActive: {
+    backgroundColor: 'rgba(0, 168, 132, 0.22)',
+    borderWidth: 1,
+    borderColor: '#00A884',
+  },
+  stickerCategoryTabText: {
+    color: '#8696A0',
+    fontSize: 12,
     fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginLeft: 8,
-    marginBottom: 8,
+  },
+  stickerCategoryTabTextActive: {
+    color: '#00A884',
+    fontWeight: '700',
+  },
+  stickerPickerCloseBtn: {
+    padding: 6,
+    marginLeft: 6,
   },
   stickerGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    paddingVertical: 8,
   },
   stickerItem: {
-    width: '16.6%',
+    width: '25%',
     aspectRatio: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 6,
+  },
+  stickerItemImage: {
+    width: 48,
+    height: 48,
   },
   stickerItemText: {
     fontSize: 34,
