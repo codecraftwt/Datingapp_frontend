@@ -6918,12 +6918,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           ) || selectedMessageForAction
                         : null;
 
+                      const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+                      const isSentByMe = Boolean(
+                        singleMsg &&
+                        (singleMsg.sender === 'you' || (currentUserId && singleMsg.senderId?.toString() === currentUserId))
+                      );
                       const isStarred = singleMsg ? Boolean(singleMsg.isStarred) : false;
                       const isPinned = singleMsg ? Boolean(singleMsg.isPinned) : false;
                       const isMyTextMessage = Boolean(
                         isSingle &&
                         singleMsg &&
-                        (singleMsg.sender === 'you' || singleMsg.senderId === (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString()) &&
+                        isSentByMe &&
                         !singleMsg.isDeletedForEveryone &&
                         (singleMsg.messageType === 'text' || !singleMsg.messageType)
                       );
@@ -7019,8 +7024,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               </TouchableOpacity>
                             )}
 
-                            {/* 4. Info (when 1 message selected) */}
-                            {isSingle && (
+                            {/* 4. Info (only visible for sent messages when 1 message selected) */}
+                            {isSingle && isSentByMe && (
                               <TouchableOpacity
                                 onPress={() => {
                                   if (singleMsg) {
@@ -10193,16 +10198,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     alignSelf: selectedMessageForAction.sender === 'you' ? 'flex-end' : 'flex-start',
                   }}
                 >
-                  <TouchableOpacity
-                    style={styles.waContextMenuItem}
-                    onPress={() => {
-                      setShowMessageActionModal(false);
-                      setShowInfoModal(true);
-                    }}
-                  >
-                    <Ionicons name="information-circle-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
-                    <Text style={styles.waContextMenuText}>Message info</Text>
-                  </TouchableOpacity>
+                  {(selectedMessageForAction.sender === 'you' || selectedMessageForAction.senderId === (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString()) && (
+                    <TouchableOpacity
+                      style={styles.waContextMenuItem}
+                      onPress={() => {
+                        setShowMessageActionModal(false);
+                        setShowInfoModal(true);
+                      }}
+                    >
+                      <Ionicons name="information-circle-outline" size={20} color="#AEBAC1" style={{ marginRight: 16 }} />
+                      <Text style={styles.waContextMenuText}>Message info</Text>
+                    </TouchableOpacity>
+                  )}
 
                   <TouchableOpacity
                     style={styles.waContextMenuItem}
