@@ -913,6 +913,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         return true;
       }
 
+      // 1.4. Cancel conversation multi-select mode if active
+      if (selectedChatIds.length > 0) {
+        setSelectedChatIds([]);
+        return true;
+      }
+
       // 1.5. Cancel multi-select mode if active
       if (isMultiSelectMode) {
         setIsMultiSelectMode(false);
@@ -961,7 +967,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     const backSubscription = BackHandler.addEventListener('hardwareBackPress', onHardwareBackPress);
     return () => backSubscription.remove();
-  }, [activeTab, activeChat, viewMediaModal, pendingMediaSend, onGoBack]);
+  }, [activeTab, activeChat, viewMediaModal, pendingMediaSend, onGoBack, selectedChatIds]);
 
   useEffect(() => {
     if (activeTab === 'likes') {
@@ -1307,6 +1313,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [isSendingForward, setIsSendingForward] = useState(false);
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedMultiMessageIds, setSelectedMultiMessageIds] = useState([]);
+  const [selectedChatIds, setSelectedChatIds] = useState([]);
   const deletedMessageIdsRef = useRef(new Set());
   const [showChatOptionsMenuModal, setShowChatOptionsMenuModal] = useState(false);
   const [showStarredModal, setShowStarredModal] = useState(false);
@@ -1539,6 +1546,20 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const isBlockedByMe = !Array.isArray(res) && res?.isBlockedByMe !== undefined ? !!res.isBlockedByMe : undefined;
       const isBlockedByOther = !Array.isArray(res) && res?.isBlockedByOther !== undefined ? !!res.isBlockedByOther : undefined;
 
+      if (isBlockedByOther !== undefined) {
+        if (isBlockedByOther) {
+          setBlockedByOtherList((prev) => Array.from(new Set([...(prev || []).map((id) => id.toString()), partnerId])));
+          setSelectedLikesProfile((prev) => {
+            if (!prev) return prev;
+            const pId = (prev.id || prev._id || prev.userId)?.toString();
+            if (pId === partnerId) return null;
+            return prev;
+          });
+        } else {
+          setBlockedByOtherList((prev) => (prev || []).filter((id) => id.toString() !== partnerId));
+        }
+      }
+
       if (res?.partner) {
         setOnlineUsersMap((prev) => ({
           ...prev,
@@ -1656,6 +1677,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             messages: enforceSinglePin(mergedMsgs),
             isBlocked: isBlockedByMeVal,
             isBlockedByOther: isBlockedByOtherVal,
+            name: isBlockedByOtherVal ? 'Matched User' : prev.name,
+            image: isBlockedByOtherVal ? null : prev.image,
+            profileImage: isBlockedByOtherVal ? null : prev.profileImage,
           };
         }
         return prev;
@@ -1724,6 +1748,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               messages: finalMsgs,
               isBlocked: isBlockedByMeVal,
               isBlockedByOther: isBlockedByOtherVal,
+              name: isBlockedByOtherVal ? 'Matched User' : c.name,
+              image: isBlockedByOtherVal ? null : c.image,
             };
           }
           return c;
@@ -2785,12 +2811,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           // If user is not currently in active chat, increment instant bottom tab chat badge & show pop-up banner notification
           setUnreadChatPushCount((prev) => prev + 1);
           const senderDisplayName = msg.senderName || 'Someone';
-          let bodyText = msg.text || '💬 Sent a message';
-          if (msg.messageType === 'image') bodyText = '📷 Sent a photo';
-          else if (msg.messageType === 'video') bodyText = '🎬 Sent a video';
-          else if (msg.messageType === 'voice') bodyText = '🎤 Sent a voice message';
-          else if (msg.messageType === 'sticker') bodyText = '😊 Sent a sticker';
-          else if (msg.messageType === 'document') bodyText = '📄 Sent a document';
+          let bodyText = msg.text || ' Sent a message';
+          if (msg.messageType === 'image') bodyText = ' Sent a photo';
+          else if (msg.messageType === 'video') bodyText = ' Sent a video';
+          else if (msg.messageType === 'voice') bodyText = ' Sent a voice message';
+          else if (msg.messageType === 'sticker') bodyText = ' Sent a sticker';
+          else if (msg.messageType === 'document') bodyText = 'Sent a document';
 
           if (typeof displayLocalSystemNotification === 'function') {
             displayLocalSystemNotification({
@@ -3306,25 +3332,105 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         );
       });
 
-      socketRef.current.on('user_blocked_by_other', ({ blockerId }) => {
-        console.log('Socket.IO user_blocked_by_other received:', blockerId);
-        if (blockerId) {
-          const bIdStr = blockerId.toString();
-          setBlockedByOtherList((prev) => Array.from(new Set([...prev, bIdStr])));
-        }
-      });
+      const handleBlockedByOtherSocket = (data) => {
+        const blockerId = data?.blockerId || data?.blockedBy;
+        const targetUserId = data?.targetUserId;
+        const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
 
-      socketRef.current.on('user_unblocked_by_other', ({ blockerId }) => {
-        console.log('Socket.IO user_unblocked_by_other received:', blockerId);
+        if (targetUserId && currentUserId && targetUserId.toString() !== currentUserId) {
+          return;
+        }
+
         if (blockerId) {
           const bIdStr = blockerId.toString();
-          // Remove blocker from blockedByOtherList so the real name shows up immediately
-          setBlockedByOtherList((prev) => prev.filter((id) => id !== bIdStr));
-          // Refresh blocked list and matches from API to get fresh name/profile data
+          console.log('Socket.IO user_blocked_by_other received for blocker:', bIdStr);
+
+          // 1. Add to blockedByOtherList
+          setBlockedByOtherList((prev) => Array.from(new Set([...(prev || []).map((id) => id.toString()), bIdStr])));
+
+          // 2. Update activeChat if currently chatting with the blocker
+          setActiveChat((prevActive) => {
+            if (!prevActive) return prevActive;
+            const pId = (prevActive.id || prevActive._id || prevActive.userId || prevActive.senderId || prevActive.sender)?.toString();
+            if (pId === bIdStr) {
+              return {
+                ...prevActive,
+                isBlockedByOther: true,
+                name: 'Matched User',
+                image: null,
+                profileImage: null,
+              };
+            }
+            return prevActive;
+          });
+
+          // 3. Immediately close expanded profile modal if currently viewing blocker's profile!
+          setSelectedLikesProfile((prev) => {
+            if (!prev) return prev;
+            const pId = (prev.id || prev._id || prev.userId)?.toString();
+            if (pId === bIdStr) {
+              if (Platform.OS === 'android') {
+                ToastAndroid.show('This profile is unavailable.', ToastAndroid.SHORT);
+              }
+              return null;
+            }
+            return prev;
+          });
+
+          // 4. Update chats list
+          setChats((prevChats) =>
+            (prevChats || []).map((c) => {
+              const cId = (c.id || c._id || c.userId)?.toString();
+              if (cId === bIdStr) {
+                return {
+                  ...c,
+                  isBlockedByOther: true,
+                  name: 'Matched User',
+                  image: null,
+                };
+              }
+              return c;
+            })
+          );
+        }
+      };
+
+      const handleUnblockedByOtherSocket = (data) => {
+        const blockerId = data?.blockerId || data?.unblockedBy;
+        const targetUserId = data?.targetUserId;
+        const currentUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+
+        if (targetUserId && currentUserId && targetUserId.toString() !== currentUserId) {
+          return;
+        }
+
+        if (blockerId) {
+          const bIdStr = blockerId.toString();
+          console.log('Socket.IO user_unblocked_by_other received for blocker:', bIdStr);
+          setBlockedByOtherList((prev) => (prev || []).filter((id) => id.toString() !== bIdStr));
+
+          setActiveChat((prevActive) => {
+            if (!prevActive) return prevActive;
+            const pId = (prevActive.id || prevActive._id || prevActive.userId || prevActive.senderId || prevActive.sender)?.toString();
+            if (pId === bIdStr) {
+              return {
+                ...prevActive,
+                isBlockedByOther: false,
+              };
+            }
+            return prevActive;
+          });
+
           fetchBlockedUsers();
           fetchMatchesList();
+          fetchChatMessages();
         }
-      });
+      };
+
+      socketRef.current.on('user_blocked_by_other', handleBlockedByOtherSocket);
+      socketRef.current.on('user_blocked', handleBlockedByOtherSocket);
+      socketRef.current.on('user_unblocked_by_other', handleUnblockedByOtherSocket);
+      socketRef.current.on('user_unblocked', handleUnblockedByOtherSocket);
 
       socketRef.current.on('unmatched', ({ unmatchedBy }) => {
         console.log('Socket.IO unmatched event received:', unmatchedBy);
@@ -5193,6 +5299,25 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     if (!partnerId) return;
 
+    // Check fast local state first
+    const isPartnerBlockedMe = Boolean(
+      activeChat?.isBlockedByOther ||
+      activeChat?.name === 'Matched User' ||
+      (partnerId && Array.isArray(blockedByOtherList) && blockedByOtherList.some((id) => id?.toString() === partnerId)) ||
+      (partnerId && Array.isArray(chats) && chats.some((c) => (c.id || c._id || c.userId)?.toString() === partnerId && c.isBlockedByOther)) ||
+      (partnerId && Array.isArray(matches) && matches.some((m) => (m.id || m._id || m.userId)?.toString() === partnerId && m.isBlockedByOther))
+    );
+
+    if (isPartnerBlockedMe) {
+      console.log('[handleViewPartnerProfile] Cannot expand profile: User is blocked by partner:', partnerId);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('This profile is unavailable.', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Unavailable', 'This profile is currently unavailable.');
+      }
+      return;
+    }
+
     setLikesActivePhotoIndex(0);
 
     const matchCandidate =
@@ -5211,11 +5336,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       isLoadingFullProfile: true,
     };
 
-    // Open immediately with existing cached data
-    setSelectedLikesProfile(profileData);
-
     try {
       const res = await apiClient.getUserById(partnerId);
+
+      // Check if backend confirmed that the partner blocked the current user
+      if (res?.isBlocked || res?.status === 403 || (res?.message && res.message.toLowerCase().includes('blocked'))) {
+        console.log('[handleViewPartnerProfile] Target user has blocked current user (403/isBlocked). Profile expansion blocked.');
+        setBlockedByOtherList((prev) => Array.from(new Set([...(prev || []).map((id) => id.toString()), partnerId])));
+        setActiveChat((prev) => prev ? { ...prev, isBlockedByOther: true, name: 'Matched User', image: null } : null);
+        setSelectedLikesProfile(null);
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('This profile is unavailable.', ToastAndroid.SHORT);
+        } else {
+          Alert.alert('Unavailable', 'This profile is currently unavailable.');
+        }
+        return;
+      }
+
       if (res && res.user) {
         delete profileData.profileImages;
         delete profileData.photos;
@@ -5230,11 +5367,27 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           isLoadingFullProfile: false,
         };
         setSelectedLikesProfile(profileData);
+      } else if (!res?.message?.toLowerCase().includes('unavailable') && !res?.message?.toLowerCase().includes('hidden')) {
+        setSelectedLikesProfile(profileData);
       } else {
-        setSelectedLikesProfile((prev) => prev ? { ...prev, isLoadingFullProfile: false } : prev);
+        setSelectedLikesProfile(null);
+        if (Platform.OS === 'android') {
+          ToastAndroid.show(res?.message || 'Profile is unavailable.', ToastAndroid.SHORT);
+        }
       }
     } catch (e) {
       console.log('Error fetching partner full profile by ID:', e);
+      if (e?.status === 403 || e?.data?.message?.toLowerCase().includes('blocked')) {
+        setSelectedLikesProfile(null);
+        setBlockedByOtherList((prev) => Array.from(new Set([...(prev || []).map((id) => id.toString()), partnerId])));
+        setActiveChat((prev) => prev ? { ...prev, isBlockedByOther: true, name: 'Matched User', image: null } : null);
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('This profile is unavailable.', ToastAndroid.SHORT);
+        } else {
+          Alert.alert('Unavailable', 'This profile is currently unavailable.');
+        }
+        return;
+      }
       setSelectedLikesProfile((prev) => prev ? { ...prev, isLoadingFullProfile: false } : prev);
     }
   };
@@ -6138,6 +6291,59 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const handleChatMenu = () => {
     if (!activeChat) return;
     setShowChatOptionsMenuModal(true);
+  };
+
+  const toggleSelectChat = (chat) => {
+    const cId = (chat.id || chat._id || chat.userId)?.toString();
+    if (!cId) return;
+    setSelectedChatIds((prev) =>
+      prev.includes(cId) ? prev.filter((id) => id !== cId) : [...prev, cId]
+    );
+  };
+
+  const handleSelectAllChats = () => {
+    if (selectedChatIds.length === chats.length) {
+      setSelectedChatIds([]);
+    } else {
+      setSelectedChatIds(chats.map((c) => (c.id || c._id || c.userId)?.toString()).filter(Boolean));
+    }
+  };
+
+  const handleDeleteSelectedChats = () => {
+    if (selectedChatIds.length === 0) return;
+    const count = selectedChatIds.length;
+    Alert.alert(
+      `Delete ${count} Conversation${count > 1 ? 's' : ''}?`,
+      `Are you sure you want to delete ${count === 1 ? 'this conversation' : `these ${count} conversations`}? This will delete the chat history for you.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const idsToDelete = [...selectedChatIds];
+            setSelectedChatIds([]);
+            try {
+              setChats((prev) =>
+                (prev || []).filter((c) => !idsToDelete.includes((c.id || c._id || c.userId)?.toString()))
+              );
+              if (activeChat && idsToDelete.includes((activeChat.id || activeChat._id || activeChat.userId)?.toString())) {
+                setActiveChat(null);
+              }
+
+              await Promise.allSettled(
+                idsToDelete.map((targetId) => apiClient.clearChat(targetId))
+              );
+              console.log(`[handleDeleteSelectedChats] Deleted ${idsToDelete.length} conversations`);
+              refetchMessages();
+            } catch (err) {
+              console.error('Error deleting selected conversations:', err);
+              Alert.alert('Error', 'Failed to delete some conversations.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleClearAllConversations = () => {
@@ -7416,10 +7622,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       </TouchableOpacity>
                       {(() => {
                         const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
-                        const isBlockedByOther = !!(
+                        const isBlockedByOther = Boolean(
                           activeChat.isBlockedByOther ||
                           activeChat.name === 'Matched User' ||
-                          (partnerId && blockedByOtherList && blockedByOtherList.map((id) => id.toString()).includes(partnerId))
+                          (partnerId && Array.isArray(blockedByOtherList) && blockedByOtherList.some((id) => id?.toString() === partnerId)) ||
+                          (partnerId && Array.isArray(chats) && chats.some((c) => (c.id || c._id || c.userId)?.toString() === partnerId && c.isBlockedByOther)) ||
+                          (partnerId && Array.isArray(matches) && matches.some((m) => (m.id || m._id || m.userId)?.toString() === partnerId && m.isBlockedByOther))
                         );
                         const isPartnerOnline = !isBlockedByOther && !!(
                           partnerId && (
@@ -7436,7 +7644,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             activeOpacity={isBlockedByOther ? 1 : 0.8}
                             disabled={isBlockedByOther}
                             onPress={() => {
-                              if (isBlockedByOther) return;
+                              if (isBlockedByOther) {
+                                if (Platform.OS === 'android') {
+                                  ToastAndroid.show('This profile is unavailable.', ToastAndroid.SHORT);
+                                } else {
+                                  Alert.alert('Unavailable', 'This profile is currently unavailable.');
+                                }
+                                return;
+                              }
                               handleViewPartnerProfile(partnerId);
                             }}
                           >
@@ -7731,8 +7946,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 isTransparentContainer
                                   ? styles.transparentBubble
                                   : isImage
-                                  ? [styles.imageBubble, isMe ? styles.imageBubbleMe : styles.imageBubbleThem]
-                                  : styles.messageBubble,
+                                    ? [styles.imageBubble, isMe ? styles.imageBubbleMe : styles.imageBubbleThem]
+                                    : styles.messageBubble,
                                 !isTransparentContainer && !isImage && (isMe ? styles.bubbleMe : styles.bubbleThem),
                                 isVoice && styles.waVoiceBubble,
                                 { alignSelf: isMe ? 'flex-end' : 'flex-start' },
@@ -7903,17 +8118,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                             msg.status === 'seen'
                                               ? styles.imageTicksSeen
                                               : (msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued')
-                                              ? styles.imageTicksPending
-                                              : styles.imageTicksSent
+                                                ? styles.imageTicksPending
+                                                : styles.imageTicksSent
                                           ]}
                                         >
                                           {(msg.status === 'pending' || msg.status === 'sending' || msg.status === 'queued')
                                             ? ' 🕒'
                                             : msg.status === 'seen'
-                                            ? ' ✓✓'
-                                            : msg.status === 'delivered'
-                                            ? ' ✓✓'
-                                            : ' ✓'}
+                                              ? ' ✓✓'
+                                              : msg.status === 'delivered'
+                                                ? ' ✓✓'
+                                                : ' ✓'}
                                         </Text>
                                       )}
                                     </View>
@@ -8938,6 +9153,41 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         )}
                       </View>
                     </View>
+                  ) : selectedChatIds.length > 0 ? (
+                    <View style={styles.chatSelectionHeaderRow}>
+                      <View style={styles.chatSelectionLeftGroup}>
+                        <TouchableOpacity
+                          style={styles.chatSelectionCloseBtn}
+                          onPress={() => setSelectedChatIds([])}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="close" size={24} color="#FFFFFF" />
+                        </TouchableOpacity>
+                        <Text style={styles.chatSelectionCountText}>
+                          {selectedChatIds.length}
+                        </Text>
+                      </View>
+                      <View style={styles.chatSelectionRightGroup}>
+                        <TouchableOpacity
+                          style={styles.chatSelectionActionBtn}
+                          onPress={handleSelectAllChats}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name={selectedChatIds.length === chats.length ? "checkbox" : "checkbox-outline"}
+                            size={22}
+                            color="#00A884"
+                          />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.chatSelectionActionBtn, { marginLeft: 16 }]}
+                          onPress={handleDeleteSelectedChats}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={22} color="#FF4D4D" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
                   ) : (
                     <View style={styles.chatListHeaderRow}>
                       <TouchableOpacity
@@ -8947,26 +9197,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       >
                         <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
                       </TouchableOpacity>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.sectionTitle}>Conversations</Text>
-                        <Text style={styles.sectionSubtitle}>Start talking with your matches.</Text>
+                      <View style={styles.chatHeaderTitleWrapper}>
+                        <Text style={styles.chatSectionTitle} numberOfLines={1}>Conversations</Text>
+                        <Text style={styles.chatSectionSubtitle} numberOfLines={1}>Start talking with your matches.</Text>
                       </View>
-                      {chats.length > 0 && (
+                      <View style={styles.chatHeaderActionsRow}>
                         <TouchableOpacity
-                          style={styles.deleteAllChatsBtn}
-                          onPress={handleClearAllConversations}
+                          style={styles.chatHeaderIconButton}
+                          onPress={() => {
+                            setIsConversationSearchActive(true);
+                            setConversationSearchQuery('');
+                          }}
                           activeOpacity={0.7}
                         >
-                          <Text style={styles.deleteAllChatsBtnText}>Delete All</Text>
+                          <Ionicons name="search-outline" size={20} color="#AEBAC1" />
                         </TouchableOpacity>
-                      )}
-                      <TouchableOpacity
-                        style={[styles.chatThreeDotsButton, { marginLeft: 8 }]}
-                        onPress={() => setShowConversationsMenuModal(true)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="ellipsis-vertical" size={20} color="#AEBAC1" />
-                      </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.chatThreeDotsButton, { marginLeft: 8 }]}
+                          onPress={() => setShowConversationsMenuModal(true)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="ellipsis-vertical" size={20} color="#AEBAC1" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   )}
 
@@ -9016,17 +9269,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                           const lastMsg = chat.messages ? chat.messages[chat.messages.length - 1] : null;
 
+                          const cId = (chat.id || chat._id || chat.userId)?.toString();
+                          const isSelected = cId && selectedChatIds.includes(cId);
+
                           return (
                             <TouchableOpacity
-                              key={chat.id}
-                              style={[styles.chatRow, unreadCount > 0 && styles.chatRowUnread]}
-                              onPress={() => setActiveChat(chat)}
-                              activeOpacity={0.8}
+                              key={chat.id || chat._id}
+                              style={[
+                                styles.chatRow,
+                                unreadCount > 0 && styles.chatRowUnread,
+                                isSelected && styles.chatRowSelected
+                              ]}
+                              onPress={() => {
+                                if (selectedChatIds.length > 0) {
+                                  toggleSelectChat(chat);
+                                } else {
+                                  setActiveChat(chat);
+                                }
+                              }}
+                              onLongPress={() => toggleSelectChat(chat)}
+                              delayLongPress={200}
+                              activeOpacity={0.75}
                             >
                               <View style={styles.avatarWrapper}>
                                 <Image source={{ uri: getImageUrl(chat.image) }} style={styles.chatRowAvatar} />
-                                {(() => {
-                                  const cId = (chat.id || chat._id || chat.userId)?.toString();
+                                {isSelected ? (
+                                  <View style={styles.selectedChatCheckmarkOverlay}>
+                                    <Ionicons name="checkmark" size={13} color="#FFFFFF" />
+                                  </View>
+                                ) : (() => {
                                   const isOnline = cId && onlineUsersMap[cId] !== undefined ? !!onlineUsersMap[cId] : !!(chat.isOnline || chat.user?.isOnline);
                                   return isOnline ? <View style={styles.onlineDotOverlay} /> : null;
                                 })()}
@@ -9224,7 +9495,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           {activeTab === 'profile' && (
             <Profile
-              userProfile={userProfile}
+              userProfile={currentUser || userProfile}
               onUpdateProfile={onUpdateProfile}
               onLogout={onLogout}
               onRemoveProfile={onRemoveProfile}
@@ -9602,13 +9873,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         )}
 
         {/* Expanded Profile Details Modal for Likes Screen Candidate */}
-        {!!selectedLikesProfile && (
-          <Modal
-            visible={!!selectedLikesProfile}
-            animationType="slide"
-            onRequestClose={() => setSelectedLikesProfile(null)}
-          >
-            <SafeAreaView style={[styles.candidateDetailsWrapper, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 15 : 0) }]}>
+        {!!selectedLikesProfile && (() => {
+          const candidateId = (selectedLikesProfile.id || selectedLikesProfile._id || selectedLikesProfile.userId)?.toString();
+          const isBlockedByTarget = Boolean(
+            selectedLikesProfile.isBlockedByOther ||
+            (candidateId && Array.isArray(blockedByOtherList) && blockedByOtherList.some(id => id?.toString() === candidateId))
+          );
+          if (isBlockedByTarget) return null;
+
+          return (
+            <Modal
+              visible={!!selectedLikesProfile}
+              animationType="slide"
+              onRequestClose={() => setSelectedLikesProfile(null)}
+            >
+              <SafeAreaView style={[styles.candidateDetailsWrapper, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 15 : 0) }]}>
               <View style={styles.cardExpandedHeader}>
                 <TouchableOpacity
                   style={styles.cardDetailMinimizeHeaderBtn}
@@ -9947,7 +10226,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               </ScrollView>
             </SafeAreaView>
           </Modal>
-        )}
+        );
+      })()}
 
         {/* WhatsApp-Style Message Reaction Details Modal */}
         {reactionDetailsModalMsg && (
@@ -10708,16 +10988,38 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   shadowRadius: 10,
                 }}
               >
-                <TouchableOpacity
-                  style={styles.waContextMenuItem}
-                  onPress={() => {
-                    setShowChatOptionsMenuModal(false);
-                    handleViewPartnerProfile();
-                  }}
-                >
-                  <Ionicons name="person-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
-                  <Text style={styles.waContextMenuText}>View profile</Text>
-                </TouchableOpacity>
+                {(() => {
+                  const partnerId = (activeChat?.id || activeChat?._id || activeChat?.userId || activeChat?.senderId || activeChat?.sender)?.toString();
+                  const isBlockedByOther = Boolean(
+                    activeChat?.isBlockedByOther ||
+                    activeChat?.name === 'Matched User' ||
+                    (partnerId && Array.isArray(blockedByOtherList) && blockedByOtherList.some((id) => id?.toString() === partnerId)) ||
+                    (partnerId && Array.isArray(chats) && chats.some((c) => (c.id || c._id || c.userId)?.toString() === partnerId && c.isBlockedByOther)) ||
+                    (partnerId && Array.isArray(matches) && matches.some((m) => (m.id || m._id || m.userId)?.toString() === partnerId && m.isBlockedByOther))
+                  );
+
+                  return (
+                    <TouchableOpacity
+                      style={[styles.waContextMenuItem, isBlockedByOther && { opacity: 0.4 }]}
+                      disabled={isBlockedByOther}
+                      onPress={() => {
+                        setShowChatOptionsMenuModal(false);
+                        if (isBlockedByOther) {
+                          if (Platform.OS === 'android') {
+                            ToastAndroid.show('This profile is unavailable.', ToastAndroid.SHORT);
+                          } else {
+                            Alert.alert('Unavailable', 'This profile is currently unavailable.');
+                          }
+                          return;
+                        }
+                        handleViewPartnerProfile();
+                      }}
+                    >
+                      <Ionicons name="person-outline" size={19} color={isBlockedByOther ? '#556066' : '#AEBAC1'} style={{ marginRight: 14 }} />
+                      <Text style={[styles.waContextMenuText, isBlockedByOther && { color: '#687782' }]}>View profile</Text>
+                    </TouchableOpacity>
+                  );
+                })()}
 
                 <TouchableOpacity
                   style={styles.waContextMenuItem}
@@ -10956,7 +11258,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               <TouchableOpacity
                 activeOpacity={1}
                 style={{
-                  width: 180,
+                  width: 195,
                   backgroundColor: '#232D36',
                   borderRadius: 14,
                   paddingVertical: 6,
@@ -10991,6 +11293,34 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   <Ionicons name="star-outline" size={19} color="#FFD700" style={{ marginRight: 14 }} />
                   <Text style={styles.waContextMenuText}>Starred</Text>
                 </TouchableOpacity>
+
+                {chats.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.waContextMenuItem}
+                    onPress={() => {
+                      setShowConversationsMenuModal(false);
+                      // Start selection mode with the first chat
+                      const firstId = (chats[0]?.id || chats[0]?._id || chats[0]?.userId)?.toString();
+                      if (firstId) setSelectedChatIds([firstId]);
+                    }}
+                  >
+                    <Ionicons name="checkbox-outline" size={19} color="#00A884" style={{ marginRight: 14 }} />
+                    <Text style={styles.waContextMenuText}>Select chats</Text>
+                  </TouchableOpacity>
+                )}
+
+                {chats.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.waContextMenuItem, { borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', marginTop: 2, paddingTop: 10 }]}
+                    onPress={() => {
+                      setShowConversationsMenuModal(false);
+                      handleClearAllConversations();
+                    }}
+                  >
+                    <Ionicons name="trash-outline" size={19} color="#FF4D4D" style={{ marginRight: 14 }} />
+                    <Text style={[styles.waContextMenuText, { color: '#FF4D4D' }]}>Delete all chats</Text>
+                  </TouchableOpacity>
+                )}
               </TouchableOpacity>
             </TouchableOpacity>
           </Modal>
@@ -14986,6 +15316,101 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 15,
+  },
+  chatSelectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1F2C34',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 168, 132, 0.35)',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+  },
+  chatSelectionLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chatSelectionCloseBtn: {
+    padding: 4,
+    marginRight: 14,
+  },
+  chatSelectionCountText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  chatSelectionRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chatSelectionActionBtn: {
+    padding: 6,
+    borderRadius: 8,
+  },
+  chatHeaderIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chatHeaderTitleWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    marginLeft: 6,
+  },
+  chatSectionTitle: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+    lineHeight: 25,
+    marginBottom: 2,
+  },
+  chatSectionSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.7)',
+    lineHeight: 16,
+    marginBottom: 0,
+  },
+  chatHeaderActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  chatRowSelected: {
+    backgroundColor: 'rgba(0, 168, 132, 0.16)',
+    borderRadius: 12,
+    marginHorizontal: -6,
+    paddingHorizontal: 6,
+  },
+  selectedChatCheckmarkOverlay: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: '#00A884',
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#0F1115',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
   },
   deleteAllChatsBtn: {
     paddingVertical: 6,

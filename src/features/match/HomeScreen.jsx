@@ -3044,19 +3044,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 /* Chat List view */
                 <View style={styles.chatListWrapper}>
                   <View style={styles.chatListHeaderRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.sectionTitle}>Conversations</Text>
-                      <Text style={styles.sectionSubtitle}>Start talking with your matches.</Text>
+                    <View style={styles.chatHeaderTitleWrapper}>
+                      <Text style={styles.chatSectionTitle} numberOfLines={1}>Conversations</Text>
+                      <Text style={styles.chatSectionSubtitle} numberOfLines={1}>Start talking with your matches.</Text>
                     </View>
-                    {chats.length > 0 && (
-                      <TouchableOpacity
-                        style={styles.deleteAllChatsBtn}
-                        onPress={handleClearAllConversations}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.deleteAllChatsBtnText}>Delete All</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                   {chats.length > 0 ? (
                     <ScrollView style={styles.chatsList} showsVerticalScrollIndicator={false}>
@@ -6149,6 +6140,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 15,
+  },
+  chatHeaderTitleWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  chatSectionTitle: {
+    fontSize: 21,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+    lineHeight: 25,
+    marginBottom: 2,
+  },
+  chatSectionSubtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.7)',
+    lineHeight: 16,
+    marginBottom: 0,
   },
   deleteAllChatsBtn: {
     paddingVertical: 6,

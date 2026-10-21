@@ -597,14 +597,20 @@ export const apiClient = {
     });
   },
   getUserById: async (userId) => {
-    if (!userId) return { message: 'No userId provided', user: null };
+    if (!userId) return { message: 'No userId provided', user: null, isBlocked: false };
     try {
       return await request(`/api/profile/user/${userId}`, {
         method: 'GET',
       });
     } catch (err) {
-      console.log('[apiClient] getUserById gracefully handled error:', err?.message || err);
-      return { message: err?.message || 'Error', user: null };
+      console.log('[apiClient] getUserById gracefully handled error:', err?.message || err?.data?.message || err);
+      const isBlocked = err?.status === 403 || (err?.data?.message && err.data.message.toLowerCase().includes('blocked'));
+      return {
+        message: err?.data?.message || err?.message || 'Error',
+        user: null,
+        status: err?.status,
+        isBlocked: isBlocked,
+      };
     }
   },
   getQuestionnaires: async () => {

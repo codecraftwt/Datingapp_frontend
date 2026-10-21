@@ -16,6 +16,7 @@ import {
   StatusBar,
   Platform,
   KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -561,9 +562,27 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
           )}
         </View>
 
-        {/* Filter Modal Toggle Button */}
-        <TouchableOpacity style={styles.filterToggleBtn} onPress={() => handleOpenAdvancedFilter(() => setShowFilterModal(true))}>
-          <Ionicons name="options-outline" size={20} color="#FE3C72" />
+        {/* Search Action Button */}
+        <TouchableOpacity
+          style={[
+            styles.searchActionBtn,
+            searchKeyword.trim().length > 0 && styles.searchActionBtnActive,
+          ]}
+          onPress={() => {
+            Keyboard.dismiss();
+            executeSearch(1, true);
+          }}
+          activeOpacity={0.75}
+        >
+          {isLoading ? (
+            <ActivityIndicator size="small" color={searchKeyword.trim().length > 0 ? '#FFFFFF' : '#FE3C72'} />
+          ) : (
+            <Ionicons
+              name="search"
+              size={20}
+              color={searchKeyword.trim().length > 0 ? '#FFFFFF' : '#FE3C72'}
+            />
+          )}
         </TouchableOpacity>
       </View>
 
@@ -2077,6 +2096,22 @@ const styles = StyleSheet.create({
   },
   filterToggleIcon: {
     fontSize: 20,
+  },
+  searchActionBtn: {
+    backgroundColor: '#1C1C24',
+    width: 45,
+    height: 45,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchActionBtnActive: {
+    backgroundColor: '#FE3C72',
+    elevation: 4,
+    shadowColor: '#FE3C72',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
   },
 
   // Profession Quick Filter Bar Styles

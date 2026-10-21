@@ -30,6 +30,8 @@ import { CustomButton } from '../components/CustomButton';
 import { registerFcmToken } from '../services/notificationService';
 import { SubscriptionModal } from '../components/SubscriptionModal';
 import Video from 'react-native-video';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSelector } from 'react-redux';
 
 const { width } = Dimensions.get('window');
 
@@ -165,14 +167,26 @@ const PasswordModalField = React.memo(({
 
 export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile, onGoBack, onBack }) => {
   const insets = useSafeAreaInsets();
-  const [profile, setProfile] = useState(userProfile || null);
+  const reduxUser = useSelector((state) => state.auth?.user);
+
+  // Initialize activePlan immediately with already known tier (from userProfile, Redux, or null)
+  const knownInitialTier = (
+    userProfile?.subscriptionTier ||
+    reduxUser?.subscriptionTier ||
+    userProfile?.activePlan ||
+    reduxUser?.activePlan ||
+    null
+  );
+
+  const [profile, setProfile] = useState(userProfile || reduxUser || null);
   const [loading, setLoading] = useState(false);
   const [isQuestionnaireModalOpen, setIsQuestionnaireModalOpen] = useState(false);
   const [questionnaireModalStep, setQuestionnaireModalStep] = useState(6);
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
   const [activeHiddenStoryIndex, setActiveHiddenStoryIndex] = useState(null);
   const [fetchedHiddenMediaList, setFetchedHiddenMediaList] = useState([]);
-  const [activePlan, setActivePlan] = useState('free');
+  const [activePlan, setActivePlan] = useState(knownInitialTier);
+  const [isPlanLoading, setIsPlanLoading] = useState(!knownInitialTier);
 
   // Contact Us & Ticket History Modal States
   const [showContactModal, setShowContactModal] = useState(false);
@@ -224,9 +238,9 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
         const msg = res?.message || 'Your report has been submitted! Our support team will review it shortly.';
         if (Platform.OS === 'android') {
-          try { ToastAndroid.show(msg, ToastAndroid.LONG); } catch (e) {}
+          try { ToastAndroid.show(msg, ToastAndroid.LONG); } catch (e) { }
         }
-        Alert.alert('Report Submitted 🎉', msg);
+        Alert.alert('Report Submitted ', msg);
         setContactModalTab('history');
         fetchMySupportReports();
       } else {
@@ -236,7 +250,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       console.log('Contact Us submission notice:', err);
       setContactSubject('');
       setContactMessage('');
-      Alert.alert('Report Submitted 🎉', 'Your report has been submitted! Our support team will review it shortly.');
+      Alert.alert('Report Submitted ', 'Your report has been submitted! Our support team will review it shortly.');
       setContactModalTab('history');
       fetchMySupportReports();
     } finally {
@@ -303,6 +317,10 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [reportedUsersList, setReportedUsersList] = useState([]);
   const [reportedUsersLoading, setReportedUsersLoading] = useState(false);
 
+  // Selected Contact Us Ticket & Reported User for Full View Form Modals
+  const [selectedContactTicket, setSelectedContactTicket] = useState(null);
+  const [selectedReportedUserItem, setSelectedReportedUserItem] = useState(null);
+
   // Blocked Users Modal State
   const [isBlockedUsersModalOpen, setIsBlockedUsersModalOpen] = useState(false);
   const [blockedUsersList, setBlockedUsersList] = useState([]);
@@ -315,12 +333,47 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
 
   useEffect(() => {
-    apiClient.getMySubscription().then((res) => {
-      if (res && res.success && res.subscriptionTier) {
-        setActivePlan(res.subscriptionTier);
-        setProfile((prev) => (prev ? { ...prev, subscriptionTier: res.subscriptionTier } : prev));
-      }
-    }).catch(() => { });
+    let isMounted = true;
+    // Check AsyncStorage cache first if activePlan is still unknown
+    if (!activePlan) {
+      AsyncStorage.getItem('@cached_user_subscription_tier')
+        .then((cached) => {
+          if (isMounted && cached && !activePlan) {
+            setActivePlan(cached);
+            setIsPlanLoading(false);
+          }
+        })
+        .catch(() => { });
+    }
+
+    // Always fetch latest authoritative subscription from backend
+    apiClient.getMySubscription()
+      .then((res) => {
+        if (!isMounted) return;
+        if (res && res.success) {
+          const tier = res.subscriptionTier || 'Free';
+          setActivePlan(tier);
+          setProfile((prev) => (prev ? { ...prev, subscriptionTier: tier, subscriptionStatus: res.subscriptionStatus } : prev));
+          AsyncStorage.setItem('@cached_user_subscription_tier', tier).catch(() => { });
+          if (typeof onUpdateProfile === 'function') {
+            onUpdateProfile({
+              subscriptionTier: tier,
+              subscriptionStatus: res.subscriptionStatus || 'active',
+              subscriptionPermissions: res.permissions,
+            });
+          }
+        }
+      })
+      .catch((err) => {
+        console.log('Error fetching subscription in Profile:', err);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsPlanLoading(false);
+        }
+      });
+
+    return () => { isMounted = false; };
   }, []);
 
   useEffect(() => {
@@ -470,9 +523,18 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       // Also sync real-time active subscription status from server
       try {
         const subRes = await apiClient.getMySubscription();
-        if (subRes && subRes.success && subRes.subscriptionTier) {
-          setActivePlan(subRes.subscriptionTier);
-          setProfile((prev) => (prev ? { ...prev, subscriptionTier: subRes.subscriptionTier } : prev));
+        if (subRes && subRes.success) {
+          const tier = subRes.subscriptionTier || 'Free';
+          setActivePlan(tier);
+          setProfile((prev) => (prev ? { ...prev, subscriptionTier: tier, subscriptionStatus: subRes.subscriptionStatus } : prev));
+          AsyncStorage.setItem('@cached_user_subscription_tier', tier).catch(() => { });
+          if (typeof onUpdateProfile === 'function') {
+            onUpdateProfile({
+              subscriptionTier: tier,
+              subscriptionStatus: subRes.subscriptionStatus || 'active',
+              subscriptionPermissions: subRes.permissions,
+            });
+          }
         }
       } catch (subErr) { }
     } catch (err) {
@@ -501,8 +563,19 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         ...userProfile,
         ...(prev || {}),
       }));
+      if (userProfile.subscriptionTier) {
+        setActivePlan(userProfile.subscriptionTier);
+        setIsPlanLoading(false);
+      }
     }
   }, [userProfile]);
+
+  useEffect(() => {
+    if (reduxUser?.subscriptionTier) {
+      setActivePlan(reduxUser.subscriptionTier);
+      setIsPlanLoading(false);
+    }
+  }, [reduxUser?.subscriptionTier]);
 
   const handleFinishEditQuestionnaire = async (updatedData) => {
     setProfile(updatedData);
@@ -1188,27 +1261,49 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              backgroundColor: activePlan?.toLowerCase() === 'gold' ? 'rgba(255, 215, 0, 0.18)' : activePlan?.toLowerCase() === 'premium' ? 'rgba(254, 60, 114, 0.18)' : 'rgba(255, 255, 255, 0.1)',
+              backgroundColor: isPlanLoading && !activePlan
+                ? 'rgba(255, 255, 255, 0.08)'
+                : activePlan?.toLowerCase() === 'gold'
+                  ? 'rgba(255, 215, 0, 0.18)'
+                  : activePlan?.toLowerCase() === 'premium'
+                    ? 'rgba(254, 60, 114, 0.18)'
+                    : 'rgba(255, 255, 255, 0.1)',
               paddingHorizontal: 10,
               paddingVertical: 4,
               borderRadius: 12,
               borderWidth: 1,
-              borderColor: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : 'rgba(255, 255, 255, 0.2)',
+              borderColor: isPlanLoading && !activePlan
+                ? 'rgba(255, 255, 255, 0.15)'
+                : activePlan?.toLowerCase() === 'gold'
+                  ? '#FFD700'
+                  : activePlan?.toLowerCase() === 'premium'
+                    ? '#FE3C72'
+                    : 'rgba(255, 255, 255, 0.2)',
             }}
             onPress={() => setIsSubscriptionModalOpen(true)}
             activeOpacity={0.8}
           >
-
-            <Text style={{
-              color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#FFFFFF',
-              fontSize: 12,
-              fontWeight: '800',
-              letterSpacing: 0.5,
-              marginRight: 4,
-            }}>
-              {activePlan && activePlan.toLowerCase() !== 'free' ? `${activePlan.toUpperCase()} MEMBER` : 'FREE PLAN'}
-            </Text>
-            <Ionicons name="chevron-forward" size={12} color="rgba(255, 255, 255, 0.5)" style={{ marginLeft: 3 }} />
+            {isPlanLoading && !activePlan ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 2 }}>
+                <ActivityIndicator size="small" color="#FE3C72" style={{ transform: [{ scale: 0.65 }], marginRight: 4 }} />
+                <Text style={{ color: 'rgba(255, 255, 255, 0.65)', fontSize: 11, fontWeight: '700' }}>
+                  Loading...
+                </Text>
+              </View>
+            ) : (
+              <>
+                <Text style={{
+                  color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#FFFFFF',
+                  fontSize: 12,
+                  fontWeight: '800',
+                  letterSpacing: 0.5,
+                  marginRight: 4,
+                }}>
+                  {activePlan && activePlan.toLowerCase() !== 'free' ? `${activePlan.toUpperCase()} MEMBER` : 'FREE PLAN'}
+                </Text>
+                <Ionicons name="chevron-forward" size={12} color="rgba(255, 255, 255, 0.5)" style={{ marginLeft: 3 }} />
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -1436,19 +1531,31 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           <View style={{ flex: 1, flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center' }}>
             <Text style={styles.actionText}>Subscriptions & Membership</Text>
             <View style={{
-              backgroundColor: activePlan?.toLowerCase() === 'gold' ? 'rgba(255, 215, 0, 0.2)' : activePlan?.toLowerCase() === 'premium' ? 'rgba(254, 60, 114, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+              backgroundColor: isPlanLoading && !activePlan
+                ? 'rgba(255, 255, 255, 0.08)'
+                : activePlan?.toLowerCase() === 'gold'
+                  ? 'rgba(255, 215, 0, 0.2)'
+                  : activePlan?.toLowerCase() === 'premium'
+                    ? 'rgba(254, 60, 114, 0.2)'
+                    : 'rgba(255, 255, 255, 0.1)',
               paddingHorizontal: 8,
               paddingVertical: 2,
               borderRadius: 6,
               marginTop: 4,
             }}>
-              <Text style={{
-                color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#A0A0B0',
-                fontSize: 11,
-                fontWeight: '800',
-              }}>
-                {activePlan && activePlan.toLowerCase() !== 'free' ? `${activePlan.toUpperCase()}` : 'Free'}
-              </Text>
+              {isPlanLoading && !activePlan ? (
+                <Text style={{ color: '#A0A0B0', fontSize: 11, fontWeight: '700' }}>
+                  Loading...
+                </Text>
+              ) : (
+                <Text style={{
+                  color: activePlan?.toLowerCase() === 'gold' ? '#FFD700' : activePlan?.toLowerCase() === 'premium' ? '#FE3C72' : '#A0A0B0',
+                  fontSize: 11,
+                  fontWeight: '800',
+                }}>
+                  {activePlan && activePlan.toLowerCase() !== 'free' ? `${activePlan.toUpperCase()}` : 'Free'}
+                </Text>
+              )}
             </View>
           </View>
 
@@ -1852,12 +1959,12 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
                         const dateStr = report.createdAt
                           ? new Date(report.createdAt).toLocaleDateString(undefined, {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
                           : 'Recent';
 
                         return (
@@ -1896,6 +2003,19 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                                 </Text>
                               </View>
                             )}
+
+                            {/* View Form Details Button */}
+                            <TouchableOpacity
+                              style={styles.ticketViewDetailsBtn}
+                              onPress={() => setSelectedContactTicket(report)}
+                              activeOpacity={0.8}
+                            >
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <Ionicons name="document-text-outline" size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                                <Text style={styles.ticketViewDetailsBtnText}>View Form Details</Text>
+                              </View>
+                              <Ionicons name="chevron-forward" size={14} color="#38BDF8" />
+                            </TouchableOpacity>
                           </View>
                         );
                       })}
@@ -2000,27 +2120,27 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                 secureTextEntry={!showNewPassword}
                 onToggleSecure={() => setShowNewPassword(!showNewPassword)}
               />
-                {/* Length requirement indicator */}
-                {newPassword.length > 0 && (
-                  <View style={[styles.fieldHintRow, { marginTop: -6, marginBottom: 12 }]}>
-                    <Ionicons
-                      name={newPassword.length >= 8 ? 'checkmark-circle' : 'alert-circle-outline'}
-                      size={13}
-                      color={newPassword.length >= 8 ? '#00E676' : '#FFB74D'}
-                      style={{ marginRight: 5 }}
-                    />
-                    <Text
-                      style={[
-                        styles.fieldHintText,
-                        { color: newPassword.length >= 8 ? '#00E676' : '#FFB74D' },
-                      ]}
-                    >
-                      {newPassword.length >= 8
-                        ? 'Password meets length requirement (8+ chars)'
-                        : `Must be at least 8 characters (${newPassword.length}/8)`}
-                    </Text>
-                  </View>
-                )}
+              {/* Length requirement indicator */}
+              {newPassword.length > 0 && (
+                <View style={[styles.fieldHintRow, { marginTop: -6, marginBottom: 12 }]}>
+                  <Ionicons
+                    name={newPassword.length >= 8 ? 'checkmark-circle' : 'alert-circle-outline'}
+                    size={13}
+                    color={newPassword.length >= 8 ? '#00E676' : '#FFB74D'}
+                    style={{ marginRight: 5 }}
+                  />
+                  <Text
+                    style={[
+                      styles.fieldHintText,
+                      { color: newPassword.length >= 8 ? '#00E676' : '#FFB74D' },
+                    ]}
+                  >
+                    {newPassword.length >= 8
+                      ? 'Password meets length requirement (8+ chars)'
+                      : `Must be at least 8 characters (${newPassword.length}/8)`}
+                  </Text>
+                </View>
+              )}
 
               {/* Confirm New Password */}
               <PasswordModalField
@@ -2179,6 +2299,19 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                       <Text style={styles.reportedDateText}>
                         Reported on: {new Date(rep.createdAt).toLocaleDateString()}
                       </Text>
+
+                      {/* View Report Form Details Button */}
+                      <TouchableOpacity
+                        style={styles.reportedViewDetailsBtn}
+                        onPress={() => setSelectedReportedUserItem(rep)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="document-text-outline" size={13} color="#FF4458" style={{ marginRight: 6 }} />
+                          <Text style={styles.reportedViewDetailsBtnText}>View Report Form</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={14} color="#FF4458" />
+                      </TouchableOpacity>
                     </View>
                   );
                 })}
@@ -2191,6 +2324,330 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             >
               <Text style={styles.reportedCloseBtnText}>CLOSE</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Contact Us Form Filled Details Modal */}
+      <Modal
+        visible={!!selectedContactTicket}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setSelectedContactTicket(null)}
+      >
+        <View style={styles.formModalBackdrop}>
+          <View style={[styles.formModalCard, { maxHeight: '88%' }]}>
+            {/* Header */}
+            <View style={styles.formModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <View style={[styles.headerIconBadge, { backgroundColor: 'rgba(56, 189, 248, 0.14)', borderColor: 'rgba(56, 189, 248, 0.38)' }]}>
+                  <Ionicons name="document-text-outline" size={22} color="#38BDF8" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.formModalTitle}>Contact Us Form Details</Text>
+                  <Text style={styles.formModalSubtitle}>
+                    {selectedContactTicket?._id ? `Ticket #${selectedContactTicket._id.substring(selectedContactTicket._id.length - 8)}` : 'Submitted Help Request'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedContactTicket(null)}
+                style={styles.formCloseBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedContactTicket && (() => {
+              const rawStatus = (selectedContactTicket.status || 'pending').toLowerCase();
+              let badgeBg = '#FF9800';
+              let badgeColor = '#000000';
+              let badgeLabel = 'PENDING ⏳';
+
+              if (rawStatus === 'in-progress' || rawStatus === 'in_progress') {
+                badgeBg = '#0284C7';
+                badgeColor = '#FFFFFF';
+                badgeLabel = 'IN PROGRESS ⚙️';
+              } else if (rawStatus === 'resolved') {
+                badgeBg = '#00E676';
+                badgeColor = '#000000';
+                badgeLabel = 'RESOLVED ✅';
+              } else if (rawStatus === 'dismissed' || rawStatus === 'closed') {
+                badgeBg = '#64748B';
+                badgeColor = '#FFFFFF';
+                badgeLabel = 'CLOSED 📁';
+              }
+
+              const dateStr = selectedContactTicket.createdAt
+                ? new Date(selectedContactTicket.createdAt).toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+                : 'Recent';
+
+              return (
+                <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1, width: '100%' }}>
+                  {/* Status & Date Banner */}
+                  <View style={styles.detailStatusBanner}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.detailStatusSubLabel}>TICKET STATUS</Text>
+                      <View style={[styles.ticketStatusBadge, { backgroundColor: badgeBg, alignSelf: 'flex-start', marginTop: 4 }]}>
+                        <Text style={[styles.ticketStatusBadgeText, { color: badgeColor }]}>
+                          {badgeLabel}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.detailStatusSubLabel}>SUBMITTED ON</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                        <Ionicons name="calendar-outline" size={12} color="#8E8E9F" style={{ marginRight: 4 }} />
+                        <Text style={styles.detailDateText}>{dateStr}</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <Text style={styles.detailSectionTitle}>CONTENT SUBMITTED IN FORM</Text>
+
+                  {/* Name Field */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="person-outline" size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={styles.detailFieldLabel}>NAME</Text>
+                    </View>
+                    <Text style={styles.detailFieldValue}>
+                      {selectedContactTicket.name || 'Not provided'}
+                    </Text>
+                  </View>
+
+                  {/* Email Field */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="mail-outline" size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={styles.detailFieldLabel}>EMAIL / CONTACT INFO</Text>
+                    </View>
+                    <Text style={styles.detailFieldValue}>
+                      {selectedContactTicket.email || 'Not provided'}
+                    </Text>
+                  </View>
+
+                  {/* Phone Field */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="call-outline" size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={styles.detailFieldLabel}>PHONE NUMBER</Text>
+                    </View>
+                    <Text style={styles.detailFieldValue}>
+                      {selectedContactTicket.phone || 'Not provided'}
+                    </Text>
+                  </View>
+
+                  {/* Subject Field */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="pricetag-outline" size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={styles.detailFieldLabel}>SUBJECT / TOPIC</Text>
+                    </View>
+                    <Text style={[styles.detailFieldValue, { fontWeight: '700', color: '#FFFFFF' }]}>
+                      {selectedContactTicket.subject || 'General Inquiry / App Problem'}
+                    </Text>
+                  </View>
+
+                  {/* Message Field */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="chatbox-ellipses-outline" size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={styles.detailFieldLabel}>PROBLEM DESCRIPTION</Text>
+                    </View>
+                    <Text style={styles.detailMessageValue}>
+                      {selectedContactTicket.message || 'No description content.'}
+                    </Text>
+                  </View>
+
+                  {/* Admin Notes / Response */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="shield-checkmark" size={13} color="#00E676" style={{ marginRight: 6 }} />
+                      <Text style={[styles.detailFieldLabel, { color: '#00E676' }]}>ADMIN SUPPORT RESPONSE</Text>
+                    </View>
+                    {selectedContactTicket.adminNotes ? (
+                      <Text style={styles.detailAdminResponseText}>
+                        {selectedContactTicket.adminNotes}
+                      </Text>
+                    ) : (
+                      <Text style={styles.detailNoResponseText}>
+                        Your ticket is currently under review. Our admin team will update status or add notes here once reviewed.
+                      </Text>
+                    )}
+                  </View>
+
+                  {/* Close button */}
+                  <TouchableOpacity
+                    onPress={() => setSelectedContactTicket(null)}
+                    style={[styles.historyCloseBtn, { marginTop: 14, marginBottom: 8 }]}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.modernCancelBtnText}>CLOSE</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reported User Form Filled Details Modal */}
+      <Modal
+        visible={!!selectedReportedUserItem}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setSelectedReportedUserItem(null)}
+      >
+        <View style={styles.formModalBackdrop}>
+          <View style={[styles.formModalCard, { maxHeight: '88%' }]}>
+            {/* Header */}
+            <View style={styles.formModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <View style={[styles.headerIconBadge, { backgroundColor: 'rgba(255, 68, 88, 0.14)', borderColor: 'rgba(255, 68, 88, 0.38)' }]}>
+                  <Ionicons name="flag-outline" size={22} color="#FF4458" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.formModalTitle}>Report Form Details</Text>
+                  <Text style={styles.formModalSubtitle}>
+                    {selectedReportedUserItem?._id ? `Report #${selectedReportedUserItem._id.substring(selectedReportedUserItem._id.length - 8)}` : 'Submitted Report'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedReportedUserItem(null)}
+                style={styles.formCloseBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedReportedUserItem && (() => {
+              const rep = selectedReportedUserItem;
+              const u = rep.reportedUser || {};
+              const avatarUrl = getImageUrl(u.profileImage);
+              const statusColor =
+                rep.status === 'resolved'
+                  ? '#4CAF50'
+                  : rep.status === 'reviewed'
+                    ? '#2196F3'
+                    : rep.status === 'dismissed'
+                      ? '#9E9E9E'
+                      : '#FF9800';
+
+              const dateStr = rep.createdAt
+                ? new Date(rep.createdAt).toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+                : 'Recent';
+
+              return (
+                <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1, width: '100%' }}>
+                  {/* Status & Date Banner */}
+                  <View style={styles.detailStatusBanner}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.detailStatusSubLabel}>INVESTIGATION STATUS</Text>
+                      <View style={[styles.statusBadge, { backgroundColor: statusColor, alignSelf: 'flex-start', marginTop: 4, paddingHorizontal: 10, paddingVertical: 4 }]}>
+                        <Text style={[styles.statusBadgeText, { fontSize: 11 }]}>
+                          {(rep.status || 'pending').toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.detailStatusSubLabel}>REPORTED ON</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                        <Ionicons name="calendar-outline" size={12} color="#8E8E9F" style={{ marginRight: 4 }} />
+                        <Text style={styles.detailDateText}>{dateStr}</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Reported User Profile Card */}
+                  <Text style={styles.detailSectionTitle}>REPORTED USER INFO</Text>
+                  <View style={styles.detailUserCard}>
+                    {avatarUrl ? (
+                      <Image source={{ uri: avatarUrl }} style={styles.reportedAvatar} />
+                    ) : (
+                      <View style={[styles.reportedAvatar, styles.reportedAvatarPlaceholder]}>
+                        <Text style={styles.reportedAvatarInitial}>
+                          {(u.name || 'U').charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.reportedUserName}>
+                        {u.name || u.firstName || 'User'}{u.age ? `, ${u.age}` : ''}
+                      </Text>
+                      <Text style={styles.reportedUserEmail}>
+                        {u.email || 'Reported Profile'}
+                      </Text>
+                      {u.gender ? (
+                        <Text style={{ color: '#8E8E9F', fontSize: 11, marginTop: 2, textTransform: 'capitalize' }}>
+                          Gender: {u.gender}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  {/* Content Filled In Form */}
+                  <Text style={styles.detailSectionTitle}>CONTENT SUBMITTED IN REPORT</Text>
+
+                  {/* Reason Field */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="warning-outline" size={13} color="#FF4458" style={{ marginRight: 6 }} />
+                      <Text style={[styles.detailFieldLabel, { color: '#FF4458' }]}>COMPLAINT REASON / CATEGORY</Text>
+                    </View>
+                    <Text style={[styles.detailFieldValue, { fontWeight: '700', color: '#FFFFFF' }]}>
+                      {rep.reason || 'Community Guidelines Violation'}
+                    </Text>
+                  </View>
+
+                  {/* Details Field */}
+                  <View style={styles.detailFieldCard}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="document-text-outline" size={13} color="#FF4458" style={{ marginRight: 6 }} />
+                      <Text style={styles.detailFieldLabel}>DETAILED DESCRIPTION PROVIDED</Text>
+                    </View>
+                    <Text style={styles.detailMessageValue}>
+                      {rep.details || 'No specific description provided by reporter.'}
+                    </Text>
+                  </View>
+
+                  {/* Safety note */}
+                  <View style={[styles.detailFieldCard, { backgroundColor: 'rgba(255, 68, 88, 0.06)', borderColor: 'rgba(255, 68, 88, 0.2)' }]}>
+                    <View style={styles.detailFieldLabelRow}>
+                      <Ionicons name="shield-checkmark-outline" size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={[styles.detailFieldLabel, { color: '#38BDF8' }]}>COMMUNITY SAFETY</Text>
+                    </View>
+                    <Text style={[styles.detailFieldValue, { fontSize: 12, color: '#A0A0B8', lineHeight: 17 }]}>
+                      Our moderation team reviews all reports strictly in accordance with community rules. The reported user is never notified of who filed the report.
+                    </Text>
+                  </View>
+
+                  {/* Close button */}
+                  <TouchableOpacity
+                    onPress={() => setSelectedReportedUserItem(null)}
+                    style={[styles.historyCloseBtn, { marginTop: 14, marginBottom: 8 }]}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.modernCancelBtnText}>CLOSE</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              );
+            })()}
           </View>
         </View>
       </Modal>
@@ -3473,6 +3930,122 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  ticketViewDetailsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.2)',
+  },
+  ticketViewDetailsBtnText: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  reportedViewDetailsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 68, 88, 0.08)',
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 88, 0.25)',
+  },
+  reportedViewDetailsBtnText: {
+    color: '#FF4458',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  detailStatusBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  detailStatusSubLabel: {
+    color: '#8E8E9F',
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  detailDateText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '600',
+  },
+  detailSectionTitle: {
+    color: '#9E9EB2',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+    marginTop: 6,
+    marginLeft: 2,
+  },
+  detailFieldCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.035)',
+    borderRadius: 12,
+    padding: 11,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
+  },
+  detailFieldLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  detailFieldLabel: {
+    color: '#8E8E9F',
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  detailFieldValue: {
+    color: '#E0E0EC',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  detailMessageValue: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  detailAdminResponseText: {
+    color: '#E6FFFA',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+  },
+  detailNoResponseText: {
+    color: '#8E8E9F',
+    fontSize: 12,
+    fontStyle: 'italic',
+    lineHeight: 17,
+  },
+  detailUserCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
 });
 
