@@ -75,7 +75,7 @@ export function SearchScreen({ currentUser, userProfile, subscriptionPermissions
 
     if (!allowed) {
       Alert.alert(
-        '🔒 Feature Not Included',
+        'Feature Not Included',
         'Advanced Search Filters are not included in your current subscription plan. Upgrade to a plan that includes Search to unlock!',
         [
           { text: 'Cancel', style: 'cancel' },
@@ -431,7 +431,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
       } else {
         setActionStatusMap((prev) => ({ ...prev, [targetId]: actionType === 'superlike' ? 'superliked' : 'liked' }));
         Alert.alert(
-          actionType === 'superlike' ? 'Super Liked! ⭐' : 'Profile Liked! ❤️',
+          actionType === 'superlike' ? 'Super Liked!' : 'Profile Liked!',
           `You liked ${targetProfile.firstName || targetProfile.name}!`
         );
       }
@@ -440,7 +440,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
       const errMsg = err?.response?.data?.message || err?.data?.message || err?.message || 'Your super likes limit have reached';
 
       Alert.alert(
-        '🔒 Limit Reached',
+        'Limit Reached',
         errMsg,
         [
           { text: 'Cancel', style: 'cancel' },
@@ -483,7 +483,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Report Profile 🚩',
+          text: 'Report Profile',
           style: 'destructive',
           onPress: async () => {
             try {
@@ -500,7 +500,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
           },
         },
         {
-          text: 'Block User 🚫',
+          text: 'Block User',
           style: 'destructive',
           onPress: async () => {
             const targetIdVal = (targetProfile._id || targetProfile.id)?.toString();
@@ -511,7 +511,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                 userId: targetIdVal,
               });
               setActionStatusMap((prev) => ({ ...prev, [targetIdVal]: 'passed' }));
-              Alert.alert('Blocked 🔒', `${targetProfile.firstName || targetProfile.name || 'User'} has been blocked.`);
+              Alert.alert('Blocked', `${targetProfile.firstName || targetProfile.name || 'User'} has been blocked.`);
               setSelectedProfileModal(null);
             } catch (err) {
               const errMsg = err?.data?.message || (err?.message && err.message !== 'Aborted' ? err.message : 'User blocked.');
@@ -582,10 +582,11 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name={!isSearchAllowed ? "lock-closed" : "briefcase-outline"} size={13} color={!isSearchAllowed ? "#FFD700" : selectedProfession && selectedProfession !== 'All' ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 4 }} />
               <Text style={[styles.quickFilterChipText, selectedProfession && selectedProfession !== 'All' && styles.quickFilterChipTextActive]} numberOfLines={1}>
-                {!isSearchAllowed ? 'Profession 🔒' : selectedProfession && selectedProfession !== 'All' ? selectedProfession : 'Profession'}
+                {selectedProfession && selectedProfession !== 'All' ? selectedProfession : 'Profession'}
               </Text>
+              {!isSearchAllowed && <Ionicons name="lock-closed" size={11} color="#FFD700" style={{ marginLeft: 3 }} />}
             </View>
-            <Text style={styles.quickFilterChevron}>▼</Text>
+            <Ionicons name="chevron-down" size={12} color={selectedProfession && selectedProfession !== 'All' ? '#FE3C72' : '#94A3B8'} style={{ marginLeft: 4 }} />
           </TouchableOpacity>
 
           {/* Age Range Quick Filter */}
@@ -600,7 +601,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                 Age: {ageMin}-{ageMax}
               </Text>
             </View>
-            <Text style={styles.quickFilterChevron}>▼</Text>
+            <Ionicons name="chevron-down" size={12} color={(ageMin !== 18 || ageMax !== 50) ? '#FE3C72' : '#94A3B8'} style={{ marginLeft: 4 }} />
           </TouchableOpacity>
 
           {/* Distance Radius Quick Filter */}
@@ -1011,8 +1012,8 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
         <SafeAreaView style={styles.modalSafeArea}>
           {/* Modal Header */}
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowFilterModal(false)}>
-              <Text style={styles.modalCloseBtn}>✕</Text>
+            <TouchableOpacity onPress={() => setShowFilterModal(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={24} color="#FFFFFF" />
             </TouchableOpacity>
             <Text style={styles.modalTitle}>Advanced Filters</Text>
             <TouchableOpacity onPress={handleResetFilters}>
@@ -1103,10 +1104,13 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.modalProfDropdownBtnText} numberOfLines={1}>
-                  {selectedProfession && selectedProfession !== 'All' ? `💼 ${selectedProfession}` : 'Select Profession / Job...'}
-                </Text>
-                <Text style={styles.modalProfDropdownChevron}>▼</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                  <Ionicons name="briefcase-outline" size={16} color={selectedProfession && selectedProfession !== 'All' ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 8 }} />
+                  <Text style={styles.modalProfDropdownBtnText} numberOfLines={1}>
+                    {selectedProfession && selectedProfession !== 'All' ? selectedProfession : 'Select Profession / Job...'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-down" size={14} color="#94A3B8" />
               </TouchableOpacity>
             </View>
 
@@ -1121,10 +1125,13 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.modalProfDropdownBtnText} numberOfLines={1}>
-                  {selectedLanguages.length > 0 ? `🗣️ ${selectedLanguages.join(', ')}` : 'Select Languages Spoken...'}
-                </Text>
-                <Text style={styles.modalProfDropdownChevron}>▼</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                  <Ionicons name="language-outline" size={16} color={selectedLanguages.length > 0 ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 8 }} />
+                  <Text style={styles.modalProfDropdownBtnText} numberOfLines={1}>
+                    {selectedLanguages.length > 0 ? selectedLanguages.join(', ') : 'Select Languages Spoken...'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-down" size={14} color="#94A3B8" />
               </TouchableOpacity>
             </View>
 
@@ -1133,16 +1140,17 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
               <Text style={styles.sectionHeading}>Sort Results By</Text>
               <View style={styles.chipsWrapContainer}>
                 {[
-                  { label: '🔥 Match %', value: 'matchPercentage' },
-                  { label: '📍 Distance', value: 'distance' },
-                  { label: '🎂 Age', value: 'age' },
-                  { label: '🆕 Newest', value: 'recent' },
+                  { label: 'Match %', icon: 'flame', value: 'matchPercentage' },
+                  { label: 'Distance', icon: 'location-outline', value: 'distance' },
+                  { label: 'Age', icon: 'calendar-outline', value: 'age' },
+                  { label: 'Newest', icon: 'sparkles', value: 'recent' },
                 ].map((s) => (
                   <TouchableOpacity
                     key={s.value}
                     onPress={() => setSortBy(s.value)}
-                    style={[styles.chip, sortBy === s.value && styles.chipActive]}
+                    style={[styles.chip, sortBy === s.value && styles.chipActive, { flexDirection: 'row', alignItems: 'center' }]}
                   >
+                    <Ionicons name={s.icon} size={14} color={sortBy === s.value ? '#FE3C72' : '#94A3B8'} style={{ marginRight: 5 }} />
                     <Text style={[styles.chipText, sortBy === s.value && styles.chipTextActive]}>
                       {s.label}
                     </Text>
@@ -1230,7 +1238,10 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
           {/* Modal Footer Buttons */}
           <View style={styles.modalFooterRow}>
             <TouchableOpacity style={styles.savePrefBtn} onPress={handleSavePreferences}>
-              <Text style={styles.savePrefBtnText}>💾 Save Default</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="bookmark-outline" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.savePrefBtnText}>Save Default</Text>
+              </View>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.applyBtn} onPress={handleApplyFilters}>
@@ -1254,14 +1265,17 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
           <View style={styles.profModalOverlay}>
             <View style={styles.profModalContent}>
               <View style={styles.profModalHeader}>
-                <Text style={styles.profModalTitle}>Select Profession</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="briefcase-outline" size={20} color="#FE3C72" style={{ marginRight: 8 }} />
+                  <Text style={styles.profModalTitle}>Select Profession</Text>
+                </View>
                 <TouchableOpacity onPress={() => setShowProfessionModal(false)} style={{ padding: 6 }}>
-                  <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' }}>✕</Text>
+                  <Ionicons name="close" size={22} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
 
               <View style={styles.profSearchBarWrapper}>
-                <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+                <Ionicons name="search" size={18} color="rgba(255,255,255,0.6)" style={{ marginRight: 8 }} />
                 <TextInput
                   style={styles.profSearchInput}
                   placeholder="Type to search profession..."
@@ -1274,7 +1288,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                 />
                 {professionSearchQuery.length > 0 && (
                   <TouchableOpacity onPress={() => setProfessionSearchQuery('')} style={{ padding: 4 }}>
-                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16 }}>✕</Text>
+                    <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.6)" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -1307,16 +1321,24 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                       }}
                       activeOpacity={0.7}
                     >
-                      <Text
-                        style={[
-                          styles.profListItemText,
-                          isSelected && styles.profListItemTextSelected,
-                        ]}
-                      >
-                        {item === 'All Professions' ? '🌐 All Professions' : item}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <Ionicons
+                          name={item === 'All Professions' ? "globe-outline" : "briefcase-outline"}
+                          size={16}
+                          color={isSelected ? "#FF4458" : "rgba(255,255,255,0.6)"}
+                          style={{ marginRight: 8 }}
+                        />
+                        <Text
+                          style={[
+                            styles.profListItemText,
+                            isSelected && styles.profListItemTextSelected,
+                          ]}
+                        >
+                          {item}
+                        </Text>
+                      </View>
                       {isSelected && (
-                        <Text style={{ color: '#FF4458', fontWeight: 'bold', fontSize: 16 }}>✓</Text>
+                        <Ionicons name="checkmark" size={18} color="#FF4458" />
                       )}
                     </TouchableOpacity>
                   );
@@ -1337,9 +1359,12 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
         <View style={styles.profModalOverlay}>
           <View style={styles.quickModalCard}>
             <View style={styles.profModalHeader}>
-              <Text style={styles.profModalTitle}>🎂 Select Age Range</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="calendar-outline" size={20} color="#FE3C72" style={{ marginRight: 8 }} />
+                <Text style={styles.profModalTitle}>Select Age Range</Text>
+              </View>
               <TouchableOpacity onPress={() => setShowAgeModal(false)} style={{ padding: 6 }}>
-                <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' }}>✕</Text>
+                <Ionicons name="close" size={22} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
 
@@ -1440,9 +1465,12 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
         <View style={styles.profModalOverlay}>
           <View style={styles.quickModalCard}>
             <View style={styles.profModalHeader}>
-              <Text style={styles.profModalTitle}>📍 Maximum Distance</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="location-outline" size={20} color="#FE3C72" style={{ marginRight: 8 }} />
+                <Text style={styles.profModalTitle}>Maximum Distance</Text>
+              </View>
               <TouchableOpacity onPress={() => setShowDistanceModal(false)} style={{ padding: 6 }}>
-                <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' }}>✕</Text>
+                <Ionicons name="close" size={22} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
 
@@ -1522,14 +1550,17 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
           <View style={styles.profModalOverlay}>
             <View style={styles.profModalContent}>
               <View style={styles.profModalHeader}>
-                <Text style={styles.profModalTitle}>🗣️ Select Languages</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="language-outline" size={20} color="#FE3C72" style={{ marginRight: 8 }} />
+                  <Text style={styles.profModalTitle}>Select Languages</Text>
+                </View>
                 <TouchableOpacity onPress={() => setShowLanguageModal(false)} style={{ padding: 6 }}>
-                  <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' }}>✕</Text>
+                  <Ionicons name="close" size={22} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
 
               <View style={styles.profSearchBarWrapper}>
-                <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+                <Ionicons name="search" size={18} color="rgba(255,255,255,0.6)" style={{ marginRight: 8 }} />
                 <TextInput
                   style={styles.profSearchInput}
                   placeholder="Search language..."
@@ -1541,7 +1572,7 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                 />
                 {languageSearchQuery.length > 0 && (
                   <TouchableOpacity onPress={() => setLanguageSearchQuery('')} style={{ padding: 4 }}>
-                    <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16 }}>✕</Text>
+                    <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.6)" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -1568,11 +1599,19 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                       }}
                       activeOpacity={0.7}
                     >
-                      <Text style={[styles.profListItemText, isSelected && styles.profListItemTextSelected]}>
-                        🗣️ {item}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <Ionicons
+                          name="chatbubble-ellipses-outline"
+                          size={16}
+                          color={isSelected ? "#FF4458" : "rgba(255,255,255,0.6)"}
+                          style={{ marginRight: 8 }}
+                        />
+                        <Text style={[styles.profListItemText, isSelected && styles.profListItemTextSelected]}>
+                          {item}
+                        </Text>
+                      </View>
                       <View style={[styles.langCheckbox, isSelected && styles.langCheckboxSelected]}>
-                        {isSelected && <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 12 }}>✓</Text>}
+                        {isSelected && <Ionicons name="checkmark" size={12} color="#FFF" />}
                       </View>
                     </TouchableOpacity>
                   );
@@ -1797,6 +1836,12 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                       <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.gender)}</Text>
                     </View>
                   ) : null}
+                  {(selectedProfileModal.orientation || selectedProfileModal.sexualOrientation) ? (
+                    <View style={styles.lifestyleItem}>
+                      <Ionicons name="heart-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.orientation || selectedProfileModal.sexualOrientation)}</Text>
+                    </View>
+                  ) : null}
                   {selectedProfileModal.drinkHabit ? (
                     <View style={styles.lifestyleItem}>
                       <Ionicons name="wine-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
@@ -1821,16 +1866,46 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                       <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.pets)}</Text>
                     </View>
                   ) : null}
-                  {selectedProfileModal.zodiac ? (
+                  {(selectedProfileModal.educationLevel || selectedProfileModal.education) ? (
                     <View style={styles.lifestyleItem}>
-                      <Ionicons name="moon-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.zodiac)}</Text>
+                      <Ionicons name="school-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.educationLevel || selectedProfileModal.education)}</Text>
                     </View>
                   ) : null}
-                  {selectedProfileModal.lookingFor ? (
+                  {selectedProfileModal.height ? (
+                    <View style={styles.lifestyleItem}>
+                      <Ionicons name="resize-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.height)}</Text>
+                    </View>
+                  ) : null}
+                  {selectedProfileModal.weight ? (
+                    <View style={styles.lifestyleItem}>
+                      <Ionicons name="scale-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.weight)}</Text>
+                    </View>
+                  ) : null}
+                  {(selectedProfileModal.company || selectedProfileModal.college) ? (
+                    <View style={styles.lifestyleItem}>
+                      <Ionicons name="business-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.company || selectedProfileModal.college)}</Text>
+                    </View>
+                  ) : null}
+                  {(selectedProfileModal.city || selectedProfileModal.hometown) ? (
+                    <View style={styles.lifestyleItem}>
+                      <Ionicons name="location-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.city || selectedProfileModal.hometown)}</Text>
+                    </View>
+                  ) : null}
+                  {(selectedProfileModal.zodiac || selectedProfileModal.starSign) ? (
+                    <View style={styles.lifestyleItem}>
+                      <Ionicons name="moon-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>{safeString(selectedProfileModal.zodiac || selectedProfileModal.starSign)}</Text>
+                    </View>
+                  ) : null}
+                  {(selectedProfileModal.lookingFor || selectedProfileModal.relationshipIntent) ? (
                     <View style={styles.lifestyleItemFull}>
-                      <Ionicons name="heart-circle-outline" size={18} color="#FE3C72" style={{ marginRight: 6 }} />
-                      <Text style={styles.lifestyleLabel}>Looking for: {safeString(selectedProfileModal.lookingFor)}</Text>
+                      <Ionicons name="compass-outline" size={18} color="#FE3C72" style={{ marginRight: 6 }} />
+                      <Text style={styles.lifestyleLabel}>Looking for: {safeString(selectedProfileModal.lookingFor || selectedProfileModal.relationshipIntent)}</Text>
                     </View>
                   ) : null}
                 </View>

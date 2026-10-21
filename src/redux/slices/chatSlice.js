@@ -290,7 +290,7 @@ const chatSlice = createSlice({
       state.allMessages = updateList(state.allMessages);
     },
     updateMessageStarred: (state, action) => {
-      const { messageId, tempId, isStarred } = action.payload;
+      const { messageId, tempId, isStarred, currentUserId, starredBy } = action.payload;
       const targetIdStr = messageId?.toString();
       const targetTempStr = tempId?.toString();
       const updateList = (list) => {
@@ -302,7 +302,24 @@ const chatSlice = createSlice({
             (targetIdStr && (mIdStr === targetIdStr || mTempStr === targetIdStr)) ||
             (targetTempStr && (mIdStr === targetTempStr || mTempStr === targetTempStr))
           ) {
-            return { ...msg, isStarred: !!isStarred };
+            let nextStarredBy = Array.isArray(starredBy)
+              ? [...starredBy]
+              : (Array.isArray(msg.starredBy) ? [...msg.starredBy] : []);
+            if (currentUserId && !Array.isArray(starredBy)) {
+              const cIdStr = currentUserId.toString();
+              if (isStarred) {
+                if (!nextStarredBy.some(id => (id?._id || id)?.toString() === cIdStr)) {
+                  nextStarredBy.push(cIdStr);
+                }
+              } else {
+                nextStarredBy = nextStarredBy.filter(id => (id?._id || id)?.toString() !== cIdStr);
+              }
+            }
+            return {
+              ...msg,
+              isStarred: !!isStarred,
+              starredBy: nextStarredBy,
+            };
           }
           return msg;
         });

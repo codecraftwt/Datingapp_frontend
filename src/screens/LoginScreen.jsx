@@ -17,6 +17,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch } from 'react-redux';
 import { setCredentials } from '../redux/slices/authSlice';
+import { clearChat } from '../redux/slices/chatSlice';
 import { apiClient, setAuthToken, setLastKnownUser } from '../api/apiClient';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
@@ -142,7 +143,7 @@ export const LoginScreen = ({ onNavigate }) => {
     } catch (err) {
       console.log('Contact Us submission notice:', err);
       setShowContactModal(false);
-      Alert.alert('Report Submitted 🎉', 'Your report has been submitted! Our support team will review it shortly.');
+      Alert.alert('Report Submitted ', 'Your report has been submitted! Our support team will review it shortly.');
     } finally {
       setContactSubmitting(false);
     }
@@ -181,6 +182,7 @@ export const LoginScreen = ({ onNavigate }) => {
 
       setAuthToken(token);
       setLastKnownUser(user);
+      dispatch(clearChat());
       dispatch(setCredentials({ user, token }));
 
       // Immediately trigger FCM Token registration after credentials set
@@ -251,24 +253,6 @@ export const LoginScreen = ({ onNavigate }) => {
     try {
       setLoading(true);
       setAlreadyLoggedInError(false);
-
-      // 1. Pre-check GET /api/profile/account-status for this user's email
-      try {
-        const statusRes = await apiClient.checkAccountStatus({ email: trimmedEmail });
-        if (statusRes && (statusRes.status === 'deactivated' || statusRes.isDeactivated || statusRes.isActive === false)) {
-          const reasonText = statusRes.reason || 'Account deactivated by admin moderation team';
-          Alert.alert(
-            'Account Deactivated 🚫',
-            `Your account has been deactivated by the admin.\n\nReason: ${reasonText}\n\.`,
-            [{ text: 'OK' }],
-            { cancelable: false }
-          );
-          setLoading(false);
-          return;
-        }
-      } catch (statusErr) {
-        console.log('[LoginScreen] Pre-check account-status notice:', statusErr);
-      }
 
       const res = await apiClient.login({
         email: trimmedEmail,

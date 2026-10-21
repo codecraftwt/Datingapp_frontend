@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { store } from './src/redux/store';
 import { logout, selectCurrentUser, setCredentials, updateUserSubscription } from './src/redux/slices/authSlice';
+import { clearChat } from './src/redux/slices/chatSlice';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { RegisterScreen } from './src/screens/RegisterScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
@@ -96,6 +97,7 @@ function MainApp() {
                 setAuthToken(null);
               } catch (e) {}
               dispatch(logout());
+              dispatch(clearChat());
               setUserProfile(null);
               setScreenStack(['LOGIN']);
               navigateTo('LOGIN');
@@ -389,6 +391,7 @@ function MainApp() {
     setManualLogoutInProgress(true);
     setAuthToken(null);
     dispatch(logout());
+    dispatch(clearChat());
     setUserProfile(null);
 
     // 1. Instantly navigate to LOGIN screen so transition is immediate without network delay

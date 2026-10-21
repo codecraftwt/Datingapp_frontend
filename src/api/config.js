@@ -48,6 +48,19 @@ export const BASE_URL = getBaseUrl();
 export const get15SecVideoUrl = (url) => {
   if (!url || typeof url !== 'string') return url;
   const lower = url.toLowerCase();
+
+  // Strictly do NOT transform voice notes, audio files, chat media, or sound streams into H264 video
+  if (
+    lower.includes('voice_') ||
+    lower.includes('dating_app_chat_media') ||
+    lower.includes('/api/chat/') ||
+    lower.includes('/chat/media/') ||
+    lower.includes('/uploads/') ||
+    /\.(mp3|m4a|wav|aac|ogg|opus)($|\?|#)/i.test(lower)
+  ) {
+    return url;
+  }
+
   if (lower.includes('cloudinary.com') && (lower.includes('/video/upload/') || lower.includes('/video/'))) {
     if (!url.includes('/so_0,eo_15/') && !url.includes('/eo_15/') && !url.includes('/du_15/')) {
       return url.replace(/\/video\/upload\/(?:[a-zA-Z0-9_,-]+\/)?/, '/video/upload/so_0,eo_15,q_auto,vc_h264/');
@@ -56,23 +69,91 @@ export const get15SecVideoUrl = (url) => {
   return url;
 };
 
-export const getImageUrl = (url) => {
-  if (!url) return '';
-  let resolvedUrl = url;
-  if (
-    typeof url === 'string' &&
-    !url.startsWith('http://') &&
-    !url.startsWith('https://') &&
-    !url.startsWith('file://') &&
-    !url.startsWith('content://') &&
-    !url.startsWith('data:')
-  ) {
-    const currentBase = getBaseUrl();
-    resolvedUrl = url.startsWith('/') ? `${currentBase}${url}` : `${currentBase}/${url}`;
+export const getAudioUrl = (url) => {
+  if (!url || typeof url !== 'string' || url.trim() === '') return '';
+  let resolvedUrl = url.trim();
+
+  // Strip any video transformations that may have been accidentally applied to an audio URL
+  if (resolvedUrl.includes('cloudinary.com') && resolvedUrl.includes('/video/upload/')) {
+    resolvedUrl = resolvedUrl.replace(
+      /\/video\/upload\/(?:so_0,eo_15,q_auto,vc_h264|eo_15,vc_h264|so_0,eo_15|eo_15|du_15|q_auto,vc_h264|vc_h264)\//,
+      '/video/upload/'
+    );
   }
 
-  // Ensure Cloudinary video URLs are strictly trimmed to 15 seconds (so_0,eo_15)
-  if (typeof resolvedUrl === 'string' && resolvedUrl.includes('cloudinary.com') && resolvedUrl.includes('/video/upload/')) {
+  const currentBase = getBaseUrl();
+
+  // Prepend currentBase if relative URL (e.g. /uploads/... or /api/chat/media/...)
+  if (
+    !resolvedUrl.startsWith('http://') &&
+    !resolvedUrl.startsWith('https://') &&
+    !resolvedUrl.startsWith('file://') &&
+    !resolvedUrl.startsWith('content://') &&
+    !resolvedUrl.startsWith('data:')
+  ) {
+    resolvedUrl = resolvedUrl.startsWith('/') ? `${currentBase}${resolvedUrl}` : `${currentBase}/${resolvedUrl}`;
+  }
+
+  // Rewrite localhost or internal host loopbacks to current active backend base URL
+  if (
+    resolvedUrl.includes('localhost:5000') ||
+    resolvedUrl.includes('127.0.0.1:5000') ||
+    resolvedUrl.includes('10.0.2.2:5000')
+  ) {
+    resolvedUrl = resolvedUrl.replace(/http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2):5000/, currentBase);
+  }
+
+  // Force HTTPS for Vercel URLs to prevent redirects and cleartext blocks
+  if (resolvedUrl.includes('vercel.app') && resolvedUrl.startsWith('http://')) {
+    resolvedUrl = resolvedUrl.replace('http://', 'https://');
+  }
+
+  return resolvedUrl;
+};
+
+export const getImageUrl = (url) => {
+  if (!url || typeof url !== 'string' || url.trim() === '') return '';
+  let resolvedUrl = url.trim();
+
+  const currentBase = getBaseUrl();
+
+  // Prepend currentBase if relative URL (e.g. /uploads/... or /api/chat/media/...)
+  if (
+    !resolvedUrl.startsWith('http://') &&
+    !resolvedUrl.startsWith('https://') &&
+    !resolvedUrl.startsWith('file://') &&
+    !resolvedUrl.startsWith('content://') &&
+    !resolvedUrl.startsWith('data:')
+  ) {
+    resolvedUrl = resolvedUrl.startsWith('/') ? `${currentBase}${resolvedUrl}` : `${currentBase}/${resolvedUrl}`;
+  }
+
+  // Rewrite localhost or internal host loopbacks to the current active backend base URL
+  // (Prevents connection refused on physical Android devices and emulators)
+  if (
+    resolvedUrl.includes('localhost:5000') ||
+    resolvedUrl.includes('127.0.0.1:5000') ||
+    resolvedUrl.includes('10.0.2.2:5000')
+  ) {
+    resolvedUrl = resolvedUrl.replace(/http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2):5000/, currentBase);
+  }
+
+  // Force HTTPS for Vercel URLs to prevent 308 redirects and Android cleartext policy blocks
+  if (resolvedUrl.includes('vercel.app') && resolvedUrl.startsWith('http://')) {
+    resolvedUrl = resolvedUrl.replace('http://', 'https://');
+  }
+
+  // Only apply 15s video trim if it's a Cloudinary video and definitely NOT an audio file or chat media
+  const lowerResolved = resolvedUrl.toLowerCase();
+  const isAudioOrChatMedia =
+    lowerResolved.includes('voice_') ||
+    lowerResolved.includes('dating_app_chat_media') ||
+    lowerResolved.includes('/api/chat/') ||
+    lowerResolved.includes('/chat/media/') ||
+    lowerResolved.includes('/uploads/') ||
+    /\.(mp3|m4a|wav|aac|ogg|opus)($|\?|#)/i.test(lowerResolved);
+
+  if (!isAudioOrChatMedia && lowerResolved.includes('cloudinary.com') && lowerResolved.includes('/video/upload/')) {
     resolvedUrl = get15SecVideoUrl(resolvedUrl);
   }
 

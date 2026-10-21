@@ -43,7 +43,7 @@ import { PreviewModal } from '../../components/PreviewModal';
 import Video from 'react-native-video';
 import { useDispatch, useSelector } from 'react-redux';
 import { apiClient } from '../../api/apiClient';
-import { BASE_URL, getBaseUrl, getImageUrl as formatConfigUrl, isVideoUrl, getVideoThumbnailUrl } from '../../api/config';
+import { BASE_URL, getBaseUrl, getImageUrl as formatConfigUrl, isVideoUrl, getVideoThumbnailUrl, getAudioUrl } from '../../api/config';
 import { selectCurrentUser } from '../redux/slices/authSlice';
 import {
   setOtherProfiles,
@@ -2603,7 +2603,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const playVoiceNote = async (msgId, rawMediaUrl) => {
     try {
-      const fullAudioUrl = getImageUrl(rawMediaUrl);
+      const fullAudioUrl = getAudioUrl(rawMediaUrl);
       if (!fullAudioUrl) {
         Alert.alert('Playback Error', 'Voice note audio URL is missing or invalid.');
         return;
@@ -2642,7 +2642,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       console.log('🔊 Playing voice note from URL:', fullAudioUrl);
-      await sound.startPlayer(fullAudioUrl);
+      try {
+        await sound.startPlayer(fullAudioUrl);
+      } catch (primaryPlayErr) {
+        console.warn('Initial playback failed, trying fallback URL resolution:', primaryPlayErr?.message || primaryPlayErr);
+        let fallbackUrl = fullAudioUrl;
+        if (fallbackUrl.startsWith('http://') && !fallbackUrl.includes('localhost') && !fallbackUrl.includes('10.0.2.') && !fallbackUrl.includes('192.168.')) {
+          fallbackUrl = fallbackUrl.replace('http://', 'https://');
+        }
+        await sound.startPlayer(fallbackUrl);
+      }
 
       let posMs = 0;
       playbackIntervalRef.current = setInterval(() => {
@@ -2656,7 +2665,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       console.error('Error playing voice note:', e);
       setPlayingMessageId(null);
       setPlaybackPosition(0);
-      Alert.alert('Playback Error', 'Unable to play voice note audio.');
+      Alert.alert(
+        'Playback Error',
+        'Unable to play voice note audio. The audio file is unreachable or still processing.'
+      );
     }
   };
 

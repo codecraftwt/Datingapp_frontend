@@ -59,6 +59,110 @@ const SUBSCRIPTION_PLANS = [
   },
 ];
 
+// Self-contained contact form input field with local focus state to prevent parent screen re-renders & cursor jitter
+const ContactModalField = React.memo(({
+  label,
+  icon,
+  placeholder,
+  value,
+  onChangeText,
+  keyboardType = 'default',
+  autoCapitalize = 'sentences',
+  multiline = false,
+  numberOfLines = 1,
+}) => {
+  const [isFocused, setIsFocused] = useState(false);
+  return (
+    <View style={styles.inputGroup}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <View
+        style={[
+          styles.modernInputWrapper,
+          multiline && styles.modernTextareaWrapper,
+          isFocused && styles.modernInputWrapperFocused,
+        ]}
+      >
+        <Ionicons
+          name={icon}
+          size={16}
+          color={isFocused ? '#FE3C72' : '#7E7E94'}
+          style={[styles.modernInputLeftIcon, multiline && { marginTop: 4 }]}
+        />
+        <TextInput
+          style={[styles.modernTextInput, multiline && styles.modernTextareaInput]}
+          placeholder={placeholder}
+          placeholderTextColor="rgba(255, 255, 255, 0.35)"
+          value={value}
+          onChangeText={onChangeText}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          keyboardType={keyboardType}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={false}
+          multiline={multiline}
+          numberOfLines={numberOfLines}
+        />
+      </View>
+    </View>
+  );
+});
+
+// Self-contained password form input field with local focus state
+const PasswordModalField = React.memo(({
+  label,
+  icon,
+  placeholder,
+  value,
+  onChangeText,
+  secureTextEntry,
+  onToggleSecure,
+}) => {
+  const [isFocused, setIsFocused] = useState(false);
+  return (
+    <View style={styles.inputGroup}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <View
+        style={[
+          styles.modernInputWrapper,
+          isFocused && styles.modernInputWrapperFocused,
+        ]}
+      >
+        <Ionicons
+          name={icon}
+          size={16}
+          color={isFocused ? '#FE3C72' : '#7E7E94'}
+          style={styles.modernInputLeftIcon}
+        />
+        <TextInput
+          style={styles.modernTextInput}
+          placeholder={placeholder}
+          placeholderTextColor="rgba(255, 255, 255, 0.35)"
+          secureTextEntry={secureTextEntry}
+          value={value}
+          onChangeText={onChangeText}
+          autoCapitalize="none"
+          autoCorrect={false}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+        />
+        {onToggleSecure && (
+          <TouchableOpacity
+            onPress={onToggleSecure}
+            style={styles.modernEyeBtn}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={secureTextEntry ? 'eye-outline' : 'eye-off-outline'}
+              size={18}
+              color="rgba(255, 255, 255, 0.55)"
+            />
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+});
+
 export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile, onGoBack, onBack }) => {
   const insets = useSafeAreaInsets();
   const [profile, setProfile] = useState(userProfile || null);
@@ -81,7 +185,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [contactSubmitting, setContactSubmitting] = useState(false);
   const [mySupportReports, setMySupportReports] = useState([]);
   const [mySupportLoading, setMySupportLoading] = useState(false);
-  const [contactFocusedField, setContactFocusedField] = useState(null);
 
   const fetchMySupportReports = async () => {
     try {
@@ -194,7 +297,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [passwordFocusedField, setPasswordFocusedField] = useState(null);
 
   // Reported Users Modal State
   const [isReportedUsersModalOpen, setIsReportedUsersModalOpen] = useState(false);
@@ -440,7 +542,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       setShowCurrentPassword(false);
       setShowNewPassword(false);
       setShowConfirmPassword(false);
-      setPasswordFocusedField(null);
     } catch (err) {
       console.log('Error changing password:', err);
       const msg = err.data?.message || err.message || 'Failed to change password. Please check your current password.';
@@ -1454,7 +1555,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             }
             setContactModalTab('submit');
             setShowContactModal(true);
-            fetchMySupportReports();
           }}
           activeOpacity={0.7}
         >
@@ -1514,10 +1614,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         visible={showContactModal}
         transparent
         animationType="fade"
-        statusBarTranslucent
         onRequestClose={() => {
           setShowContactModal(false);
-          setContactFocusedField(null);
         }}
       >
         <KeyboardAvoidingView
@@ -1528,6 +1626,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             contentContainerStyle={styles.formModalScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            bounces={false}
+            overScrollMode="never"
           >
             <View style={styles.formModalCard}>
               {/* Header */}
@@ -1544,7 +1644,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                 <TouchableOpacity
                   onPress={() => {
                     setShowContactModal(false);
-                    setContactFocusedField(null);
                   }}
                   style={styles.formCloseBtn}
                   disabled={contactSubmitting}
@@ -1616,153 +1715,60 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                   </Text>
 
                   {/* Name field */}
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>YOUR NAME (OPTIONAL)</Text>
-                    <View
-                      style={[
-                        styles.modernInputWrapper,
-                        contactFocusedField === 'name' && styles.modernInputWrapperFocused,
-                      ]}
-                    >
-                      <Ionicons
-                        name="person-outline"
-                        size={16}
-                        color={contactFocusedField === 'name' ? '#FE3C72' : '#7E7E94'}
-                        style={styles.modernInputLeftIcon}
-                      />
-                      <TextInput
-                        style={styles.modernTextInput}
-                        placeholder="Enter your name"
-                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                        value={contactName}
-                        onChangeText={setContactName}
-                        onFocus={() => setContactFocusedField('name')}
-                        onBlur={() => setContactFocusedField(null)}
-                      />
-                    </View>
-                  </View>
+                  <ContactModalField
+                    label="YOUR NAME (OPTIONAL)"
+                    icon="person-outline"
+                    placeholder="Enter your name"
+                    value={contactName}
+                    onChangeText={setContactName}
+                  />
 
                   {/* Email field */}
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>EMAIL / CONTACT INFO</Text>
-                    <View
-                      style={[
-                        styles.modernInputWrapper,
-                        contactFocusedField === 'email' && styles.modernInputWrapperFocused,
-                      ]}
-                    >
-                      <Ionicons
-                        name="mail-outline"
-                        size={16}
-                        color={contactFocusedField === 'email' ? '#FE3C72' : '#7E7E94'}
-                        style={styles.modernInputLeftIcon}
-                      />
-                      <TextInput
-                        style={styles.modernTextInput}
-                        placeholder="Enter your email"
-                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        value={contactEmail}
-                        onChangeText={setContactEmail}
-                        onFocus={() => setContactFocusedField('email')}
-                        onBlur={() => setContactFocusedField(null)}
-                      />
-                    </View>
-                  </View>
+                  <ContactModalField
+                    label="EMAIL / CONTACT INFO"
+                    icon="mail-outline"
+                    placeholder="Enter your email"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={contactEmail}
+                    onChangeText={setContactEmail}
+                  />
 
                   {/* Phone field */}
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>PHONE NUMBER (OPTIONAL)</Text>
-                    <View
-                      style={[
-                        styles.modernInputWrapper,
-                        contactFocusedField === 'phone' && styles.modernInputWrapperFocused,
-                      ]}
-                    >
-                      <Ionicons
-                        name="call-outline"
-                        size={16}
-                        color={contactFocusedField === 'phone' ? '#FE3C72' : '#7E7E94'}
-                        style={styles.modernInputLeftIcon}
-                      />
-                      <TextInput
-                        style={styles.modernTextInput}
-                        placeholder="Enter your mobile number"
-                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                        keyboardType="phone-pad"
-                        value={contactPhone}
-                        onChangeText={setContactPhone}
-                        onFocus={() => setContactFocusedField('phone')}
-                        onBlur={() => setContactFocusedField(null)}
-                      />
-                    </View>
-                  </View>
+                  <ContactModalField
+                    label="PHONE NUMBER (OPTIONAL)"
+                    icon="call-outline"
+                    placeholder="Enter your mobile number"
+                    keyboardType="phone-pad"
+                    value={contactPhone}
+                    onChangeText={setContactPhone}
+                  />
 
                   {/* Subject field */}
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>SUBJECT / CATEGORY</Text>
-                    <View
-                      style={[
-                        styles.modernInputWrapper,
-                        contactFocusedField === 'subject' && styles.modernInputWrapperFocused,
-                      ]}
-                    >
-                      <Ionicons
-                        name="pricetag-outline"
-                        size={16}
-                        color={contactFocusedField === 'subject' ? '#FE3C72' : '#7E7E94'}
-                        style={styles.modernInputLeftIcon}
-                      />
-                      <TextInput
-                        style={styles.modernTextInput}
-                        placeholder="e.g. Account issue, Match bug, Subscription"
-                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                        value={contactSubject}
-                        onChangeText={setContactSubject}
-                        onFocus={() => setContactFocusedField('subject')}
-                        onBlur={() => setContactFocusedField(null)}
-                      />
-                    </View>
-                  </View>
+                  <ContactModalField
+                    label="SUBJECT / CATEGORY"
+                    icon="pricetag-outline"
+                    placeholder="e.g. Account issue, Match bug, Subscription"
+                    value={contactSubject}
+                    onChangeText={setContactSubject}
+                  />
 
                   {/* Message field */}
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>DESCRIBE YOUR PROBLEM *</Text>
-                    <View
-                      style={[
-                        styles.modernInputWrapper,
-                        styles.modernTextareaWrapper,
-                        contactFocusedField === 'message' && styles.modernInputWrapperFocused,
-                      ]}
-                    >
-                      <Ionicons
-                        name="chatbox-ellipses-outline"
-                        size={16}
-                        color={contactFocusedField === 'message' ? '#FE3C72' : '#7E7E94'}
-                        style={[styles.modernInputLeftIcon, { marginTop: 4 }]}
-                      />
-                      <TextInput
-                        style={[styles.modernTextInput, styles.modernTextareaInput]}
-                        placeholder="Please describe your issue or question in detail..."
-                        placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                        multiline
-                        numberOfLines={4}
-                        value={contactMessage}
-                        onChangeText={setContactMessage}
-                        onFocus={() => setContactFocusedField('message')}
-                        onBlur={() => setContactFocusedField(null)}
-                      />
-                    </View>
-                  </View>
+                  <ContactModalField
+                    label="DESCRIBE YOUR PROBLEM *"
+                    icon="chatbox-ellipses-outline"
+                    placeholder="Please describe your issue or question in detail..."
+                    multiline
+                    numberOfLines={4}
+                    value={contactMessage}
+                    onChangeText={setContactMessage}
+                  />
 
                   {/* Buttons Row */}
                   <View style={styles.formBtnRow}>
                     <TouchableOpacity
                       onPress={() => {
                         setShowContactModal(false);
-                        setContactFocusedField(null);
                       }}
                       disabled={contactSubmitting}
                       style={styles.modernCancelBtn}
@@ -1899,7 +1905,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                   <TouchableOpacity
                     onPress={() => {
                       setShowContactModal(false);
-                      setContactFocusedField(null);
                     }}
                     style={styles.historyCloseBtn}
                     activeOpacity={0.8}
@@ -1929,13 +1934,11 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         visible={isPasswordModalOpen}
         animationType="fade"
         transparent
-        statusBarTranslucent
         onRequestClose={() => {
           setIsPasswordModalOpen(false);
           setShowCurrentPassword(false);
           setShowNewPassword(false);
           setShowConfirmPassword(false);
-          setPasswordFocusedField(null);
         }}
       >
         <KeyboardAvoidingView
@@ -1946,6 +1949,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             contentContainerStyle={styles.formModalScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            bounces={false}
+            overScrollMode="never"
           >
             <View style={styles.formModalCard}>
               {/* Header */}
@@ -1965,7 +1970,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                     setShowCurrentPassword(false);
                     setShowNewPassword(false);
                     setShowConfirmPassword(false);
-                    setPasswordFocusedField(null);
                   }}
                   style={styles.formCloseBtn}
                   disabled={passwordLoading}
@@ -1976,88 +1980,29 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               </View>
 
               {/* Current Password */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>CURRENT PASSWORD</Text>
-                <View
-                  style={[
-                    styles.modernInputWrapper,
-                    passwordFocusedField === 'current' && styles.modernInputWrapperFocused,
-                  ]}
-                >
-                  <Ionicons
-                    name="key-outline"
-                    size={16}
-                    color={passwordFocusedField === 'current' ? '#FE3C72' : '#7E7E94'}
-                    style={styles.modernInputLeftIcon}
-                  />
-                  <TextInput
-                    style={styles.modernTextInput}
-                    placeholder="Enter current password"
-                    placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                    secureTextEntry={!showCurrentPassword}
-                    value={currentPassword}
-                    onChangeText={setCurrentPassword}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    onFocus={() => setPasswordFocusedField('current')}
-                    onBlur={() => setPasswordFocusedField(null)}
-                  />
-                  <TouchableOpacity
-                    onPress={() => setShowCurrentPassword(!showCurrentPassword)}
-                    style={styles.modernEyeBtn}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name={showCurrentPassword ? 'eye-outline' : 'eye-off-outline'}
-                      size={18}
-                      color="rgba(255, 255, 255, 0.55)"
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <PasswordModalField
+                label="CURRENT PASSWORD"
+                icon="key-outline"
+                placeholder="Enter current password"
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                secureTextEntry={!showCurrentPassword}
+                onToggleSecure={() => setShowCurrentPassword(!showCurrentPassword)}
+              />
 
               {/* New Password */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>NEW PASSWORD</Text>
-                <View
-                  style={[
-                    styles.modernInputWrapper,
-                    passwordFocusedField === 'new' && styles.modernInputWrapperFocused,
-                  ]}
-                >
-                  <Ionicons
-                    name="lock-closed-outline"
-                    size={16}
-                    color={passwordFocusedField === 'new' ? '#FE3C72' : '#7E7E94'}
-                    style={styles.modernInputLeftIcon}
-                  />
-                  <TextInput
-                    style={styles.modernTextInput}
-                    placeholder="Enter new password (min 8 chars)"
-                    placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                    secureTextEntry={!showNewPassword}
-                    value={newPassword}
-                    onChangeText={setNewPassword}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    onFocus={() => setPasswordFocusedField('new')}
-                    onBlur={() => setPasswordFocusedField(null)}
-                  />
-                  <TouchableOpacity
-                    onPress={() => setShowNewPassword(!showNewPassword)}
-                    style={styles.modernEyeBtn}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name={showNewPassword ? 'eye-outline' : 'eye-off-outline'}
-                      size={18}
-                      color="rgba(255, 255, 255, 0.55)"
-                    />
-                  </TouchableOpacity>
-                </View>
+              <PasswordModalField
+                label="NEW PASSWORD"
+                icon="lock-closed-outline"
+                placeholder="Enter new password (min 8 chars)"
+                value={newPassword}
+                onChangeText={setNewPassword}
+                secureTextEntry={!showNewPassword}
+                onToggleSecure={() => setShowNewPassword(!showNewPassword)}
+              />
                 {/* Length requirement indicator */}
                 {newPassword.length > 0 && (
-                  <View style={styles.fieldHintRow}>
+                  <View style={[styles.fieldHintRow, { marginTop: -6, marginBottom: 12 }]}>
                     <Ionicons
                       name={newPassword.length >= 8 ? 'checkmark-circle' : 'alert-circle-outline'}
                       size={13}
@@ -2076,78 +2021,47 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                     </Text>
                   </View>
                 )}
-              </View>
 
               {/* Confirm New Password */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>CONFIRM NEW PASSWORD</Text>
-                <View
-                  style={[
-                    styles.modernInputWrapper,
-                    passwordFocusedField === 'confirm' && styles.modernInputWrapperFocused,
-                  ]}
-                >
+              <PasswordModalField
+                label="CONFIRM NEW PASSWORD"
+                icon="shield-outline"
+                placeholder="Re-enter new password"
+                value={confirmNewPassword}
+                onChangeText={setConfirmNewPassword}
+                secureTextEntry={!showConfirmPassword}
+                onToggleSecure={() => setShowConfirmPassword(!showConfirmPassword)}
+              />
+              {/* Match indicator */}
+              {confirmNewPassword.length > 0 && (
+                <View style={[styles.fieldHintRow, { marginTop: -6, marginBottom: 12 }]}>
                   <Ionicons
-                    name="shield-outline"
-                    size={16}
-                    color={passwordFocusedField === 'confirm' ? '#FE3C72' : '#7E7E94'}
-                    style={styles.modernInputLeftIcon}
+                    name={
+                      newPassword === confirmNewPassword
+                        ? 'checkmark-circle'
+                        : 'close-circle'
+                    }
+                    size={13}
+                    color={
+                      newPassword === confirmNewPassword ? '#00E676' : '#FF5252'
+                    }
+                    style={{ marginRight: 5 }}
                   />
-                  <TextInput
-                    style={styles.modernTextInput}
-                    placeholder="Re-enter new password"
-                    placeholderTextColor="rgba(255, 255, 255, 0.35)"
-                    secureTextEntry={!showConfirmPassword}
-                    value={confirmNewPassword}
-                    onChangeText={setConfirmNewPassword}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    onFocus={() => setPasswordFocusedField('confirm')}
-                    onBlur={() => setPasswordFocusedField(null)}
-                  />
-                  <TouchableOpacity
-                    onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                    style={styles.modernEyeBtn}
-                    activeOpacity={0.7}
+                  <Text
+                    style={[
+                      styles.fieldHintText,
+                      {
+                        color:
+                          newPassword === confirmNewPassword ? '#00E676' : '#FF5252',
+                      },
+                    ]}
                   >
-                    <Ionicons
-                      name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
-                      size={18}
-                      color="rgba(255, 255, 255, 0.55)"
-                    />
-                  </TouchableOpacity>
+                    {newPassword === confirmNewPassword
+                      ? 'Passwords match'
+                      : 'Passwords do not match'}
+                  </Text>
                 </View>
-                {/* Match indicator */}
-                {confirmNewPassword.length > 0 && (
-                  <View style={styles.fieldHintRow}>
-                    <Ionicons
-                      name={
-                        newPassword === confirmNewPassword
-                          ? 'checkmark-circle'
-                          : 'close-circle'
-                      }
-                      size={13}
-                      color={
-                        newPassword === confirmNewPassword ? '#00E676' : '#FF5252'
-                      }
-                      style={{ marginRight: 5 }}
-                    />
-                    <Text
-                      style={[
-                        styles.fieldHintText,
-                        {
-                          color:
-                            newPassword === confirmNewPassword ? '#00E676' : '#FF5252',
-                        },
-                      ]}
-                    >
-                      {newPassword === confirmNewPassword
-                        ? 'Passwords match'
-                        : 'Passwords do not match'}
-                    </Text>
-                  </View>
-                )}
-              </View>
+              )}
 
               {/* Action Buttons */}
               <View style={styles.formBtnRow}>
@@ -2158,7 +2072,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                     setShowCurrentPassword(false);
                     setShowNewPassword(false);
                     setShowConfirmPassword(false);
-                    setPasswordFocusedField(null);
                   }}
                   disabled={passwordLoading}
                   activeOpacity={0.8}
@@ -3367,11 +3280,6 @@ const styles = StyleSheet.create({
   modernInputWrapperFocused: {
     borderColor: '#FE3C72',
     backgroundColor: '#202034',
-    shadowColor: '#FE3C72',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
   },
   modernTextareaWrapper: {
     height: 90,

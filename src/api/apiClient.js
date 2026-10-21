@@ -22,7 +22,10 @@ const resolveWorkingBaseUrl = async (forceRecheck = false) => {
 
   for (const candidate of candidateList) {
     try {
-      const res = await fetch(`${candidate}/health`, { method: 'GET' });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch(`${candidate}/health`, { method: 'GET', signal: controller.signal });
+      clearTimeout(timeoutId);
       if (res.ok || res.status < 500) {
         activeResolvedUrl = candidate;
         setBaseUrl(candidate);
@@ -417,7 +420,11 @@ export const apiClient = {
     if (!payload.fcmToken) {
       try {
         const { getFcmTokenOnly } = require('../services/notificationService');
-        const fcm = await getFcmTokenOnly();
+        // Cap token retrieval to 600ms so login is never blocked if Firebase is slow/initializing
+        const fcm = await Promise.race([
+          getFcmTokenOnly(),
+          new Promise((resolve) => setTimeout(() => resolve(null), 600))
+        ]);
         if (fcm) payload.fcmToken = fcm;
       } catch (e) {}
     }
@@ -760,6 +767,9 @@ export const apiClient = {
             directFormData.append('file', filePart);
             directFormData.append('upload_preset', 'Dating_Profiles');
             directFormData.append('folder', 'dating_app_chat_media');
+            if (filePart.name && filePart.name.includes('voice_')) {
+              directFormData.append('public_id', filePart.name.replace(/\.[^/.]+$/, ''));
+            }
 
             const isVideo = (filePart.type && filePart.type.startsWith('video/')) ||
               (filePart.name && /\.(mp4|mov|mkv|avi|webm|3gp)$/i.test(filePart.name));
