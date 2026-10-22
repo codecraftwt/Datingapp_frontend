@@ -368,11 +368,21 @@ const chatSlice = createSlice({
       state.messages = updateList(state.messages);
       state.allMessages = updateList(state.allMessages);
     },
-    clearChat: (state) => {
-      state.messages = [];
-      state.activeChatUser = null;
-      state.typingUsers = {};
-      state.allMessages = [];
+    clearChat: (state, action) => {
+      const targetPartnerId = (action.payload?.id || action.payload?._id || action.payload)?.toString();
+      if (targetPartnerId) {
+        state.messages = [];
+        state.allMessages = (state.allMessages || []).filter((m) => {
+          const rId = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+          const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+          return rId !== targetPartnerId && sId !== targetPartnerId;
+        });
+      } else {
+        state.messages = [];
+        state.activeChatUser = null;
+        state.typingUsers = {};
+        state.allMessages = [];
+      }
     },
   },
 });

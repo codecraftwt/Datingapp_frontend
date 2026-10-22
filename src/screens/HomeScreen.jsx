@@ -354,6 +354,15 @@ const deduplicateMessages = (msgList) => {
   return result;
 };
 
+const doesMessageBelongToPartner = (m, partnerId) => {
+  if (!m || !partnerId) return false;
+  if (m.id === 'match-init' || m.id === 'blocked-init') return false;
+  const pIdStr = partnerId.toString();
+  const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+  const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+  return mReceiver === pIdStr || mSender === pIdStr;
+};
+
 const formatMessageTime = (dateString) => {
   if (!dateString || dateString === 'match-init') return '';
   try {
@@ -931,13 +940,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       if (activeChat) {
         const activeId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
         if (activeId && Array.isArray(activeChat.messages) && activeChat.messages.length > 0) {
+          const cleanActiveMsgs = activeChat.messages.filter((m) => m.id === 'match-init' || doesMessageBelongToPartner(m, activeId));
           setChats((prevChats) =>
             (prevChats || []).map((c) => {
               const cId = (c.id || c._id || c.userId)?.toString();
               if (cId === activeId) {
                 return {
                   ...c,
-                  messages: activeChat.messages,
+                  messages: cleanActiveMsgs,
                 };
               }
               return c;
@@ -1634,9 +1644,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 m.status === 'failed' ||
                 (m.tempId && !formattedMsgs.some((f) => f.tempId === m.tempId || f.id === m.tempId || f.id === m.id));
               if (!isPending) return false;
-              const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-              const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-              return !mReceiver || !mSender || mReceiver === partnerId || mSender === partnerId || m.sender === 'you' || m.sender === 'them';
+              return doesMessageBelongToPartner(m, partnerId);
             }
           );
 
@@ -1744,12 +1752,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 isEdited: Boolean(fMsg.isEdited || existing.isEdited),
               };
             });
-            const filteredPrevMsgs = prevMsgs.filter((m) => {
-              if (!m || m.id === 'match-init') return false;
-              const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-              const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-              return !mReceiver || !mSender || mReceiver === partnerId || mSender === partnerId || m.sender === 'you' || m.sender === 'them';
-            });
+            const filteredPrevMsgs = prevMsgs.filter((m) => doesMessageBelongToPartner(m, partnerId));
             const finalMsgs = enforceSinglePin((mergedChatMsgs.length === 0 && filteredPrevMsgs.length > 0) ? filteredPrevMsgs : mergedChatMsgs);
             const msgsEqual = prevMsgs.length === finalMsgs.length &&
               prevMsgs.every((m, i) =>
@@ -4121,12 +4124,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const existingChatInState = (chats || []).find(
         (c) => (c.id || c._id || c.userId)?.toString() === otherId
       );
-      const existingMsgs = (existingChatInState?.messages || []).filter((m) => {
-        if (!m || m.id === 'match-init' || m.id === 'blocked-init') return false;
-        const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-        const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-        return !mReceiver || !mSender || mReceiver === otherId || mSender === otherId || m.sender === 'you' || m.sender === 'them';
-      });
+      const existingMsgs = (existingChatInState?.messages || []).filter((m) => doesMessageBelongToPartner(m, otherId));
 
       // Non-destructively merge messages from DB with local state so replyTo and reactions are NEVER wiped out
       const mergedDbMsgs = (messagesByOtherUser[otherId] || []).map((dbMsg) => {
@@ -4310,11 +4308,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           });
 
           const extraMsgs = prevMsgs.filter((m) => {
-            if (!m || m.id === 'match-init') return false;
-            const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-            const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-            const belongs = !mReceiver || !mSender || mReceiver === found.id || mSender === found.id || m.sender === 'you' || m.sender === 'them';
-            if (!belongs) return false;
+            if (!doesMessageBelongToPartner(m, found.id)) return false;
             return !mergedFoundMsgs.some(
               (f) =>
                 (f.id && m.id && String(f.id) === String(m.id)) ||
@@ -4470,11 +4464,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           };
         });
         const extraMsgs = prevMsgs.filter((m) => {
-          if (!m || m.id === 'match-init') return false;
-          const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-          const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-          const belongs = !mReceiver || !mSender || mReceiver === activePartnerId || mSender === activePartnerId || m.sender === 'you' || m.sender === 'them';
-          if (!belongs) return false;
+          if (!doesMessageBelongToPartner(m, activePartnerId)) return false;
           return !mergedFormatted.some(
             (f) =>
               (f.id && m.id && String(f.id) === String(m.id)) ||
@@ -4553,11 +4543,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             };
           });
           const extraMsgs = prevMsgs.filter((m) => {
-            if (!m || m.id === 'match-init') return false;
-            const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-            const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-            const belongs = !mReceiver || !mSender || mReceiver === activePartnerId || mSender === activePartnerId || m.sender === 'you' || m.sender === 'them';
-            if (!belongs) return false;
+            if (!doesMessageBelongToPartner(m, activePartnerId)) return false;
             return !mergedFormatted.some(
               (f) =>
                 (f.id && m.id && String(f.id) === String(m.id)) ||
@@ -4674,9 +4660,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setActiveChat(newChat);
     } else {
       const foundChat = chats.find((c) => c.id === candidateId);
+      const sanitizedFoundChat = foundChat ? {
+        ...foundChat,
+        messages: (foundChat.messages || []).filter((m) => m.id === 'match-init' || doesMessageBelongToPartner(m, candidateId)),
+      } : null;
       dispatch(setMessages([]));
-      dispatch(setActiveChatUser(foundChat));
-      setActiveChat(foundChat);
+      dispatch(setActiveChatUser(sanitizedFoundChat));
+      setActiveChat(sanitizedFoundChat);
     }
     setShowMatchPopup(false);
     setActiveTab('chat');
@@ -6022,6 +6012,27 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           onPress: async () => {
             if (!selectedUserId) return;
 
+            // 1. Immediately track all message IDs in deletedMessageIdsRef so background sync never restores them
+            const currentMsgs = activeChat?.messages || [];
+            currentMsgs.forEach((m) => {
+              if (m.id && m.id !== 'match-init') deletedMessageIdsRef.current.add(String(m.id));
+              if (m._id) deletedMessageIdsRef.current.add(String(m._id));
+              if (m.tempId) deletedMessageIdsRef.current.add(String(m.tempId));
+            });
+
+            // 2. Reset UI sub-states (pins, selections, reply, edit, search)
+            setPinnedMessage(null);
+            setSelectedMessageForAction(null);
+            setIsMultiSelectMode(false);
+            setSelectedMultiMessageIds([]);
+            setIsSearchInChatActive(false);
+            setChatSearchQuery('');
+            setChatSearchMatchIndex(0);
+            setReplyingToMessage(null);
+            setEditingMessage(null);
+            typedMessageRef.current = '';
+            setTypedMessage('');
+
             const placeholderMsg = [
               {
                 id: 'match-init',
@@ -6030,7 +6041,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               },
             ];
 
-            // ⚡ 1. Instant local state update on user's screen (0ms UI latency)
+            // 3. Instant local state update on user's screen (0ms UI latency)
             setActiveChat((prevActive) => {
               if (!prevActive) return prevActive;
               const pId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
@@ -6051,13 +6062,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     ...c,
                     messages: placeholderMsg,
                     lastMessage: '',
+                    lastMessageTime: '',
                   };
                 }
                 return c;
               })
             );
 
-            // ⚡ 2. Clear local storage cache for this chat partner
+            // 4. Update Redux store (clears active thread & purges partner messages from allMessages)
+            dispatch(clearChat(selectedUserId));
+            dispatch(setMessages([]));
+
+            // 5. Clean local storage cache (both persistent_unsent_messages and cached_chat_messages)
             try {
               const currentUserIdStr = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
               if (currentUserIdStr) {
@@ -6069,18 +6085,32 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     await AsyncStorage.setItem(`persistent_unsent_messages_${currentUserIdStr}`, JSON.stringify(filtered));
                   }
                 }
+                const cachedStr = await AsyncStorage.getItem(`cached_chat_messages_${currentUserIdStr}`);
+                if (cachedStr) {
+                  const cachedList = JSON.parse(cachedStr);
+                  if (Array.isArray(cachedList)) {
+                    const filteredCache = cachedList.filter((m) => {
+                      const rId = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+                      const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+                      return rId !== selectedUserId && sId !== selectedUserId;
+                    });
+                    await AsyncStorage.setItem(`cached_chat_messages_${currentUserIdStr}`, JSON.stringify(filteredCache));
+                  }
+                }
               }
             } catch (e) { }
 
-            // ⚡ 3. Call server API to mark deletedBySender / deletedByReceiver for this user (Partner's chat history remains untouched)
-            apiClient.clearChat(selectedUserId)
-              .then(() => {
-                console.log('Chat cleared successfully on server for user:', selectedUserId);
-              })
-              .catch((err) => {
-                console.error('Failed to clear chat on server:', err);
-                Alert.alert('Error', 'Failed to clear chat history on server.');
-              });
+            // 6. Call server API to mark deletedBySender / deletedByReceiver for this user
+            try {
+              await apiClient.clearChat(selectedUserId);
+              console.log('Chat cleared successfully on server for user:', selectedUserId);
+              if (typeof refetchMessages === 'function') {
+                refetchMessages();
+              }
+            } catch (err) {
+              console.error('Failed to clear chat on server:', err);
+              Alert.alert('Error', 'Failed to clear chat history on server.');
+            }
           },
         },
       ]
@@ -7722,13 +7752,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           if (activeChat) {
                             const activeId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
                             if (activeId && Array.isArray(activeChat.messages) && activeChat.messages.length > 0) {
+                              const cleanActiveMsgs = activeChat.messages.filter((m) => m.id === 'match-init' || doesMessageBelongToPartner(m, activeId));
                               setChats((prevChats) =>
                                 (prevChats || []).map((c) => {
                                   const cId = (c.id || c._id || c.userId)?.toString();
                                   if (cId === activeId) {
                                     return {
                                       ...c,
-                                      messages: activeChat.messages,
+                                      messages: cleanActiveMsgs,
                                     };
                                   }
                                   return c;
@@ -7867,7 +7898,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     onScroll={handleChatScroll}
                     scrollEventThrottle={16}
                   >
-                    {deduplicateMessages(activeChat.messages).map((msg, index) => {
+                    {deduplicateMessages(
+                      (activeChat.messages || []).filter(
+                        (msg) => msg.id === 'match-init' || doesMessageBelongToPartner(msg, activeChat.id || activeChat._id || activeChat.userId)
+                      )
+                    ).map((msg, index) => {
                       const isDeletedForEveryone = Boolean(msg.isDeletedForEveryone || msg.text === 'This message was deleted');
                       const isMe = msg.sender === 'you';
                       const isSticker = !isDeletedForEveryone && msg.messageType === 'sticker';
@@ -9427,9 +9462,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 } else {
                                   typedMessageRef.current = '';
                                   setTypedMessage('');
+                                  const cPartnerId = (chat.id || chat._id || chat.userId)?.toString();
+                                  const sanitizedChat = {
+                                    ...chat,
+                                    messages: (chat.messages || []).filter((m) => m.id === 'match-init' || doesMessageBelongToPartner(m, cPartnerId)),
+                                  };
                                   dispatch(setMessages([]));
-                                  dispatch(setActiveChatUser(chat));
-                                  setActiveChat(chat);
+                                  dispatch(setActiveChatUser(sanitizedChat));
+                                  setActiveChat(sanitizedChat);
                                 }
                               }}
                               onLongPress={() => toggleSelectChat(chat)}
@@ -11918,9 +11958,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             activeOpacity={0.8}
                             onPress={() => {
                               setShowAllStarredModal(false);
+                              const starredPartnerId = (item.chatObject.id || item.chatObject._id || item.chatObject.userId)?.toString();
+                              const sanitizedStarredChat = {
+                                ...item.chatObject,
+                                messages: (item.chatObject.messages || []).filter((m) => m.id === 'match-init' || doesMessageBelongToPartner(m, starredPartnerId)),
+                              };
                               dispatch(setMessages([]));
-                              dispatch(setActiveChatUser(item.chatObject));
-                              setActiveChat(item.chatObject);
+                              dispatch(setActiveChatUser(sanitizedStarredChat));
+                              setActiveChat(sanitizedStarredChat);
                               const targetMsgId = (item.id || item._id)?.toString();
                               if (targetMsgId) {
                                 setTimeout(() => {
