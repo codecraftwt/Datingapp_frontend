@@ -14,7 +14,20 @@ const chatSlice = createSlice({
   initialState,
   reducers: {
     setMessages: (state, action) => {
-      const msgs = action.payload || [];
+      const rawMsgs = action.payload || [];
+      const activePartnerId = (state.activeChatUser?.id || state.activeChatUser?._id || state.activeChatUser?.userId)?.toString();
+
+      // Only include messages belonging to the active partner if activeChatUser is set
+      const msgs = activePartnerId
+        ? rawMsgs.filter((m) => {
+            if (!m) return false;
+            if (m.id === 'match-init') return true;
+            const rId = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+            const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+            return rId === activePartnerId || sId === activePartnerId;
+          })
+        : (action.payload === null ? [] : rawMsgs);
+
       const deletedIds = new Set();
       (state.messages || []).forEach((m) => {
         if (m.isDeletedForEveryone || m.text === 'This message was deleted') {
@@ -151,13 +164,20 @@ const chatSlice = createSlice({
       const mId = msg._id || msg.id;
       const msgTempId = msg.tempId;
 
-      const idxInMsgs = state.messages.findIndex(
-        m => (m._id || m.id) === mId || (msgTempId && (m.tempId === msgTempId || (m._id || m.id) === msgTempId))
-      );
-      if (idxInMsgs === -1) {
-        state.messages.push(msg);
-      } else {
-        state.messages[idxInMsgs] = { ...state.messages[idxInMsgs], ...msg };
+      // Only add to active thread state.messages if this message belongs to the activeChatUser
+      const activePartnerId = (state.activeChatUser?.id || state.activeChatUser?._id || state.activeChatUser?.userId)?.toString();
+      const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
+      const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
+
+      if (activePartnerId && (rId === activePartnerId || sId === activePartnerId)) {
+        const idxInMsgs = state.messages.findIndex(
+          m => (m._id || m.id) === mId || (msgTempId && (m.tempId === msgTempId || (m._id || m.id) === msgTempId))
+        );
+        if (idxInMsgs === -1) {
+          state.messages.push(msg);
+        } else {
+          state.messages[idxInMsgs] = { ...state.messages[idxInMsgs], ...msg };
+        }
       }
 
       const idxInAll = state.allMessages.findIndex(
@@ -239,6 +259,19 @@ const chatSlice = createSlice({
     },
     setActiveChatUser: (state, action) => {
       state.activeChatUser = action.payload;
+      const partnerId = (action.payload?.id || action.payload?._id || action.payload?.userId)?.toString();
+      if (!partnerId) {
+        state.messages = [];
+      } else {
+        // Hydrate state.messages exclusively with messages belonging to this partner
+        state.messages = (state.allMessages || []).filter((m) => {
+          if (!m) return false;
+          if (m.id === 'match-init') return true;
+          const rId = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+          const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+          return rId === partnerId || sId === partnerId;
+        });
+      }
     },
     setTyping: (state, action) => {
       const { userId, isTyping } = action.payload;
@@ -290,7 +323,7 @@ const chatSlice = createSlice({
       state.allMessages = updateList(state.allMessages);
     },
     updateMessageStarred: (state, action) => {
-      const { messageId, tempId, isStarred, currentUserId, starredBy } = action.payload;
+      const { messageId, tempId, isStarred, currentUserId, starredBy, mediaUrl, messageType, fileName, fileSize } = action.payload || {};
       const targetIdStr = messageId?.toString();
       const targetTempStr = tempId?.toString();
       const updateList = (list) => {
@@ -315,10 +348,18 @@ const chatSlice = createSlice({
                 nextStarredBy = nextStarredBy.filter(id => (id?._id || id)?.toString() !== cIdStr);
               }
             }
+            const finalMediaUrl = msg.mediaUrl || mediaUrl || null;
+            const finalMessageType = (msg.messageType && msg.messageType !== 'text')
+              ? msg.messageType
+              : (messageType || msg.messageType || (finalMediaUrl ? 'image' : 'text'));
             return {
               ...msg,
               isStarred: !!isStarred,
               starredBy: nextStarredBy,
+              mediaUrl: finalMediaUrl,
+              messageType: finalMessageType,
+              fileName: msg.fileName || fileName || null,
+              fileSize: msg.fileSize || fileSize || null,
             };
           }
           return msg;

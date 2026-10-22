@@ -71,38 +71,45 @@ const JOB_EXAMPLES = [
   'Business Owner',
 ];
 
-const getOptionIcon = (label, isSelected) => {
-  const clean = (label || '').trim().toLowerCase();
-  const iconColor = isSelected ? '#FFFFFF' : '#FFD700';
-  const size = 15;
-  const style = { marginRight: 6 };
+export const cleanOptionLabel = (label) => {
+  if (!label || typeof label !== 'string') return '';
+  return label
+    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1FA00}-\u{1FAFF}\u{FE00}-\u{FE0F}]/gu, '')
+    .trim();
+};
 
-  if (clean.includes('music')) return <Ionicons name="musical-notes-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('travel')) return <Ionicons name="airplane-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('fitness')) return <Ionicons name="fitness-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('movies')) return <Ionicons name="film-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('gaming')) return <Ionicons name="game-controller-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('cooking')) return <Ionicons name="restaurant-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('art')) return <Ionicons name="color-palette-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('photography')) return <Ionicons name="camera-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('reading')) return <Ionicons name="book-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('dancing')) return <Ionicons name="body-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('coffee')) return <Ionicons name="cafe-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('pets') || clean.includes('dog') || clean.includes('cat')) return <Ionicons name="paw-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('wine')) return <Ionicons name="wine-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('yoga')) return <Ionicons name="accessibility-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('foodie')) return <Ionicons name="pizza-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('camping')) return <Ionicons name="compass-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('high school') || clean.includes('school')) return <Ionicons name="school-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('bachelors') || clean.includes('degree')) return <Ionicons name="ribbon-outline" size={size} color={iconColor} style={style} />;
+export const getOptionIcon = (label, isSelected, size = 15, style = { marginRight: 6 }) => {
+  const clean = cleanOptionLabel(label).toLowerCase();
+  const iconColor = isSelected ? '#FFFFFF' : '#FFD700';
+
+  if (clean.includes('music')) return <Ionicons name={isSelected ? "musical-notes" : "musical-notes-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('travel')) return <Ionicons name={isSelected ? "airplane" : "airplane-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('fitness')) return <Ionicons name={isSelected ? "fitness" : "fitness-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('movies') || clean.includes('movie') || clean.includes('film')) return <Ionicons name={isSelected ? "film" : "film-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('gaming') || clean.includes('game')) return <Ionicons name={isSelected ? "game-controller" : "game-controller-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('cooking') || clean.includes('cook')) return <Ionicons name={isSelected ? "restaurant" : "restaurant-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('art')) return <Ionicons name={isSelected ? "color-palette" : "color-palette-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('photography') || clean.includes('photo')) return <Ionicons name={isSelected ? "camera" : "camera-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('reading') || clean.includes('book')) return <Ionicons name={isSelected ? "book" : "book-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('dancing') || clean.includes('dance')) return <Ionicons name={isSelected ? "sparkles" : "sparkles-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('coffee') || clean.includes('cafe')) return <Ionicons name={isSelected ? "cafe" : "cafe-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('pets') || clean.includes('pet') || clean.includes('dog') || clean.includes('cat')) return <Ionicons name={isSelected ? "paw" : "paw-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('wine') || clean.includes('drink')) return <Ionicons name={isSelected ? "wine" : "wine-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('yoga')) return <Ionicons name={isSelected ? "body" : "body-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('foodie') || clean.includes('food')) return <Ionicons name={isSelected ? "pizza" : "pizza-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('camping') || clean.includes('camp')) return <Ionicons name={isSelected ? "bonfire" : "bonfire-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('tech') || clean.includes('technology')) return <Ionicons name={isSelected ? "hardware-chip" : "hardware-chip-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('sports') || clean.includes('sport')) return <Ionicons name={isSelected ? "trophy" : "trophy-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('high school') || clean.includes('school')) return <Ionicons name={isSelected ? "school" : "school-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('bachelors') || clean.includes('degree')) return <Ionicons name={isSelected ? "ribbon" : "ribbon-outline"} size={size} color={iconColor} style={style} />;
   if (clean.includes('masters')) return <Ionicons name="ribbon" size={size} color={iconColor} style={style} />;
-  if (clean.includes('doctorate') || clean.includes('phd')) return <Ionicons name="trophy-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('trade') || clean.includes('vocational')) return <Ionicons name="construct-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('engineer') || clean.includes('software')) return <Ionicons name="code-slash-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('teacher')) return <Ionicons name="school-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('doctor')) return <Ionicons name="medkit-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('student')) return <Ionicons name="book-outline" size={size} color={iconColor} style={style} />;
-  if (clean.includes('business') || clean.includes('owner')) return <Ionicons name="briefcase-outline" size={size} color={iconColor} style={style} />;
+  if (clean.includes('doctorate') || clean.includes('phd')) return <Ionicons name={isSelected ? "trophy" : "trophy-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('trade') || clean.includes('vocational')) return <Ionicons name={isSelected ? "construct" : "construct-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('engineer') || clean.includes('software')) return <Ionicons name={isSelected ? "code-slash" : "code-slash-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('teacher')) return <Ionicons name={isSelected ? "school" : "school-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('doctor')) return <Ionicons name={isSelected ? "medkit" : "medkit-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('student')) return <Ionicons name={isSelected ? "book" : "book-outline"} size={size} color={iconColor} style={style} />;
+  if (clean.includes('business') || clean.includes('owner')) return <Ionicons name={isSelected ? "briefcase" : "briefcase-outline"} size={size} color={iconColor} style={style} />;
 
   return null;
 };
@@ -189,7 +196,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   const [distanceRange, setDistanceRange] = useState('10');
 
   const [bio, setBio] = useState('');
-  const [selectedInterests, setSelectedInterests] = useState(['🎵 Music', '✈️ Travel', '☕ Coffee']);
+  const [selectedInterests, setSelectedInterests] = useState(['Music', 'Travel', 'Coffee']);
   const [selectedLanguages, setSelectedLanguages] = useState(['English', 'Hindi']);
 
   const [photos, setPhotos] = useState(Array(9).fill(null));
@@ -319,7 +326,9 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       if (initialData.ageRangeMax) setAgeRangeMax(initialData.ageRangeMax.toString());
       if (initialData.distanceRange) setDistanceRange(initialData.distanceRange.toString());
       if (initialData.bio) setBio(initialData.bio);
-      if (initialData.interests && Array.isArray(initialData.interests)) setSelectedInterests(initialData.interests);
+      if (initialData.interests && Array.isArray(initialData.interests)) {
+        setSelectedInterests(initialData.interests.map(cleanOptionLabel).filter(Boolean));
+      }
       if (initialData.languages && Array.isArray(initialData.languages)) setSelectedLanguages(initialData.languages);
 
       populatePhotosGrid(initialData);
@@ -335,7 +344,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         if (u.bdayMonth) setBdayMonth((prev) => prev || u.bdayMonth);
         if (u.bdayYear) setBdayYear((prev) => prev || u.bdayYear);
         if (u.bio) setBio((prev) => prev || u.bio);
-        if (u.interests && Array.isArray(u.interests) && u.interests.length > 0) setSelectedInterests((prev) => (prev && prev.length > 0 ? prev : u.interests));
+        if (u.interests && Array.isArray(u.interests) && u.interests.length > 0) {
+          const cleanInterests = u.interests.map(cleanOptionLabel).filter(Boolean);
+          setSelectedInterests((prev) => (prev && prev.length > 0 ? prev.map(cleanOptionLabel).filter(Boolean) : cleanInterests));
+        }
         if (u.languages && Array.isArray(u.languages) && u.languages.length > 0) setSelectedLanguages((prev) => (prev && prev.length > 0 ? prev : u.languages));
 
         populatePhotosGrid(u);
@@ -363,11 +375,13 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
   };
 
   const toggleInterest = (item) => {
-    if (selectedInterests.includes(item)) {
-      setSelectedInterests(selectedInterests.filter((i) => i !== item));
+    const cleanItem = cleanOptionLabel(item);
+    const exists = selectedInterests.some((i) => cleanOptionLabel(i).toLowerCase() === cleanItem.toLowerCase());
+    if (exists) {
+      setSelectedInterests(selectedInterests.filter((i) => cleanOptionLabel(i).toLowerCase() !== cleanItem.toLowerCase()));
     } else {
       if (selectedInterests.length < 6) {
-        setSelectedInterests([...selectedInterests, item]);
+        setSelectedInterests([...selectedInterests.map(cleanOptionLabel), cleanItem]);
       } else {
         Alert.alert('Limit Reached', 'You can select up to 6 interests.');
       }
@@ -419,7 +433,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
     // Slot #1 strictly accepts images/photos only
     if (slotIndex === 0 && isVideo) {
       Alert.alert(
-        'Image Only Slot 📷',
+        'Image Only Slot',
         'Slot #1 accepts photos/images only. Videos are not allowed for Slot #1.'
       );
       return;
@@ -438,7 +452,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
       if (effective15sSizeBytes > maxVideoSizeBytes) {
         Alert.alert(
-          'Video File Size Too Large 📹',
+          'Video File Size Too Large',
           `The 15-second clip of your selected video is estimated at ${(effective15sSizeBytes / (1024 * 1024)).toFixed(1)}MB (max 35MB allowed).\n\nPlease select a lower resolution video or trim a short clip under 15 seconds in your phone gallery.`
         );
         return;
@@ -552,7 +566,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       const errorMsg = isAbort
         ? 'Video upload timed out. Please select a shorter/smaller video clip (under 35MB) or check your network connection.'
         : uploadErr?.data?.message || uploadErr?.message || 'Upload encountered an issue. Please try again.';
-      Alert.alert('Upload Error 📹', errorMsg);
+      Alert.alert('Upload Error', errorMsg);
     } finally {
       setUploadingSlotIndex(null);
     }
@@ -638,7 +652,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
         if (response.errorCode) {
           if (response.errorCode === 'permission') {
             Alert.alert(
-              'Camera Permission Needed 📹',
+              'Camera Permission Needed',
               'Please grant camera and audio permissions in your phone settings to record video.'
             );
           } else {
@@ -683,7 +697,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           const granted = await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
             {
-              title: 'Storage Permission Required 🖼️',
+              title: 'Storage Permission Required',
               message: 'Dating App needs access to your media so you can upload profile photos.',
               buttonNeutral: 'Ask Me Later',
               buttonNegative: 'Cancel',
@@ -731,7 +745,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
           console.error('[QuestionnaireScreen] Media Picker error:', response.errorMessage);
           if (response.errorCode === 'permission') {
             Alert.alert(
-              'Permission Needed 🖼️',
+              'Permission Needed',
               'Please grant media storage permission in your phone settings to select photos or videos.'
             );
           } else {
@@ -797,7 +811,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
 
     if (uploadingSlotIndex !== null) {
       Alert.alert(
-        'Upload in Progress 📹',
+        'Upload in Progress',
         'Your video/photo is still uploading to cloud storage. Please wait a few seconds for the upload to complete before saving your profile.',
         [{ text: 'OK' }]
       );
@@ -918,7 +932,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       ageRangeMax: parseInt(ageRangeMax, 10) || 35,
       distanceRange: parseInt(distanceRange, 10) || 10,
       bio: bio.trim(),
-      interests: selectedInterests,
+      interests: selectedInterests.map(cleanOptionLabel).filter(Boolean),
       languages: selectedLanguages,
       profileImage: mainProfilePhoto,
       profileImages: galleryMediaList,
@@ -1118,7 +1132,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     onChangeText={setFirstName}
                   />
 
-                  <Text style={styles.inputLabel}>Date of Birth</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="calendar-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Date of Birth</Text>
+                  </View>
                   <View style={styles.bdayRow}>
                     <View style={styles.bdayColSmall}>
                       <CustomInput
@@ -1149,7 +1166,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     </View>
                   </View>
 
-                  <Text style={styles.inputLabel}>Gender</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="male-female-outline" size={16} color="#38BDF8" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Gender</Text>
+                  </View>
                   <View style={styles.optionsRow}>
                     {['Women', 'Male', 'Non-binary'].map((g) => (
                       <TouchableOpacity
@@ -1169,7 +1189,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     ))}
                   </View>
 
-                  <Text style={styles.inputLabel}>Interested In</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="people-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Interested In</Text>
+                  </View>
                   <View style={styles.optionsRow}>
                     {['Men', 'Women', 'Everyone'].map((opt) => (
                       <TouchableOpacity
@@ -1189,7 +1212,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     ))}
                   </View>
 
-                  <Text style={styles.inputLabel}>Sexual Orientation</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="heart-outline" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Sexual Orientation</Text>
+                  </View>
                   <View style={styles.wrapRow}>
                     {orientationsList.map((o) => (
                       <TouchableOpacity
@@ -1212,7 +1238,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
               {/* STEP 2: Lifestyle & Habits */}
               {step === 2 && (
                 <>
-                  <Text style={styles.inputLabel}>Looking For</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="heart-circle-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Looking For</Text>
+                  </View>
                   <View style={styles.wrapRow}>
                     {lookingForList.map((lf) => (
                       <TouchableOpacity
@@ -1228,7 +1257,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     ))}
                   </View>
 
-                  <Text style={styles.inputLabel}>Drink Habit</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="wine-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Drink Habit</Text>
+                  </View>
                   <View style={styles.optionsRow}>
                     {drinkHabitsList.map((dh) => (
                       <TouchableOpacity
@@ -1248,7 +1280,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     ))}
                   </View>
 
-                  <Text style={styles.inputLabel}>Smoke Habit</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="flame-outline" size={16} color="#FE3C72" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Smoke Habit</Text>
+                  </View>
                   <View style={styles.optionsRow}>
                     {smokeHabitsList.map((sh) => (
                       <TouchableOpacity
@@ -1268,7 +1303,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     ))}
                   </View>
 
-                  <Text style={styles.inputLabel}>Workout / Exercise</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="barbell-outline" size={16} color="#38BDF8" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Workout / Exercise</Text>
+                  </View>
                   <View style={styles.optionsRow}>
                     {exerciseHabitsList.map((ex) => (
                       <TouchableOpacity
@@ -1288,24 +1326,43 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     ))}
                   </View>
 
-                  <Text style={styles.inputLabel}>Pets</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="paw-outline" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Pets</Text>
+                  </View>
                   <View style={styles.optionsRow}>
-                    {petsOptionsList.map((p) => (
-                      <TouchableOpacity
-                        key={p}
-                        style={[styles.chip, pets === p && styles.chipSelected]}
-                        onPress={() => setPets(p)}
-                        activeOpacity={0.8}
-                      >
-                        <Text
-                          style={[styles.chipText, pets === p && styles.chipTextSelected]}
-                          numberOfLines={1}
-                          adjustsFontSizeToFit
+                    {petsOptionsList.map((p) => {
+                      const cleanP = cleanOptionLabel(p);
+                      const isSelected = cleanOptionLabel(pets).toLowerCase() === cleanP.toLowerCase();
+                      const iconColor = isSelected ? '#FFFFFF' : '#FFD700';
+                      const pLower = cleanP.toLowerCase();
+                      const petIconName = pLower.includes('dog')
+                        ? (isSelected ? 'paw' : 'paw-outline')
+                        : pLower.includes('cat')
+                        ? (isSelected ? 'paw' : 'paw-outline')
+                        : pLower.includes('both')
+                        ? (isSelected ? 'paw' : 'paw-outline')
+                        : (isSelected ? 'close-circle' : 'close-circle-outline');
+                      return (
+                        <TouchableOpacity
+                          key={p}
+                          style={[styles.chip, isSelected && styles.chipSelected]}
+                          onPress={() => setPets(cleanP)}
+                          activeOpacity={0.8}
                         >
-                          {p}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Ionicons name={petIconName} size={14} color={iconColor} style={{ marginRight: 4 }} />
+                            <Text
+                              style={[styles.chipText, isSelected && styles.chipTextSelected]}
+                              numberOfLines={1}
+                              adjustsFontSizeToFit
+                            >
+                              {cleanP}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
 
                   <View style={styles.btnRow}>
@@ -1477,13 +1534,17 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                     })}
                   </View>
 
-                  <Text style={styles.inputLabel}>Select Your Interests (Max 6)</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="sparkles-outline" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Select Your Interests (Max 6)</Text>
+                  </View>
                   <View style={styles.interestsWrap}>
-                    {interestOptionsList.map((item) => {
-                      const isSelected = selectedInterests.includes(item);
+                    {interestOptionsList.map((rawItem) => {
+                      const item = cleanOptionLabel(rawItem);
+                      const isSelected = selectedInterests.some((s) => cleanOptionLabel(s).toLowerCase() === item.toLowerCase());
                       return (
                         <TouchableOpacity
-                          key={item}
+                          key={rawItem}
                           style={[styles.interestChip, isSelected && styles.interestChipSelected]}
                           onPress={() => toggleInterest(item)}
                           activeOpacity={0.8}
@@ -1660,7 +1721,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
               {step === 6 && (
                 <>
                   {/* Status / Story Horizontal Carousel Preview */}
-                  <Text style={styles.inputLabel}>📸 Status / Story Preview</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                    <Ionicons name="camera-outline" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+                    <Text style={styles.inputLabel}>Status / Story Preview</Text>
+                  </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.storyRow}>
                     {validStoryPhotos.map((url, idx) => {
                       const isVid = isVideoUrl(url);
@@ -1687,7 +1751,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                               </View>
                             )}
                           </View>
-                          <Text style={styles.storyBadge}>{isVid ? '🎬 Video' : `Photo${idx + 1}`}</Text>
+                          <Text style={styles.storyBadge}>{isVid ? 'Video' : `Photo${idx + 1}`}</Text>
                         </TouchableOpacity>
                       );
                     })}
@@ -1741,7 +1805,10 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                               )}
                               {isVid ? (
                                 <View style={[styles.mainBadge, { backgroundColor: index === 0 ? '#FE3C72' : '#3897F0' }]}>
-                                  <Text style={styles.mainBadgeText}>{index === 0 ? 'Main 📹 Video' : '📹 Video'}</Text>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Ionicons name="videocam" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
+                                    <Text style={styles.mainBadgeText}>{index === 0 ? 'Main Video' : 'Video'}</Text>
+                                  </View>
                                 </View>
                               ) : index === 0 ? (
                                 <View style={styles.mainBadge}>
@@ -1904,7 +1971,7 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
                   >
                     <Ionicons name="videocam-outline" size={22} color="#3897F0" style={{ marginRight: 12 }} />
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.pickerOptionTitle}>Choose Video from Gallery 🎬</Text>
+                      <Text style={styles.pickerOptionTitle}>Choose Video from Gallery</Text>
                       <Text style={styles.pickerOptionSub}>Select a video clip from gallery (up to 15s)</Text>
                     </View>
                   </TouchableOpacity>

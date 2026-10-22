@@ -23,6 +23,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
 import { PreviewModal } from '../components/PreviewModal';
+import { getOptionIcon, cleanOptionLabel } from './QuestionnaireScreen';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0;
@@ -1183,14 +1184,18 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
               <Text style={styles.sectionHeading}>Interests</Text>
               <View style={styles.chipsWrapContainer}>
                 {filterOptions.interests.map((item) => {
-                  const isSelected = selectedInterests.includes(item);
+                  const clean = cleanOptionLabel(item);
+                  const isSelected = selectedInterests.some((s) => cleanOptionLabel(s).toLowerCase() === clean.toLowerCase());
                   return (
                     <TouchableOpacity
                       key={item}
-                      onPress={() => toggleSelection(item, selectedInterests, setSelectedInterests)}
+                      onPress={() => toggleSelection(clean, selectedInterests, setSelectedInterests)}
                       style={[styles.chip, isSelected && styles.chipActive]}
                     >
-                      <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{item}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        {getOptionIcon(clean, isSelected, 13, { marginRight: 4 })}
+                        <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>{clean}</Text>
+                      </View>
                     </TouchableOpacity>
                   );
                 })}
@@ -1808,9 +1813,9 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                   <Text style={styles.expandedSectionHeader}>Interests & Languages</Text>
                   <View style={styles.expandedChipsWrap}>
                     {ensureArray(selectedProfileModal.interests).map((interest, idx) => {
-                      const interestStr = safeString(interest);
-                      const commonList = ensureArray(selectedProfileModal.commonInterests).map((c) => safeString(c));
-                      const isCommon = commonList.includes(interestStr);
+                      const cleanInterest = cleanOptionLabel(safeString(interest));
+                      const commonList = ensureArray(selectedProfileModal.commonInterests).map((c) => cleanOptionLabel(safeString(c)).toLowerCase());
+                      const isCommon = commonList.includes(cleanInterest.toLowerCase());
                       return (
                         <View
                           key={`int-${idx}`}
@@ -1820,14 +1825,18 @@ const ensureArray = (val) => (Array.isArray(val) ? val : []);
                           ]}
                         >
                           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            {isCommon && <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 3 }} />}
+                            {isCommon ? (
+                              <Ionicons name="star" size={11} color="#FFD700" style={{ marginRight: 4 }} />
+                            ) : (
+                              getOptionIcon(cleanInterest, false, 12, { marginRight: 4 })
+                            )}
                             <Text
                               style={[
                                 styles.expandedChipText,
                                 isCommon && styles.expandedChipTextHighlight,
                               ]}
                             >
-                              {interestStr}
+                              {cleanInterest}
                             </Text>
                           </View>
                         </View>

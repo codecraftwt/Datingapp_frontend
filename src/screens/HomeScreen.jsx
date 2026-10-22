@@ -66,6 +66,7 @@ import {
   deleteMessageInState,
   deleteForEveryoneInState,
   deleteForMeInState,
+  setActiveChatUser,
   setTyping,
   updateMessageReactions,
   updateMessagePinned,
@@ -943,9 +944,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             })
           );
         }
+        typedMessageRef.current = '';
+        setTypedMessage('');
         setIsSearchInChatActive(false);
         setChatSearchQuery('');
         setChatSearchMatchIndex(0);
+        dispatch(setMessages([]));
+        dispatch(setActiveChatUser(null));
         setActiveChat(null);
         return true;
       }
@@ -1189,6 +1194,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
   const [typedMessage, setTypedMessage] = useState('');
+  const typedMessageRef = useRef('');
   const [isSearchInChatActive, setIsSearchInChatActive] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [chatSearchMatchIndex, setChatSearchMatchIndex] = useState(0);
@@ -1317,6 +1323,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const deletedMessageIdsRef = useRef(new Set());
   const [showChatOptionsMenuModal, setShowChatOptionsMenuModal] = useState(false);
   const [showStarredModal, setShowStarredModal] = useState(false);
+  const [showMediaDocsModal, setShowMediaDocsModal] = useState(false);
+  const [mediaDocsTab, setMediaDocsTab] = useState('media'); // 'media' | 'docs' | 'links'
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportTargetUser, setReportTargetUser] = useState(null);
   const [selectedReportReason, setSelectedReportReason] = useState('Inappropriate Photos or Content');
@@ -1493,6 +1501,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     setActiveTab(tabName);
     if (tabName !== 'chat') {
+      dispatch(setMessages([]));
+      dispatch(setActiveChatUser(null));
       setActiveChat(null);
     }
   };
@@ -1582,7 +1592,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           senderId: sId,
           receiverId: (m.receiverId || m.receiver)?._id?.toString() || (m.receiverId || m.receiver)?.toString(),
           text: m.text,
-          messageType: m.messageType || 'text',
+          messageType: (m.messageType && m.messageType !== 'text') ? m.messageType : (m.mediaUrl ? 'image' : (m.messageType || 'text')),
           mediaUrl: m.mediaUrl,
           fileName: m.fileName,
           fileSize: m.fileSize,
@@ -1617,11 +1627,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           // Preserve any local optimistic messages (pending, sending, failed, or with tempId not yet in formattedMsgs)
           const pendingMsgs = prevMsgs.filter(
-            (m) =>
-              m.status === 'pending' ||
-              m.status === 'sending' ||
-              m.status === 'failed' ||
-              (m.tempId && !formattedMsgs.some((f) => f.tempId === m.tempId || f.id === m.tempId || f.id === m.id))
+            (m) => {
+              if (!m) return false;
+              const isPending = m.status === 'pending' ||
+                m.status === 'sending' ||
+                m.status === 'failed' ||
+                (m.tempId && !formattedMsgs.some((f) => f.tempId === m.tempId || f.id === m.tempId || f.id === m.id));
+              if (!isPending) return false;
+              const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+              const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+              return !mReceiver || !mSender || mReceiver === partnerId || mSender === partnerId || m.sender === 'you' || m.sender === 'them';
+            }
           );
 
           // Merge server messages with local messages to preserve replyTo and reactions
@@ -1648,6 +1664,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               ...fMsg,
               isDeletedForEveryone: isDel,
               text: isDel ? 'This message was deleted' : (fMsg.text || existing.text),
+              messageType: (fMsg.messageType && fMsg.messageType !== 'text') ? fMsg.messageType : (existing.messageType || fMsg.messageType || (existing.mediaUrl || fMsg.mediaUrl ? 'image' : 'text')),
               mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
               fileName: isDel ? null : (fMsg.fileName || existing.fileName),
               fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
@@ -1727,7 +1744,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 isEdited: Boolean(fMsg.isEdited || existing.isEdited),
               };
             });
-            const finalMsgs = enforceSinglePin((mergedChatMsgs.length === 0 && prevMsgs.length > 0) ? prevMsgs : mergedChatMsgs);
+            const filteredPrevMsgs = prevMsgs.filter((m) => {
+              if (!m || m.id === 'match-init') return false;
+              const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+              const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+              return !mReceiver || !mSender || mReceiver === partnerId || mSender === partnerId || m.sender === 'you' || m.sender === 'them';
+            });
+            const finalMsgs = enforceSinglePin((mergedChatMsgs.length === 0 && filteredPrevMsgs.length > 0) ? filteredPrevMsgs : mergedChatMsgs);
             const msgsEqual = prevMsgs.length === finalMsgs.length &&
               prevMsgs.every((m, i) =>
                 m.id === finalMsgs[i]?.id &&
@@ -1755,7 +1778,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           return c;
         })
       );
-      dispatch(setMessages(rawMsgs));
+      dispatch(setMessages(formattedMsgs));
     } catch (err) {
       if (err?.name === 'AbortError' || err?.message?.includes('Aborted') || err?.message?.includes('abort')) {
         return; // Silently ignore cancelled/aborted request
@@ -3048,7 +3071,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         dispatch(updateMessagePinned({ messageId: targetIdStr, tempId: targetTempStr, isPinned: !!isPinned }));
       });
 
-      socketRef.current.on('message_star_updated', ({ messageId, tempId, isStarred, senderId, receiverId, userId, starredBy }) => {
+      socketRef.current.on('message_star_updated', ({ messageId, tempId, isStarred, senderId, receiverId, userId, starredBy, mediaUrl, messageType, fileName, fileSize }) => {
         console.log('Socket.IO message_star_updated received:', messageId, isStarred);
         const actionUserId = (userId || senderId)?.toString();
         const myUserId = (currentId || currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
@@ -3097,7 +3120,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 nextStarredBy = nextStarredBy.filter(id => (id?._id || id)?.toString() !== myUserId);
               }
             }
-            return { ...m, isStarred: !!isStarred, starredBy: nextStarredBy };
+            return {
+              ...m,
+              isStarred: !!isStarred,
+              starredBy: nextStarredBy,
+              mediaUrl: m.mediaUrl || mediaUrl,
+              messageType: (m.messageType && m.messageType !== 'text')
+                ? m.messageType
+                : (messageType || (m.mediaUrl || mediaUrl ? 'image' : 'text')),
+              fileName: m.fileName || fileName,
+              fileSize: m.fileSize || fileSize,
+            };
           }
           return m;
         };
@@ -3125,7 +3158,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             messages: (prevActive.messages || []).map(updateStar),
           };
         });
-        dispatch(updateMessageStarred({ messageId: targetIdStr, tempId: targetTempStr, isStarred: !!isStarred, currentUserId: myUserId, starredBy }));
+        dispatch(updateMessageStarred({
+          messageId: targetIdStr,
+          tempId: targetTempStr,
+          isStarred: !!isStarred,
+          currentUserId: myUserId,
+          starredBy,
+          mediaUrl,
+          messageType,
+          fileName,
+          fileSize,
+        }));
       });
 
       socketRef.current.on('message_deleted', ({ messageId, tempId, deleteType, text, senderId, receiverId, deletedForEveryone }) => {
@@ -4005,9 +4048,15 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     const messagesByOtherUser = {};
     messagesData.forEach((msg) => {
+      if (!msg) return;
       const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
       const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
-      const otherId = sId === currentId ? rId : sId;
+      const isSentByMe = sId === currentId || msg.sender === 'you';
+      const otherId = isSentByMe ? rId : sId;
+
+      if (!otherId || otherId === currentId || otherId === 'you' || otherId === 'them' || otherId === 'undefined' || otherId === 'null') {
+        return;
+      }
 
       if (!messagesByOtherUser[otherId]) {
         messagesByOtherUser[otherId] = [];
@@ -4017,11 +4066,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       messagesByOtherUser[otherId].push({
         id: rawId,
         tempId: rawTempId,
-        sender: sId === currentId ? 'you' : 'them',
-        senderId: sId,
-        receiverId: rId,
+        sender: isSentByMe ? 'you' : 'them',
+        senderId: isSentByMe ? currentId : sId,
+        receiverId: isSentByMe ? otherId : currentId,
         text: msg.text,
-        messageType: msg.messageType || 'text',
+        messageType: (msg.messageType && msg.messageType !== 'text') ? msg.messageType : (msg.mediaUrl ? 'image' : (msg.messageType || 'text')),
         mediaUrl: msg.mediaUrl,
         fileName: msg.fileName,
         fileSize: msg.fileSize,
@@ -4072,7 +4121,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const existingChatInState = (chats || []).find(
         (c) => (c.id || c._id || c.userId)?.toString() === otherId
       );
-      const existingMsgs = existingChatInState?.messages || [];
+      const existingMsgs = (existingChatInState?.messages || []).filter((m) => {
+        if (!m || m.id === 'match-init' || m.id === 'blocked-init') return false;
+        const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+        const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+        return !mReceiver || !mSender || mReceiver === otherId || mSender === otherId || m.sender === 'you' || m.sender === 'them';
+      });
 
       // Non-destructively merge messages from DB with local state so replyTo and reactions are NEVER wiped out
       const mergedDbMsgs = (messagesByOtherUser[otherId] || []).map((dbMsg) => {
@@ -4098,6 +4152,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           ...dbMsg,
           isDeletedForEveryone: isDel,
           text: isDel ? 'This message was deleted' : (dbMsg.text || existing.text),
+          messageType: (dbMsg.messageType && dbMsg.messageType !== 'text') ? dbMsg.messageType : (existing.messageType || dbMsg.messageType || (existing.mediaUrl || dbMsg.mediaUrl ? 'image' : 'text')),
           mediaUrl: isDel ? null : (dbMsg.mediaUrl || existing.mediaUrl),
           fileName: isDel ? null : (dbMsg.fileName || existing.fileName),
           fileSize: isDel ? null : (dbMsg.fileSize || existing.fileSize),
@@ -4154,7 +4209,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
         // Preserve any real messages that already exist in local state
         const existingChatInState = (chats || []).find((c) => (c.id || c._id || c.userId)?.toString() === matchedUserStr);
-        const existingRealMsgs = (existingChatInState?.messages || []).filter((m) => m.id !== 'match-init');
+        const existingRealMsgs = (existingChatInState?.messages || []).filter((m) => {
+          if (!m || m.id === 'match-init' || m.id === 'blocked-init') return false;
+          const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+          const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+          if (mReceiver && mReceiver === matchedUserStr) return true;
+          if (mSender && mSender === matchedUserStr) return true;
+          return false;
+        });
 
         chatsList.push({
           id: matchedUserStr,
@@ -4202,7 +4264,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     // Keep activeChat updated if open
     setActiveChat((prevActiveChat) => {
       if (prevActiveChat) {
-        const found = chatsList.find((c) => c.id === prevActiveChat.id);
+        const found = chatsList.find((c) =>
+          c.id === prevActiveChat.id ||
+          (c.id || c._id || c.userId)?.toString() === (prevActiveChat.id || prevActiveChat._id || prevActiveChat.userId)?.toString()
+        );
         if (found) {
           const prevMsgs = prevActiveChat.messages || [];
           const mergedFoundMsgs = (found.messages || []).map((fMsg) => {
@@ -4228,6 +4293,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               ...fMsg,
               isDeletedForEveryone: isDel,
               text: isDel ? 'This message was deleted' : (fMsg.text || existing.text),
+              messageType: (fMsg.messageType && fMsg.messageType !== 'text') ? fMsg.messageType : (existing.messageType || fMsg.messageType || (existing.mediaUrl || fMsg.mediaUrl ? 'image' : 'text')),
               mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
               fileName: isDel ? null : (fMsg.fileName || existing.fileName),
               fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
@@ -4243,17 +4309,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             };
           });
 
-          const extraMsgs = prevMsgs.filter(
-            (m) =>
-              m &&
-              m.id !== 'match-init' &&
-              !mergedFoundMsgs.some(
-                (f) =>
-                  (f.id && m.id && String(f.id) === String(m.id)) ||
-                  (m.tempId && (String(f.id) === String(m.tempId) || (f.tempId && String(f.tempId) === String(m.tempId)))) ||
-                  (f.tempId && m.id && String(m.id) === String(f.tempId))
-              )
-          );
+          const extraMsgs = prevMsgs.filter((m) => {
+            if (!m || m.id === 'match-init') return false;
+            const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+            const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+            const belongs = !mReceiver || !mSender || mReceiver === found.id || mSender === found.id || m.sender === 'you' || m.sender === 'them';
+            if (!belongs) return false;
+            return !mergedFoundMsgs.some(
+              (f) =>
+                (f.id && m.id && String(f.id) === String(m.id)) ||
+                (m.tempId && (String(f.id) === String(m.tempId) || (f.tempId && String(f.tempId) === String(m.tempId)))) ||
+                (f.tempId && m.id && String(m.id) === String(f.tempId))
+            );
+          });
           const combined = deduplicateMessages([...mergedFoundMsgs, ...extraMsgs]);
           const hasRealMessages = combined.some((m) => m.id !== 'match-init');
           const cleanMessages = deduplicateMessages(enforceSinglePin(hasRealMessages ? combined.filter((m) => m.id !== 'match-init') : combined));
@@ -4289,6 +4357,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           }
 
           return {
+            ...prevActiveChat,
             ...found,
             isBlocked: isBlocked,
             isBlockedByOther: isBlockedByOther,
@@ -4304,19 +4373,20 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   useEffect(() => {
     if (!chatMessagesData || !activeChat || !currentUser) return;
 
-    const currentId = (currentUser.id || currentUser._id)?.toString();
+    const currentId = (currentUser.id || currentUser._id || userProfile?.id || userProfile?._id)?.toString();
     const activePartnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
     if (!activePartnerId) return;
 
-    // Filter messages specifically for the active chat conversation so messages forwarded/sent to other users do not leak here
+    // Filter messages specifically for the active chat conversation so messages sent to other users never leak here
     const relevantChatMsgs = chatMessagesData.filter((msg) => {
+      if (!msg) return false;
       const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
       const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
-      if (!sId || !rId) return true;
-      return (
-        (sId === currentId && rId === activePartnerId) ||
-        (sId === activePartnerId && rId === currentId)
-      );
+      const isSentByMe = sId === currentId || msg.sender === 'you';
+      if (isSentByMe) {
+        return rId === activePartnerId;
+      }
+      return sId === activePartnerId;
     });
 
     // Map DB messages to UI message structure
@@ -4335,7 +4405,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         senderId: (msg.senderId?._id || msg.senderId || msg.sender)?.toString(),
         receiverId: (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString(),
         text: isDel ? 'This message was deleted' : (msg.text || ''),
-        messageType: msg.messageType || 'text',
+        messageType: (msg.messageType && msg.messageType !== 'text') ? msg.messageType : (msg.mediaUrl ? 'image' : (msg.messageType || 'text')),
         mediaUrl: isDel ? null : msg.mediaUrl,
         fileName: isDel ? null : msg.fileName,
         fileSize: isDel ? null : msg.fileSize,
@@ -4356,7 +4426,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     // Maintain any active temp messages & real-time received messages
     setActiveChat((prev) => {
-      if (prev && prev.id === activeChat.id) {
+      if (prev && (prev.id === activeChat.id || prev._id === activeChat._id || String(prev.id || prev._id || prev.userId) === String(activeChat.id || activeChat._id || activeChat.userId))) {
         if (formatted.length === 0 && prev.messages.some(m => m.id === 'match-init')) {
           return prev;
         }
@@ -4384,6 +4454,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             ...fMsg,
             isDeletedForEveryone: isDel,
             text: isDel ? 'This message was deleted' : (fMsg.text || existing.text),
+            messageType: (fMsg.messageType && fMsg.messageType !== 'text') ? fMsg.messageType : (existing.messageType || fMsg.messageType || (existing.mediaUrl || fMsg.mediaUrl ? 'image' : 'text')),
             mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
             fileName: isDel ? null : (fMsg.fileName || existing.fileName),
             fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
@@ -4398,17 +4469,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             isEdited: Boolean(fMsg.isEdited || existing.isEdited),
           };
         });
-        const extraMsgs = prevMsgs.filter(
-          (m) =>
-            m &&
-            m.id !== 'match-init' &&
-            !mergedFormatted.some(
-              (f) =>
-                (f.id && m.id && String(f.id) === String(m.id)) ||
-                (m.tempId && (String(f.id) === String(m.tempId) || (f.tempId && String(f.tempId) === String(m.tempId)))) ||
-                (f.tempId && m.id && String(m.id) === String(f.tempId))
-            )
-        );
+        const extraMsgs = prevMsgs.filter((m) => {
+          if (!m || m.id === 'match-init') return false;
+          const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+          const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+          const belongs = !mReceiver || !mSender || mReceiver === activePartnerId || mSender === activePartnerId || m.sender === 'you' || m.sender === 'them';
+          if (!belongs) return false;
+          return !mergedFormatted.some(
+            (f) =>
+              (f.id && m.id && String(f.id) === String(m.id)) ||
+              (m.tempId && (String(f.id) === String(m.tempId) || (f.tempId && String(f.tempId) === String(m.tempId)))) ||
+              (f.tempId && m.id && String(m.id) === String(f.tempId))
+          );
+        });
         const nextMsgs = deduplicateMessages(enforceSinglePin([...mergedFormatted, ...extraMsgs]));
         nextMsgs.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 
@@ -4436,7 +4509,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     setChats((prevChats) =>
       prevChats.map((c) => {
-        if (c.id === activeChat.id) {
+        if (c.id === activeChat.id || c._id === activeChat._id || String(c.id || c._id || c.userId) === String(activeChat.id || activeChat._id || activeChat.userId)) {
           if (formatted.length === 0 && c.messages.some(m => m.id === 'match-init')) {
             return c;
           }
@@ -4464,6 +4537,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               ...fMsg,
               isDeletedForEveryone: isDel,
               text: isDel ? 'This message was deleted' : (fMsg.text || existing.text),
+              messageType: (fMsg.messageType && fMsg.messageType !== 'text') ? fMsg.messageType : (existing.messageType || fMsg.messageType || (existing.mediaUrl || fMsg.mediaUrl ? 'image' : 'text')),
               mediaUrl: isDel ? null : (fMsg.mediaUrl || existing.mediaUrl),
               fileName: isDel ? null : (fMsg.fileName || existing.fileName),
               fileSize: isDel ? null : (fMsg.fileSize || existing.fileSize),
@@ -4478,17 +4552,19 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               isEdited: Boolean(fMsg.isEdited || existing.isEdited),
             };
           });
-          const extraMsgs = prevMsgs.filter(
-            (m) =>
-              m &&
-              m.id !== 'match-init' &&
-              !mergedFormatted.some(
-                (f) =>
-                  (f.id && m.id && String(f.id) === String(m.id)) ||
-                  (m.tempId && (String(f.id) === String(m.tempId) || (f.tempId && String(f.tempId) === String(m.tempId)))) ||
-                  (f.tempId && m.id && String(m.id) === String(f.tempId))
-              )
-          );
+          const extraMsgs = prevMsgs.filter((m) => {
+            if (!m || m.id === 'match-init') return false;
+            const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+            const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
+            const belongs = !mReceiver || !mSender || mReceiver === activePartnerId || mSender === activePartnerId || m.sender === 'you' || m.sender === 'them';
+            if (!belongs) return false;
+            return !mergedFormatted.some(
+              (f) =>
+                (f.id && m.id && String(f.id) === String(m.id)) ||
+                (m.tempId && (String(f.id) === String(m.tempId) || (f.tempId && String(f.tempId) === String(m.tempId)))) ||
+                (f.tempId && m.id && String(m.id) === String(f.tempId))
+            );
+          });
           const nextMsgs = deduplicateMessages(enforceSinglePin([...mergedFormatted, ...extraMsgs]));
           nextMsgs.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 
@@ -4515,7 +4591,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       })
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatMessagesData, currentUser]);
+  }, [chatMessagesData, currentUser, activeChat?.id, activeChat?._id, activeChat?.userId]);
 
   // Emit mark_seen when activeChat is opened or when new messages arrive in it
   useEffect(() => {
@@ -4593,9 +4669,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         ],
       };
       setChats([newChat, ...chats]);
+      dispatch(setMessages([]));
+      dispatch(setActiveChatUser(newChat));
       setActiveChat(newChat);
     } else {
       const foundChat = chats.find((c) => c.id === candidateId);
+      dispatch(setMessages([]));
+      dispatch(setActiveChatUser(foundChat));
       setActiveChat(foundChat);
     }
     setShowMatchPopup(false);
@@ -4603,6 +4683,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleInputChange = (text) => {
+    typedMessageRef.current = text;
     setTypedMessage(text);
     if (showStickerPicker) setShowStickerPicker(false);
 
@@ -4644,8 +4725,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const handleSendMessage = async (customPayload = null) => {
     if (!activeChat || !currentUser || isSendingMessageRef.current) return;
 
-    const currentId = currentUser.id || currentUser._id;
-    const receiverId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+    const receiverId = (customPayload?.receiverId || activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    if (!currentId || !receiverId) return;
 
     // Set sending lock to prevent rapid double-tap duplicate triggers
     isSendingMessageRef.current = true;
@@ -4667,7 +4749,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     if (editingMessage) {
       if (customPayload) return; // Do not edit if sending a sticker/file
-      const textToEdit = typedMessage.trim();
+      const textToEdit = (typedMessageRef.current !== undefined && typedMessageRef.current !== null && typedMessageRef.current !== '' ? typedMessageRef.current : typedMessage).trim();
       if (!textToEdit) return;
 
       try {
@@ -4698,7 +4780,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           return prevActive;
         });
         setEditingMessage(null);
+        typedMessageRef.current = '';
         setTypedMessage('');
+        if (chatInputRef.current) {
+          try { chatInputRef.current.clear(); } catch (_) { }
+        }
         refetchChatMessages();
       } catch (err) {
         console.error('Failed to edit message:', err);
@@ -4721,10 +4807,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       return;
     }
 
-    const currentText = typedMessage;
+    const currentText = (typedMessageRef.current !== undefined && typedMessageRef.current !== null && typedMessageRef.current !== '' ? typedMessageRef.current : typedMessage);
     if (!customPayload) {
       if (!currentText.trim()) return;
+      typedMessageRef.current = '';
       setTypedMessage('');
+      if (chatInputRef.current) {
+        try { chatInputRef.current.clear(); } catch (_) { }
+      }
     }
 
     if (editingMessage) {
@@ -4830,6 +4920,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     setActiveChat((prevActive) => {
       if (!prevActive) return prevActive;
+      const prevActivePartnerId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+      if (prevActivePartnerId !== receiverId) return prevActive;
       const msgs = (prevActive.messages || []).filter((m) => m.id !== 'match-init');
       const exists = msgs.some((m) => m.id === tempId || m.tempId === tempId);
       return {
@@ -4886,6 +4978,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       );
       setActiveChat((prevActive) => {
         if (!prevActive) return prevActive;
+        const prevActivePartnerId = (prevActive.id || prevActive._id || prevActive.userId)?.toString();
+        if (prevActivePartnerId !== receiverId) return prevActive;
         const msgs = prevActive.messages || [];
         const hasTemp = msgs.some((m) => m.id === tempId || m.tempId === tempId);
         return {
@@ -5265,7 +5359,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             nextStarredBy = nextStarredBy.filter(id => (id?._id || id)?.toString() !== sIdStr);
           }
         }
-        return { ...m, isStarred: newStarred, starredBy: nextStarredBy };
+        return {
+          ...m,
+          isStarred: newStarred,
+          starredBy: nextStarredBy,
+          mediaUrl: m.mediaUrl || targetMsg.mediaUrl,
+          messageType: (m.messageType && m.messageType !== 'text')
+            ? m.messageType
+            : (targetMsg.messageType || (m.mediaUrl || targetMsg.mediaUrl ? 'image' : 'text')),
+          fileName: m.fileName || targetMsg.fileName,
+          fileSize: m.fileSize || targetMsg.fileSize,
+        };
       }
       return m;
     };
@@ -5274,11 +5378,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     setChats((prev) =>
       prev.map((c) => {
         const cId = (c.id || c._id || c.userId)?.toString();
-        return cId === rIdStr ? { ...c, messages: (c.messages || []).map(updateStar) } : c;
+        const hasMsg = (c.messages || []).some(
+          (m) => (m.id || m._id)?.toString() === targetIdStr || m.tempId?.toString() === targetIdStr
+        );
+        return (cId === rIdStr || hasMsg) ? { ...c, messages: (c.messages || []).map(updateStar) } : c;
       })
     );
 
-    dispatch(updateMessageStarred({ messageId: targetIdStr, tempId: targetMsg.tempId, isStarred: newStarred, currentUserId: sIdStr }));
+    dispatch(updateMessageStarred({
+      messageId: targetIdStr,
+      tempId: targetMsg.tempId,
+      isStarred: newStarred,
+      currentUserId: sIdStr,
+      mediaUrl: targetMsg.mediaUrl,
+      messageType: targetMsg.messageType,
+      fileName: targetMsg.fileName,
+      fileSize: targetMsg.fileSize,
+    }));
 
     setSelectedMessageForAction(null);
     setShowMessageActionModal(false);
@@ -5989,6 +6105,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           onPress: () => {
             // ⚡ 1. Instant local state update & close chat (0ms UI latency)
             if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetUserId) {
+              dispatch(setMessages([]));
+              dispatch(setActiveChatUser(null));
               setActiveChat(null);
             }
             setShowActiveCardDetails(false);
@@ -6328,6 +6446,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 (prev || []).filter((c) => !idsToDelete.includes((c.id || c._id || c.userId)?.toString()))
               );
               if (activeChat && idsToDelete.includes((activeChat.id || activeChat._id || activeChat.userId)?.toString())) {
+                dispatch(setMessages([]));
+                dispatch(setActiveChatUser(null));
                 setActiveChat(null);
               }
 
@@ -6361,6 +6481,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               console.log('All conversations cleared successfully');
 
               // Clear activeChat if open, and empty chats list
+              dispatch(setMessages([]));
+              dispatch(setActiveChatUser(null));
               setActiveChat(null);
               setChats([]);
               refetchMessages();
@@ -6395,6 +6517,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       setReactingToMessageForEmoji(null);
       setShowEmojiPicker(false);
     } else {
+      typedMessageRef.current = (typedMessageRef.current || '') + char;
       setTypedMessage((prev) => (prev || '') + char);
     }
   };
@@ -7542,6 +7665,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 onPress={() => {
                                   if (singleMsg) {
                                     setEditingMessage(singleMsg);
+                                    typedMessageRef.current = singleMsg.text || '';
                                     setTypedMessage(singleMsg.text || '');
                                     setIsMultiSelectMode(false);
                                     setSelectedMultiMessageIds([]);
@@ -7612,9 +7736,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               );
                             }
                           }
+                          typedMessageRef.current = '';
+                          setTypedMessage('');
                           setIsSearchInChatActive(false);
                           setChatSearchQuery('');
                           setChatSearchMatchIndex(0);
+                          dispatch(setMessages([]));
+                          dispatch(setActiveChatUser(null));
                           setActiveChat(null);
                         }}
                       >
@@ -7739,7 +7867,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     onScroll={handleChatScroll}
                     scrollEventThrottle={16}
                   >
-                    {deduplicateMessages(activeChat.messages).map((msg) => {
+                    {deduplicateMessages(activeChat.messages).map((msg, index) => {
                       const isDeletedForEveryone = Boolean(msg.isDeletedForEveryone || msg.text === 'This message was deleted');
                       const isMe = msg.sender === 'you';
                       const isSticker = !isDeletedForEveryone && msg.messageType === 'sticker';
@@ -7775,30 +7903,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                               msg.mediaUrl.endsWith('.mov') ||
                               msg.mediaUrl.endsWith('.avi'))));
 
+                      const isDocument = !isDeletedForEveryone && !isVoice && !isVideo && msg.messageType === 'document';
+                      const isCall = !isDeletedForEveryone && !isVoice && (msg.messageType === 'voice_call' || msg.messageType === 'call');
+
                       const isImage =
                         !isDeletedForEveryone &&
                         !isVoice &&
                         !isVideo &&
+                        !isDocument &&
                         (msg.messageType === 'image' ||
+                          msg.type === 'image' ||
+                          msg.text === '📷 Photo' ||
+                          (msg.fileName && typeof msg.fileName === 'string' && /\.(jpg|jpeg|png|webp|gif|bmp|heic)$/i.test(msg.fileName)) ||
                           (msg.mediaUrl &&
                             typeof msg.mediaUrl === 'string' &&
                             (msg.mediaUrl.startsWith('data:image') ||
-                              msg.mediaUrl.endsWith('.jpg') ||
-                              msg.mediaUrl.endsWith('.jpeg') ||
-                              msg.mediaUrl.endsWith('.png') ||
-                              msg.mediaUrl.endsWith('.webp') ||
-                              msg.mediaUrl.endsWith('.gif') ||
-                              (msg.mediaUrl.includes('cloudinary') &&
-                                msg.mediaUrl.includes('/image/upload/')))) ||
+                              /\.(jpg|jpeg|png|webp|gif|bmp|heic)($|\?)/i.test(msg.mediaUrl) ||
+                              msg.mediaUrl.includes('/image/upload/') ||
+                              (!isVideo && (msg.mediaUrl.includes('/chat/media/') || msg.mediaUrl.includes('/uploads/')) && (!msg.fileName || /\.(jpg|jpeg|png|webp|gif|bmp|heic)$/i.test(msg.fileName))))) ||
                           (msg.text &&
                             typeof msg.text === 'string' &&
                             (msg.text.startsWith('http') || msg.text.startsWith('data:image')) &&
-                            (msg.text.endsWith('.jpg') || msg.text.endsWith('.jpeg') || msg.text.endsWith('.png'))));
+                            /\.(jpg|jpeg|png|webp|gif|bmp|heic)($|\?)/i.test(msg.text)));
 
-                      const isDocument = !isDeletedForEveryone && !isVoice && msg.messageType === 'document';
-                      const isCall = !isDeletedForEveryone && !isVoice && (msg.messageType === 'voice_call' || msg.messageType === 'call');
-
-                      const imageUrlToRender = getImageUrl(msg.mediaUrl || (isImage ? msg.text : ''));
+                      const rawImgUrl = msg.mediaUrl || msg.localUri || (isImage && msg.text && msg.text !== '📷 Photo' ? msg.text : '') || '';
+                      const imageUrlToRender = getImageUrl(rawImgUrl || msg.mediaUrl || '');
                       const replyToObj = !isDeletedForEveryone ? parseReplyTo(msg.replyTo) : null;
                       const hasValidReplyTo = !!replyToObj;
                       const hasMediaCaption = Boolean(
@@ -7831,7 +7960,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                       return (
                         <View
-                          key={msg.id}
+                          key={String(msg.id || msg._id || msg.tempId || index)}
                           onLayout={(e) => {
                             const y = e.nativeEvent.layout.y;
                             const k = (msg.id || msg._id || msg.createdAt)?.toString();
@@ -8737,6 +8866,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                         style={styles.cancelEditButton}
                         onPress={() => {
                           setEditingMessage(null);
+                          typedMessageRef.current = '';
                           setTypedMessage('');
                         }}
                       >
@@ -8851,6 +8981,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                           placeholderTextColor="rgba(255, 255, 255, 0.4)"
                           value={typedMessage}
                           onChangeText={handleInputChange}
+                          autoCorrect={false}
+                          autoCapitalize="sentences"
+                          spellCheck={false}
+                          keyboardType="default"
+                          returnKeyType="send"
+                          blurOnSubmit={false}
+                          onSubmitEditing={() => {
+                            if (!editingMessage && ((typedMessageRef.current && typedMessageRef.current.trim()) || typedMessage.trim())) {
+                              handleSendMessage();
+                            }
+                          }}
                           onFocus={() => {
                             setShowStickerPicker(false);
                             setShowEmojiPicker(false);
@@ -9284,6 +9425,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                                 if (selectedChatIds.length > 0) {
                                   toggleSelectChat(chat);
                                 } else {
+                                  typedMessageRef.current = '';
+                                  setTypedMessage('');
+                                  dispatch(setMessages([]));
+                                  dispatch(setActiveChatUser(chat));
                                   setActiveChat(chat);
                                 }
                               }}
@@ -9888,346 +10033,346 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               onRequestClose={() => setSelectedLikesProfile(null)}
             >
               <SafeAreaView style={[styles.candidateDetailsWrapper, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 15 : 0) }]}>
-              <View style={styles.cardExpandedHeader}>
-                <TouchableOpacity
-                  style={styles.cardDetailMinimizeHeaderBtn}
-                  onPress={() => setSelectedLikesProfile(null)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.cardDetailMinimizeArrow}>▼</Text>
-                  <Text style={styles.cardDetailMinimizeLabel}>Minimize Profile</Text>
-                </TouchableOpacity>
-              </View>
+                <View style={styles.cardExpandedHeader}>
+                  <TouchableOpacity
+                    style={styles.cardDetailMinimizeHeaderBtn}
+                    onPress={() => setSelectedLikesProfile(null)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cardDetailMinimizeArrow}>▼</Text>
+                    <Text style={styles.cardDetailMinimizeLabel}>Minimize Profile</Text>
+                  </TouchableOpacity>
+                </View>
 
-              <ScrollView style={styles.cardExpandedScrollBody} showsVerticalScrollIndicator={false}>
-                {/* Photo Preview Carousel Header (Above) */}
-                <View style={{ position: 'relative', width: '100%', height: 420 }}>
-                  {(() => {
-                    const photos = (() => {
-                      const hiddenSet = new Set(Array.isArray(selectedLikesProfile.hiddenMedia) ? selectedLikesProfile.hiddenMedia : []);
-                      const allList = [
-                        selectedLikesProfile.profileImage || selectedLikesProfile.image,
-                        ...(selectedLikesProfile.profileImages || []),
-                        ...(selectedLikesProfile.photos || []),
-                        ...(selectedLikesProfile.videos || []),
-                        ...(selectedLikesProfile.media || []),
-                      ].filter((item) => item && typeof item === 'string' && item.trim().length > 0 && item !== 'null' && item !== 'undefined' && !hiddenSet.has(item));
-                      return Array.from(new Set(allList));
-                    })();
-                    const displayPhotos = photos.length > 0 ? photos : [selectedLikesProfile.profileImage || selectedLikesProfile.image].filter(Boolean);
-                    const activePhoto = displayPhotos[likesActivePhotoIndex % displayPhotos.length];
+                <ScrollView style={styles.cardExpandedScrollBody} showsVerticalScrollIndicator={false}>
+                  {/* Photo Preview Carousel Header (Above) */}
+                  <View style={{ position: 'relative', width: '100%', height: 420 }}>
+                    {(() => {
+                      const photos = (() => {
+                        const hiddenSet = new Set(Array.isArray(selectedLikesProfile.hiddenMedia) ? selectedLikesProfile.hiddenMedia : []);
+                        const allList = [
+                          selectedLikesProfile.profileImage || selectedLikesProfile.image,
+                          ...(selectedLikesProfile.profileImages || []),
+                          ...(selectedLikesProfile.photos || []),
+                          ...(selectedLikesProfile.videos || []),
+                          ...(selectedLikesProfile.media || []),
+                        ].filter((item) => item && typeof item === 'string' && item.trim().length > 0 && item !== 'null' && item !== 'undefined' && !hiddenSet.has(item));
+                        return Array.from(new Set(allList));
+                      })();
+                      const displayPhotos = photos.length > 0 ? photos : [selectedLikesProfile.profileImage || selectedLikesProfile.image].filter(Boolean);
+                      const activePhoto = displayPhotos[likesActivePhotoIndex % displayPhotos.length];
 
-                    return (
-                      <View style={{ width: '100%', height: 420, position: 'relative' }}>
-                        <TouchableOpacity
-                          activeOpacity={0.9}
-                          style={{ width: '100%', height: '100%' }}
-                          onPress={() => setLikesPreviewStoryIndex(likesActivePhotoIndex)}
-                        >
-                          <Image
-                            source={{ uri: getImageUrl(activePhoto) }}
-                            style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
-                          />
-                        </TouchableOpacity>
-                        {displayPhotos.length > 1 && (
-                          <View style={{ position: 'absolute', bottom: 15, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
-                            {displayPhotos.map((_, idx) => (
-                              <TouchableOpacity
-                                key={idx}
-                                style={{
-                                  width: idx === likesActivePhotoIndex ? 22 : 8,
-                                  height: 8,
-                                  borderRadius: 4,
-                                  backgroundColor: idx === likesActivePhotoIndex ? '#FF4458' : 'rgba(255,255,255,0.5)',
-                                }}
-                                onPress={() => setLikesActivePhotoIndex(idx)}
-                              />
+                      return (
+                        <View style={{ width: '100%', height: 420, position: 'relative' }}>
+                          <TouchableOpacity
+                            activeOpacity={0.9}
+                            style={{ width: '100%', height: '100%' }}
+                            onPress={() => setLikesPreviewStoryIndex(likesActivePhotoIndex)}
+                          >
+                            <Image
+                              source={{ uri: getImageUrl(activePhoto) }}
+                              style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                            />
+                          </TouchableOpacity>
+                          {displayPhotos.length > 1 && (
+                            <View style={{ position: 'absolute', bottom: 15, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
+                              {displayPhotos.map((_, idx) => (
+                                <TouchableOpacity
+                                  key={idx}
+                                  style={{
+                                    width: idx === likesActivePhotoIndex ? 22 : 8,
+                                    height: 8,
+                                    borderRadius: 4,
+                                    backgroundColor: idx === likesActivePhotoIndex ? '#FF4458' : 'rgba(255,255,255,0.5)',
+                                  }}
+                                  onPress={() => setLikesActivePhotoIndex(idx)}
+                                />
+                              ))}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })()}
+                  </View>
+
+                  {/* Profile Identity & Detailed Info Section (Below) */}
+                  <View style={styles.cardExpandedContentPadding}>
+                    <View style={styles.matchNameRow}>
+                      <Text style={styles.matchNameTextLarge}>
+                        {selectedLikesProfile.firstName || selectedLikesProfile.name}
+                        {selectedLikesProfile.age ? `, ${selectedLikesProfile.age}` : ''}
+                      </Text>
+                      {!!(selectedLikesProfile && selectedLikesProfile.isEmailVerified) && (
+                        <Ionicons name="checkmark-circle" size={20} color="#0084FF" style={{ marginLeft: 6, marginRight: 4 }} />
+                      )}
+                      {!!(selectedLikesProfile && onlineUsersMap[(selectedLikesProfile.id || selectedLikesProfile._id || selectedLikesProfile.userId)?.toString()]) && (
+                        <View style={styles.swipeOnlineBadge}>
+                          <View style={styles.swipeOnlineDot} />
+                          <Text style={styles.swipeOnlineText}>Online</Text>
+                        </View>
+                      )}
+                      {selectedLikesProfile.distance ? (
+                        <View style={[styles.distanceBadgeLarge, { flexDirection: 'row', alignItems: 'center' }]}>
+                          <Ionicons name="location-outline" size={13} color="#0084FF" style={{ marginRight: 3 }} />
+                          <Text style={styles.distanceBadgeTextLarge}>
+                            {selectedLikesProfile.distance}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    {selectedLikesProfile.isLoadingFullProfile && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8, gap: 8 }}>
+                        <ActivityIndicator size="small" color="#FE3C72" />
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Loading profile details from server...</Text>
+                      </View>
+                    )}
+
+                    {selectedLikesProfile.bio ? (
+                      <Text style={styles.matchBioTextLarge}>
+                        {selectedLikesProfile.bio}
+                      </Text>
+                    ) : null}
+
+                    <Text style={styles.cardDetailSectionTitleLarge}>About Me & Habits</Text>
+                    {(() => {
+                      const hasHabits = Boolean(
+                        selectedLikesProfile.gender ||
+                        selectedLikesProfile.orientation ||
+                        selectedLikesProfile.lookingFor ||
+                        selectedLikesProfile.drinkHabit ||
+                        selectedLikesProfile.smokeHabit ||
+                        selectedLikesProfile.exercise ||
+                        selectedLikesProfile.pets ||
+                        selectedLikesProfile.educationLevel ||
+                        selectedLikesProfile.height ||
+                        selectedLikesProfile.weight ||
+                        selectedLikesProfile.job ||
+                        selectedLikesProfile.profession ||
+                        selectedLikesProfile.college ||
+                        selectedLikesProfile.zodiac
+                      );
+
+                      if (!hasHabits) {
+                        return !selectedLikesProfile.isLoadingFullProfile ? (
+                          <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginVertical: 6, fontStyle: 'italic' }}>
+                            No lifestyle habits added yet.
+                          </Text>
+                        ) : null;
+                      }
+
+                      return (
+                        <View style={styles.cardExpandedGrid}>
+                          {selectedLikesProfile.gender && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="person-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.gender}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.orientation && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="heart-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.orientation}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.lookingFor && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="compass-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.lookingFor}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.drinkHabit && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="wine-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.drinkHabit}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.smokeHabit && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="flame-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.smokeHabit}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.exercise && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="barbell-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.exercise}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.pets && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="paw-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.pets}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.educationLevel && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="school-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.educationLevel}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.height && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="resize-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.height}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.weight && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="scale-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.weight}</Text>
+                            </View>
+                          )}
+                          {(selectedLikesProfile.job || selectedLikesProfile.profession) && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="briefcase-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.job || selectedLikesProfile.profession}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.college && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="business-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.college}</Text>
+                            </View>
+                          )}
+                          {selectedLikesProfile.zodiac && (
+                            <View style={styles.cardExpandedItem}>
+                              <Ionicons name="moon-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
+                              <Text style={styles.cardExpandedText}>{selectedLikesProfile.zodiac}</Text>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })()}
+
+                    {((selectedLikesProfile.interests && selectedLikesProfile.interests.length > 0) ||
+                      (selectedLikesProfile.languages && selectedLikesProfile.languages.length > 0)) && (
+                        <>
+                          <Text style={[styles.cardDetailSectionTitleLarge, { marginTop: 16 }]}>Interests & Languages</Text>
+                          <View style={styles.cardExpandedInterests}>
+                            {(selectedLikesProfile.interests || []).map((interest, idx) => (
+                              <View key={`int-${idx}`} style={styles.cardExpandedInterestBadge}>
+                                <Text style={styles.cardExpandedInterestText}>{interest}</Text>
+                              </View>
+                            ))}
+                            {(selectedLikesProfile.languages || []).map((lang, idx) => (
+                              <View key={`lang-${idx}`} style={[styles.cardExpandedInterestBadge, { backgroundColor: '#262630', flexDirection: 'row', alignItems: 'center' }]}>
+                                <Ionicons name="language-outline" size={12} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
+                                <Text style={styles.cardExpandedInterestText}>{lang}</Text>
+                              </View>
                             ))}
                           </View>
-                        )}
-                      </View>
-                    );
-                  })()}
-                </View>
+                        </>
+                      )}
 
-                {/* Profile Identity & Detailed Info Section (Below) */}
-                <View style={styles.cardExpandedContentPadding}>
-                  <View style={styles.matchNameRow}>
-                    <Text style={styles.matchNameTextLarge}>
-                      {selectedLikesProfile.firstName || selectedLikesProfile.name}
-                      {selectedLikesProfile.age ? `, ${selectedLikesProfile.age}` : ''}
-                    </Text>
-                    {!!(selectedLikesProfile && selectedLikesProfile.isEmailVerified) && (
-                      <Ionicons name="checkmark-circle" size={20} color="#0084FF" style={{ marginLeft: 6, marginRight: 4 }} />
-                    )}
-                    {!!(selectedLikesProfile && onlineUsersMap[(selectedLikesProfile.id || selectedLikesProfile._id || selectedLikesProfile.userId)?.toString()]) && (
-                      <View style={styles.swipeOnlineBadge}>
-                        <View style={styles.swipeOnlineDot} />
-                        <Text style={styles.swipeOnlineText}>Online</Text>
-                      </View>
-                    )}
-                    {selectedLikesProfile.distance ? (
-                      <View style={[styles.distanceBadgeLarge, { flexDirection: 'row', alignItems: 'center' }]}>
-                        <Ionicons name="location-outline" size={13} color="#0084FF" style={{ marginRight: 3 }} />
-                        <Text style={styles.distanceBadgeTextLarge}>
-                          {selectedLikesProfile.distance}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-
-                  {selectedLikesProfile.isLoadingFullProfile && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8, gap: 8 }}>
-                      <ActivityIndicator size="small" color="#FE3C72" />
-                      <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Loading profile details from server...</Text>
-                    </View>
-                  )}
-
-                  {selectedLikesProfile.bio ? (
-                    <Text style={styles.matchBioTextLarge}>
-                      {selectedLikesProfile.bio}
-                    </Text>
-                  ) : null}
-
-                  <Text style={styles.cardDetailSectionTitleLarge}>About Me & Habits</Text>
-                  {(() => {
-                    const hasHabits = Boolean(
-                      selectedLikesProfile.gender ||
-                      selectedLikesProfile.orientation ||
-                      selectedLikesProfile.lookingFor ||
-                      selectedLikesProfile.drinkHabit ||
-                      selectedLikesProfile.smokeHabit ||
-                      selectedLikesProfile.exercise ||
-                      selectedLikesProfile.pets ||
-                      selectedLikesProfile.educationLevel ||
-                      selectedLikesProfile.height ||
-                      selectedLikesProfile.weight ||
-                      selectedLikesProfile.job ||
-                      selectedLikesProfile.profession ||
-                      selectedLikesProfile.college ||
-                      selectedLikesProfile.zodiac
-                    );
-
-                    if (!hasHabits) {
-                      return !selectedLikesProfile.isLoadingFullProfile ? (
-                        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginVertical: 6, fontStyle: 'italic' }}>
-                          No lifestyle habits added yet.
-                        </Text>
-                      ) : null;
-                    }
-
-                    return (
-                      <View style={styles.cardExpandedGrid}>
-                        {selectedLikesProfile.gender && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="person-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.gender}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.orientation && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="heart-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.orientation}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.lookingFor && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="compass-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.lookingFor}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.drinkHabit && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="wine-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.drinkHabit}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.smokeHabit && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="flame-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.smokeHabit}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.exercise && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="barbell-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.exercise}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.pets && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="paw-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.pets}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.educationLevel && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="school-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.educationLevel}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.height && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="resize-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.height}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.weight && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="scale-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.weight}</Text>
-                          </View>
-                        )}
-                        {(selectedLikesProfile.job || selectedLikesProfile.profession) && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="briefcase-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.job || selectedLikesProfile.profession}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.college && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="business-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.college}</Text>
-                          </View>
-                        )}
-                        {selectedLikesProfile.zodiac && (
-                          <View style={styles.cardExpandedItem}>
-                            <Ionicons name="moon-outline" size={15} color="#FE3C72" style={{ marginRight: 6 }} />
-                            <Text style={styles.cardExpandedText}>{selectedLikesProfile.zodiac}</Text>
-                          </View>
-                        )}
-                      </View>
-                    );
-                  })()}
-
-                  {((selectedLikesProfile.interests && selectedLikesProfile.interests.length > 0) ||
-                    (selectedLikesProfile.languages && selectedLikesProfile.languages.length > 0)) && (
-                      <>
-                        <Text style={[styles.cardDetailSectionTitleLarge, { marginTop: 16 }]}>Interests & Languages</Text>
-                        <View style={styles.cardExpandedInterests}>
-                          {(selectedLikesProfile.interests || []).map((interest, idx) => (
-                            <View key={`int-${idx}`} style={styles.cardExpandedInterestBadge}>
-                              <Text style={styles.cardExpandedInterestText}>{interest}</Text>
-                            </View>
-                          ))}
-                          {(selectedLikesProfile.languages || []).map((lang, idx) => (
-                            <View key={`lang-${idx}`} style={[styles.cardExpandedInterestBadge, { backgroundColor: '#262630', flexDirection: 'row', alignItems: 'center' }]}>
-                              <Ionicons name="language-outline" size={12} color="rgba(255,255,255,0.7)" style={{ marginRight: 4 }} />
-                              <Text style={styles.cardExpandedInterestText}>{lang}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      </>
-                    )}
-
-                  {/* Safety & Moderation Actions */}
-                  <View style={{ marginTop: 24, gap: 10, marginBottom: (selectedLikesProfile?.isFromChat || !!activeChat || activeTab === 'chat') ? 40 : 0 }}>
-                    <TouchableOpacity
-                      style={{
-                        paddingVertical: 12,
-                        paddingHorizontal: 16,
-                        borderRadius: 12,
-                        backgroundColor: 'rgba(255, 59, 48, 0.15)',
-                        alignItems: 'center',
-                      }}
-                      onPress={() => {
-                        const target = selectedLikesProfile;
-                        if (!target) return;
-                        const targetId = target.id || target._id || target.userId;
-                        const targetName = target.firstName || target.name || 'User';
-                        setSelectedLikesProfile(null);
-                        if (targetId) {
-                          handleReportUser(targetId, targetName);
-                        }
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={{ color: '#FF3B30', fontWeight: '600', fontSize: 15 }}>
-                        ⚠️ Report Profile
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={{
-                        paddingVertical: 12,
-                        borderRadius: 12,
-                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                        alignItems: 'center',
-                      }}
-                      onPress={() => {
-                        const target = selectedLikesProfile;
-                        if (!target) return;
-                        const targetId = target.id || target._id || target.userId;
-                        const targetName = target.firstName || target.name || 'User';
-                        setSelectedLikesProfile(null);
-                        if (targetId) {
-                          handleBlockUser(targetId, targetName);
-                        }
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={{ color: '#aaa', fontWeight: '600', fontSize: 14 }}>
-                        🔒 Block Profile
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Horizontal Pass & Like Action Option Buttons - Hidden when profile is expanded from Chat screen */}
-                  {!(selectedLikesProfile?.isFromChat || !!activeChat || activeTab === 'chat') && (
-                    <View style={{ flexDirection: 'row', gap: 12, marginTop: 24, marginBottom: 30 }}>
+                    {/* Safety & Moderation Actions */}
+                    <View style={{ marginTop: 24, gap: 10, marginBottom: (selectedLikesProfile?.isFromChat || !!activeChat || activeTab === 'chat') ? 40 : 0 }}>
                       <TouchableOpacity
                         style={{
-                          flex: 1,
-                          height: 52,
-                          borderRadius: 26,
-                          backgroundColor: '#262630',
-                          flexDirection: 'row',
+                          paddingVertical: 12,
+                          paddingHorizontal: 16,
+                          borderRadius: 12,
+                          backgroundColor: 'rgba(255, 59, 48, 0.15)',
                           alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 8,
-                          borderWidth: 1,
-                          borderColor: '#3A3A48',
                         }}
                         onPress={() => {
                           const target = selectedLikesProfile;
+                          if (!target) return;
+                          const targetId = target.id || target._id || target.userId;
+                          const targetName = target.firstName || target.name || 'User';
                           setSelectedLikesProfile(null);
-                          handleRejectLike(target);
+                          if (targetId) {
+                            handleReportUser(targetId, targetName);
+                          }
                         }}
                         activeOpacity={0.8}
                       >
-                        <Text style={{ fontSize: 18, color: '#FF4A4A' }}>✖</Text>
-                        <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF4A4A' }}>Pass</Text>
+                        <Text style={{ color: '#FF3B30', fontWeight: '600', fontSize: 15 }}>
+                          ⚠️ Report Profile
+                        </Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
                         style={{
-                          flex: 1,
-                          height: 52,
-                          borderRadius: 26,
-                          backgroundColor: '#FF4458',
-                          flexDirection: 'row',
+                          paddingVertical: 12,
+                          borderRadius: 12,
+                          backgroundColor: 'rgba(255, 255, 255, 0.05)',
                           alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 8,
                         }}
                         onPress={() => {
                           const target = selectedLikesProfile;
+                          if (!target) return;
+                          const targetId = target.id || target._id || target.userId;
+                          const targetName = target.firstName || target.name || 'User';
                           setSelectedLikesProfile(null);
-                          handleLikeMatch(target);
+                          if (targetId) {
+                            handleBlockUser(targetId, targetName);
+                          }
                         }}
                         activeOpacity={0.8}
                       >
-                        <Text style={{ fontSize: 18, color: '#FFF' }}>♥</Text>
-                        <Text style={{ fontSize: 16, fontWeight: '700', color: '#FFF' }}>Like Back</Text>
+                        <Text style={{ color: '#aaa', fontWeight: '600', fontSize: 14 }}>
+                          🔒 Block Profile
+                        </Text>
                       </TouchableOpacity>
                     </View>
-                  )}
-                </View>
-              </ScrollView>
-            </SafeAreaView>
-          </Modal>
-        );
-      })()}
+
+                    {/* Horizontal Pass & Like Action Option Buttons - Hidden when profile is expanded from Chat screen */}
+                    {!(selectedLikesProfile?.isFromChat || !!activeChat || activeTab === 'chat') && (
+                      <View style={{ flexDirection: 'row', gap: 12, marginTop: 24, marginBottom: 30 }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 52,
+                            borderRadius: 26,
+                            backgroundColor: '#262630',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 8,
+                            borderWidth: 1,
+                            borderColor: '#3A3A48',
+                          }}
+                          onPress={() => {
+                            const target = selectedLikesProfile;
+                            setSelectedLikesProfile(null);
+                            handleRejectLike(target);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 18, color: '#FF4A4A' }}>✖</Text>
+                          <Text style={{ fontSize: 16, fontWeight: '700', color: '#FF4A4A' }}>Pass</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            height: 52,
+                            borderRadius: 26,
+                            backgroundColor: '#FF4458',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 8,
+                          }}
+                          onPress={() => {
+                            const target = selectedLikesProfile;
+                            setSelectedLikesProfile(null);
+                            handleLikeMatch(target);
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={{ fontSize: 18, color: '#FFF' }}>♥</Text>
+                          <Text style={{ fontSize: 16, fontWeight: '700', color: '#FFF' }}>Like Back</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                </ScrollView>
+              </SafeAreaView>
+            </Modal>
+          );
+        })()}
 
         {/* WhatsApp-Style Message Reaction Details Modal */}
         {reactionDetailsModalMsg && (
@@ -11025,13 +11170,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   style={styles.waContextMenuItem}
                   onPress={() => {
                     setShowChatOptionsMenuModal(false);
-                    if (Platform.OS === 'android') {
-                      ToastAndroid.show('Media & docs', ToastAndroid.SHORT);
-                    }
+                    setMediaDocsTab('media');
+                    setShowMediaDocsModal(true);
                   }}
                 >
                   <Ionicons name="images-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
-                  <Text style={styles.waContextMenuText}>Media & docs</Text>
+                  <Text style={styles.waContextMenuText}>Media, links, and docs</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -11058,18 +11202,6 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   <Text style={styles.waContextMenuText}>Search</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.waContextMenuItem}
-                  onPress={() => {
-                    setShowChatOptionsMenuModal(false);
-                    if (Platform.OS === 'android') {
-                      ToastAndroid.show('Notifications muted', ToastAndroid.SHORT);
-                    }
-                  }}
-                >
-                  <Ionicons name="notifications-off-outline" size={19} color="#AEBAC1" style={{ marginRight: 14 }} />
-                  <Text style={styles.waContextMenuText}>Mute notifications</Text>
-                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.waContextMenuItem}
@@ -11235,6 +11367,395 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </Modal>
         )}
 
+        {/* WhatsApp Dark Mode Media, Links & Docs Modal */}
+        {showMediaDocsModal && activeChat && (
+          <Modal
+            visible={showMediaDocsModal}
+            transparent={false}
+            animationType="slide"
+            onRequestClose={() => setShowMediaDocsModal(false)}
+          >
+            <SafeAreaView style={{ flex: 1, backgroundColor: '#0B141A' }}>
+              {/* WhatsApp Header */}
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#1F2C34',
+                paddingHorizontal: 12,
+                paddingVertical: 14,
+                elevation: 4,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.25,
+                shadowRadius: 3,
+              }}>
+                <TouchableOpacity
+                  onPress={() => setShowMediaDocsModal(false)}
+                  style={{ padding: 6, marginRight: 12, borderRadius: 20 }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="arrow-back" size={24} color="#E9EDEF" />
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#E9EDEF', fontSize: 18, fontWeight: '700' }} numberOfLines={1}>
+                    {activeChat.name || activeChat.firstName || 'Chat'}
+                  </Text>
+                  <Text style={{ color: '#8696A0', fontSize: 13, marginTop: 1 }}>
+                    Media, links and docs
+                  </Text>
+                </View>
+              </View>
+
+              {(() => {
+                const allChatMsgs = (activeChat?.messages || []).filter(
+                  (m) => !m.isDeletedForEveryone && m.text !== 'This message was deleted'
+                );
+
+                // Media items (Photos & Videos)
+                const mediaList = allChatMsgs.filter((m) => {
+                  const isVid = m.messageType === 'video' ||
+                    (m.mediaUrl && typeof m.mediaUrl === 'string' && (m.mediaUrl.includes('/video/upload/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(m.mediaUrl)));
+                  const isImg = m.messageType === 'image' ||
+                    m.type === 'image' ||
+                    m.text === '📷 Photo' ||
+                    (m.fileName && typeof m.fileName === 'string' && /\.(jpg|jpeg|png|webp|gif|bmp|heic)$/i.test(m.fileName)) ||
+                    (m.mediaUrl && typeof m.mediaUrl === 'string' && (
+                      m.mediaUrl.startsWith('data:image') ||
+                      /\.(jpg|jpeg|png|webp|gif|bmp|heic)($|\?)/i.test(m.mediaUrl) ||
+                      m.mediaUrl.includes('/image/upload/') ||
+                      (!isVid && (m.mediaUrl.includes('/chat/media/') || m.mediaUrl.includes('/uploads/')) && (!m.fileName || /\.(jpg|jpeg|png|webp|gif|bmp|heic)$/i.test(m.fileName)))
+                    ));
+                  return isImg || isVid;
+                });
+
+                // Document items
+                const docsList = allChatMsgs.filter((m) => {
+                  if (m.messageType === 'document') return true;
+                  const fName = (m.fileName || '').toLowerCase();
+                  const mUrl = (m.mediaUrl || '').toLowerCase();
+                  return /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv|zip|rar|tar|7z|epub)$/i.test(fName) ||
+                    /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv|zip|rar|tar|7z|epub)($|\?)/i.test(mUrl);
+                });
+
+                // Links items
+                const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+                const linksList = [];
+                allChatMsgs.forEach((m) => {
+                  if (m.text && typeof m.text === 'string') {
+                    const matches = m.text.match(urlRegex);
+                    if (matches && matches.length > 0) {
+                      matches.forEach((extractedUrl) => {
+                        let fullUrl = extractedUrl;
+                        if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
+                          fullUrl = `https://${fullUrl}`;
+                        }
+                        linksList.push({
+                          msg: m,
+                          url: fullUrl,
+                          rawUrl: extractedUrl,
+                        });
+                      });
+                    }
+                  }
+                });
+
+                return (
+                  <View style={{ flex: 1 }}>
+                    {/* Top Tab Bar */}
+                    <View style={{
+                      flexDirection: 'row',
+                      backgroundColor: '#1F2C34',
+                      borderBottomWidth: 1,
+                      borderBottomColor: 'rgba(255,255,255,0.08)',
+                    }}>
+                      <TouchableOpacity
+                        onPress={() => setMediaDocsTab('media')}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 12,
+                          alignItems: 'center',
+                          borderBottomWidth: 3,
+                          borderBottomColor: mediaDocsTab === 'media' ? '#00A884' : 'transparent',
+                        }}
+                      >
+                        <Text style={{
+                          color: mediaDocsTab === 'media' ? '#00A884' : '#8696A0',
+                          fontSize: 13,
+                          fontWeight: '700',
+                          letterSpacing: 0.5,
+                        }}>
+                          MEDIA ({mediaList.length})
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => setMediaDocsTab('docs')}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 12,
+                          alignItems: 'center',
+                          borderBottomWidth: 3,
+                          borderBottomColor: mediaDocsTab === 'docs' ? '#00A884' : 'transparent',
+                        }}
+                      >
+                        <Text style={{
+                          color: mediaDocsTab === 'docs' ? '#00A884' : '#8696A0',
+                          fontSize: 13,
+                          fontWeight: '700',
+                          letterSpacing: 0.5,
+                        }}>
+                          DOCS ({docsList.length})
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => setMediaDocsTab('links')}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 12,
+                          alignItems: 'center',
+                          borderBottomWidth: 3,
+                          borderBottomColor: mediaDocsTab === 'links' ? '#00A884' : 'transparent',
+                        }}
+                      >
+                        <Text style={{
+                          color: mediaDocsTab === 'links' ? '#00A884' : '#8696A0',
+                          fontSize: 13,
+                          fontWeight: '700',
+                          letterSpacing: 0.5,
+                        }}>
+                          LINKS ({linksList.length})
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Tab 1: MEDIA (Grid View) */}
+                    {mediaDocsTab === 'media' && (
+                      mediaList.length === 0 ? (
+                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+                          <Ionicons name="images-outline" size={60} color="#3B4A54" style={{ marginBottom: 14 }} />
+                          <Text style={{ color: '#E9EDEF', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>
+                            No media found
+                          </Text>
+                          <Text style={{ color: '#8696A0', fontSize: 13, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
+                            Photos and videos shared in this chat will appear here.
+                          </Text>
+                        </View>
+                      ) : (
+                        <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', padding: 2 }}>
+                          {mediaList.map((item, idx) => {
+                            const isVid = item.messageType === 'video' || (item.mediaUrl && /\.(mp4|mov|avi)$/i.test(item.mediaUrl));
+                            const mediaUri = getImageUrl(item.mediaUrl || item.text);
+                            return (
+                              <TouchableOpacity
+                                key={String(item.id || item._id || idx)}
+                                style={{
+                                  width: '32.6%',
+                                  aspectRatio: 1,
+                                  margin: '0.36%',
+                                  backgroundColor: '#1F2C34',
+                                  position: 'relative',
+                                  borderRadius: 4,
+                                  overflow: 'hidden',
+                                }}
+                                activeOpacity={0.82}
+                                onPress={() => {
+                                  setImageZoomScale(1);
+                                  setImageRotation(0);
+                                  setViewMediaModal({
+                                    visible: true,
+                                    type: isVid ? 'video' : 'image',
+                                    url: mediaUri,
+                                    fileName: item.fileName || (isVid ? 'Video' : 'Photo'),
+                                    fileSize: item.fileSize || 0,
+                                  });
+                                }}
+                              >
+                                <Image
+                                  source={{ uri: mediaUri }}
+                                  style={{ width: '100%', height: '100%' }}
+                                  resizeMode="cover"
+                                />
+                                {isVid && (
+                                  <View style={{
+                                    position: 'absolute',
+                                    bottom: 6,
+                                    left: 6,
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    backgroundColor: 'rgba(11, 20, 26, 0.75)',
+                                    paddingHorizontal: 6,
+                                    paddingVertical: 2,
+                                    borderRadius: 10,
+                                  }}>
+                                    <Ionicons name="videocam" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                                    <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: '600' }}>Video</Text>
+                                  </View>
+                                )}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      )
+                    )}
+
+                    {/* Tab 2: DOCS (List View) */}
+                    {mediaDocsTab === 'docs' && (
+                      docsList.length === 0 ? (
+                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+                          <Ionicons name="document-text-outline" size={60} color="#3B4A54" style={{ marginBottom: 14 }} />
+                          <Text style={{ color: '#E9EDEF', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>
+                            No documents found
+                          </Text>
+                          <Text style={{ color: '#8696A0', fontSize: 13, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
+                            Documents and files shared in this chat will appear here.
+                          </Text>
+                        </View>
+                      ) : (
+                        <ScrollView contentContainerStyle={{ padding: 12 }}>
+                          {docsList.map((item, idx) => {
+                            const ext = (item.fileName || '').split('.').pop()?.toUpperCase() || 'DOC';
+                            const fileUri = getImageUrl(item.mediaUrl);
+                            const iconColor = ext === 'PDF' ? '#E53935' : (ext === 'DOC' || ext === 'DOCX') ? '#1E88E5' : (ext === 'XLS' || ext === 'XLSX') ? '#43A047' : '#FB8C00';
+                            return (
+                              <TouchableOpacity
+                                key={String(item.id || item._id || idx)}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  backgroundColor: '#1F2C34',
+                                  padding: 12,
+                                  borderRadius: 10,
+                                  marginBottom: 8,
+                                }}
+                                activeOpacity={0.75}
+                                onPress={() => {
+                                  if (fileUri) {
+                                    Linking.openURL(fileUri).catch(() => {
+                                      setViewMediaModal({
+                                        visible: true,
+                                        type: 'document',
+                                        url: fileUri,
+                                        fileName: item.fileName || 'Document',
+                                        fileSize: item.fileSize || 0,
+                                      });
+                                    });
+                                  }
+                                }}
+                              >
+                                <View style={{
+                                  width: 44,
+                                  height: 44,
+                                  borderRadius: 8,
+                                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  marginRight: 12,
+                                  borderLeftWidth: 3,
+                                  borderLeftColor: iconColor,
+                                }}>
+                                  <Ionicons name="document-text" size={22} color={iconColor} />
+                                  <Text style={{ color: iconColor, fontSize: 8, fontWeight: '700', marginTop: -2 }}>
+                                    {ext}
+                                  </Text>
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={{ color: '#E9EDEF', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
+                                    {item.fileName || item.text || 'Document'}
+                                  </Text>
+                                  <Text style={{ color: '#8696A0', fontSize: 12, marginTop: 2 }}>
+                                    {item.fileSize ? formatFileSize(item.fileSize) : 'Document'} • {item.createdAt ? new Date(item.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                                  </Text>
+                                </View>
+                                <Ionicons name="download-outline" size={20} color="#00A884" style={{ marginLeft: 8 }} />
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      )
+                    )}
+
+                    {/* Tab 3: LINKS (List View) */}
+                    {mediaDocsTab === 'links' && (
+                      linksList.length === 0 ? (
+                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+                          <Ionicons name="link-outline" size={60} color="#3B4A54" style={{ marginBottom: 14 }} />
+                          <Text style={{ color: '#E9EDEF', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>
+                            No links found
+                          </Text>
+                          <Text style={{ color: '#8696A0', fontSize: 13, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
+                            Web links and URLs shared in this chat will appear here.
+                          </Text>
+                        </View>
+                      ) : (
+                        <ScrollView contentContainerStyle={{ padding: 12 }}>
+                          {linksList.map((linkItem, idx) => {
+                            let domain = '';
+                            try {
+                              const parts = linkItem.url.split('/');
+                              domain = (parts[2] || linkItem.rawUrl).replace('www.', '');
+                            } catch {
+                              domain = linkItem.rawUrl;
+                            }
+                            return (
+                              <TouchableOpacity
+                                key={`${linkItem.msg.id || idx}_${idx}`}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  backgroundColor: '#1F2C34',
+                                  padding: 12,
+                                  borderRadius: 10,
+                                  marginBottom: 8,
+                                }}
+                                activeOpacity={0.75}
+                                onPress={() => {
+                                  Linking.openURL(linkItem.url).catch(() => {
+                                    Alert.alert('Unable to open link', linkItem.url);
+                                  });
+                                }}
+                              >
+                                <View style={{
+                                  width: 44,
+                                  height: 44,
+                                  borderRadius: 22,
+                                  backgroundColor: '#2A3942',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  marginRight: 12,
+                                }}>
+                                  <Ionicons name="link" size={20} color="#00A884" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={{ color: '#53BDEB', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
+                                    {domain}
+                                  </Text>
+                                  <Text style={{ color: '#8696A0', fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                                    {linkItem.url}
+                                  </Text>
+                                  {Boolean(linkItem.msg.text && linkItem.msg.text !== linkItem.rawUrl) && (
+                                    <Text style={{ color: '#E9EDEF', fontSize: 12, marginTop: 4, fontStyle: 'italic' }} numberOfLines={1}>
+                                      "{linkItem.msg.text.trim()}"
+                                    </Text>
+                                  )}
+                                  <Text style={{ color: '#687782', fontSize: 11, marginTop: 3 }}>
+                                    {linkItem.msg.createdAt ? new Date(linkItem.msg.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                                  </Text>
+                                </View>
+                                <Ionicons name="open-outline" size={18} color="#8696A0" style={{ marginLeft: 8 }} />
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      )
+                    )}
+                  </View>
+                );
+              })()}
+            </SafeAreaView>
+          </Modal>
+        )}
+
         {/* Conversations Tab Top-Right 3-Dots Menu Modal */}
         {showConversationsMenuModal && (
           <Modal
@@ -11397,6 +11918,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                             activeOpacity={0.8}
                             onPress={() => {
                               setShowAllStarredModal(false);
+                              dispatch(setMessages([]));
+                              dispatch(setActiveChatUser(item.chatObject));
                               setActiveChat(item.chatObject);
                               const targetMsgId = (item.id || item._id)?.toString();
                               if (targetMsgId) {
@@ -11858,6 +12381,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       onPress={() => {
                         setShowMessageActionModal(false);
                         setEditingMessage(selectedMessageForAction);
+                        typedMessageRef.current = selectedMessageForAction.text || '';
                         setTypedMessage(selectedMessageForAction.text || '');
                       }}
                     >

@@ -23,7 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { apiClient } from '../api/apiClient';
 import { getImageUrl, getVideoThumbnailUrl, isVideoUrl } from '../api/config';
-import { QuestionnaireScreen } from './QuestionnaireScreen';
+import { QuestionnaireScreen, getOptionIcon, cleanOptionLabel } from './QuestionnaireScreen';
 import { PreviewModal } from '../components/PreviewModal';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
@@ -38,24 +38,24 @@ const { width } = Dimensions.get('window');
 const SUBSCRIPTION_PLANS = [
   {
     id: 'gold',
-    name: 'Spark Gold ⭐',
+    name: 'Spark Gold ',
     badge: 'MOST POPULAR',
     price: '₹999/mo',
     features: [
-      '⚡ Unlimited Likes & Swipes',
-      '👀 See Who Liked You First',
-      '⭐ 5 Free Super Likes Daily',
+      ' Unlimited Likes & Swipes',
+      ' See Who Liked You First',
+      ' 5 Free Super Likes Daily',
     ],
     accentColor: '#FFD700',
   },
   {
     id: 'premium',
-    name: 'Spark Premium 👑',
+    name: 'Spark Premium ',
     badge: 'BEST VALUE',
     price: '₹499/mo',
     features: [
-      '🚀 1 Free Boost per Month',
-      '🔍 Advanced Filters Unlocked',
+      ' 1 Free Boost per Month',
+      ' Advanced Filters Unlocked',
     ],
     accentColor: '#FE3C72',
   },
@@ -1499,11 +1499,17 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Interests & Passions</Text>
           <View style={styles.chipWrap}>
-            {displayData.interests.map((item, idx) => (
-              <View key={idx} style={styles.chip}>
-                <Text style={styles.chipText}>{item}</Text>
-              </View>
-            ))}
+            {displayData.interests.map((item, idx) => {
+              const clean = cleanOptionLabel(item);
+              return (
+                <View key={idx} style={styles.chip}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {getOptionIcon(clean, false, 14, { marginRight: 5 })}
+                    <Text style={styles.chipText}>{clean}</Text>
+                  </View>
+                </View>
+              );
+            })}
           </View>
         </View>
       )}
