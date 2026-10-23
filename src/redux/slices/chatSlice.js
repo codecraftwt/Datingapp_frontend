@@ -9,22 +9,33 @@ const initialState = {
   error: null,
 };
 
+const extractIdStr = (val) => {
+  if (!val) return null;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number') return val.toString();
+  if (typeof val === 'object') {
+    const id = val._id || val.id || val.userId;
+    if (id) return id.toString();
+  }
+  return null;
+};
+
 const chatSlice = createSlice({
   name: 'chat',
   initialState,
   reducers: {
     setMessages: (state, action) => {
       const rawMsgs = action.payload || [];
-      const activePartnerId = (state.activeChatUser?.id || state.activeChatUser?._id || state.activeChatUser?.userId)?.toString();
+      const activePartnerId = extractIdStr(state.activeChatUser);
 
       // Only include messages belonging to the active partner if activeChatUser is set
       const msgs = activePartnerId
         ? rawMsgs.filter((m) => {
             if (!m) return false;
             if (m.id === 'match-init') return true;
-            const rId = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-            const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
-            return rId === activePartnerId || sId === activePartnerId;
+            const rId = extractIdStr(m.receiverId) || extractIdStr(m.receiver);
+            const sId = extractIdStr(m.senderId) || extractIdStr(m.sender);
+            return (rId && rId === activePartnerId) || (sId && sId === activePartnerId);
           })
         : (action.payload === null ? [] : rawMsgs);
 
@@ -165,11 +176,11 @@ const chatSlice = createSlice({
       const msgTempId = msg.tempId;
 
       // Only add to active thread state.messages if this message belongs to the activeChatUser
-      const activePartnerId = (state.activeChatUser?.id || state.activeChatUser?._id || state.activeChatUser?.userId)?.toString();
-      const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
-      const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
+      const activePartnerId = extractIdStr(state.activeChatUser);
+      const rId = extractIdStr(msg.receiverId) || extractIdStr(msg.receiver);
+      const sId = extractIdStr(msg.senderId) || extractIdStr(msg.sender);
 
-      if (activePartnerId && (rId === activePartnerId || sId === activePartnerId)) {
+      if (activePartnerId && ((rId && rId === activePartnerId) || (sId && sId === activePartnerId))) {
         const idxInMsgs = state.messages.findIndex(
           m => (m._id || m.id) === mId || (msgTempId && (m.tempId === msgTempId || (m._id || m.id) === msgTempId))
         );
@@ -259,7 +270,7 @@ const chatSlice = createSlice({
     },
     setActiveChatUser: (state, action) => {
       state.activeChatUser = action.payload;
-      const partnerId = (action.payload?.id || action.payload?._id || action.payload?.userId)?.toString();
+      const partnerId = extractIdStr(action.payload);
       if (!partnerId) {
         state.messages = [];
       } else {
@@ -267,9 +278,9 @@ const chatSlice = createSlice({
         state.messages = (state.allMessages || []).filter((m) => {
           if (!m) return false;
           if (m.id === 'match-init') return true;
-          const rId = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-          const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
-          return rId === partnerId || sId === partnerId;
+          const rId = extractIdStr(m.receiverId) || extractIdStr(m.receiver);
+          const sId = extractIdStr(m.senderId) || extractIdStr(m.sender);
+          return (rId && rId === partnerId) || (sId && sId === partnerId);
         });
       }
     },

@@ -16,7 +16,14 @@ const profileSlice = createSlice({
   initialState,
   reducers: {
     setProfileDetails: (state, action) => {
-      state.profileDetails = action.payload;
+      if (!action.payload) {
+        state.profileDetails = null;
+      } else {
+        state.profileDetails = {
+          ...(state.profileDetails || {}),
+          ...action.payload,
+        };
+      }
     },
     setOtherProfiles: (state, action) => {
       state.otherProfiles = action.payload;
@@ -53,5 +60,7 @@ export const {
   setOnlineUsers,
   clearProfile,
 } = profileSlice.actions;
+
+export const selectProfileDetails = (state) => state.profile.profileDetails;
 
 export default profileSlice.reducer;

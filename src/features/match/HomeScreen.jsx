@@ -1505,11 +1505,25 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (!chatMessagesData || !activeChat || !currentUser) return;
 
     const currentId = (currentUser.id || currentUser._id)?.toString();
+    const activePartnerId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
+    if (!activePartnerId) return;
+
+    // Filter messages specifically for the active chat conversation so messages sent to other users never leak here
+    const relevantChatMsgs = chatMessagesData.filter((msg) => {
+      if (!msg) return false;
+      const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
+      const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
+      const isSentByMe = sId === currentId || msg.sender === 'you';
+      if (isSentByMe) {
+        return rId === activePartnerId;
+      }
+      return sId === activePartnerId;
+    });
 
     // Map DB messages to UI message structure
-    const formatted = chatMessagesData.map((msg) => ({
+    const formatted = relevantChatMsgs.map((msg) => ({
       id: msg._id,
-      sender: msg.senderId.toString() === currentId ? 'you' : 'them',
+      sender: (msg.senderId?._id || msg.senderId || msg.sender)?.toString() === currentId ? 'you' : 'them',
       text: msg.text,
       messageType: msg.messageType || 'text',
       mediaUrl: msg.mediaUrl,
@@ -1523,7 +1537,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     // Maintain any active temp messages
     setActiveChat((prev) => {
-      if (prev && prev.id === activeChat.id) {
+      const prevPartnerId = (prev?.id || prev?._id || prev?.userId)?.toString();
+      if (prev && prevPartnerId && prevPartnerId === activePartnerId) {
         const tempMessages = prev.messages.filter((m) => String(m.id).startsWith('temp-'));
         // If there are no messages, check if there's a match-init placeholder we want to keep
         if (formatted.length === 0 && prev.messages.some(m => m.id === 'match-init')) {
@@ -1539,7 +1554,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     setChats((prevChats) =>
       prevChats.map((c) => {
-        if (c.id === activeChat.id) {
+        const cPartnerId = (c?.id || c?._id || c?.userId)?.toString();
+        if (cPartnerId && cPartnerId === activePartnerId) {
           const tempMessages = c.messages.filter((m) => String(m.id).startsWith('temp-'));
           if (formatted.length === 0 && c.messages.some(m => m.id === 'match-init')) {
             return c;

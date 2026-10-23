@@ -220,9 +220,6 @@ export const RegisterScreen = ({ onNavigate, onGoBack }) => {
           </View>
 
           <View style={[styles.headerContainer, { width: cardWidth }]}>
-            <View style={styles.logoBadge}>
-              <Ionicons name="sparkles" size={24} color="#FE3C72" />
-            </View>
             <Text style={styles.title}>Create Account</Text>
             <Text style={styles.subtitle}>Join Spark and discover awesome matches</Text>
           </View>
@@ -600,15 +597,15 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 10,
+    paddingTop: 2,
     paddingBottom: 40,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-    marginTop: Platform.OS === 'ios' ? 40 : 15,
+    marginBottom: 6,
+    marginTop: Platform.OS === 'ios' ? 8 : 2,
   },
   backButton: {
     flexDirection: 'row',
@@ -633,7 +630,7 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 14,
   },
   logoBadge: {
     width: 60,

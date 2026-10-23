@@ -7,6 +7,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { store } from './src/redux/store';
 import { logout, selectCurrentUser, setCredentials, updateUserSubscription } from './src/redux/slices/authSlice';
 import { clearChat } from './src/redux/slices/chatSlice';
+import { setProfileDetails, clearProfile } from './src/redux/slices/profileSlice';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { RegisterScreen } from './src/screens/RegisterScreen';
 import { ForgotPasswordScreen } from './src/screens/ForgotPasswordScreen';
@@ -305,10 +306,13 @@ function MainApp() {
 
           if (hasCompleted === 'true' || hasProfileOnUser) {
             const storedProfile = await AsyncStorage.getItem(`profileData_${userId}`);
-            setUserProfile(storedProfile ? JSON.parse(storedProfile) : parsedUser);
+            const profileObj = storedProfile ? JSON.parse(storedProfile) : parsedUser;
+            setUserProfile(profileObj);
+            dispatch(setProfileDetails(profileObj));
             navigateTo('HOME');
           } else {
             setUserProfile(parsedUser);
+            dispatch(setProfileDetails(parsedUser));
             navigateTo('QUESTIONNAIRE');
           }
 
@@ -333,6 +337,7 @@ function MainApp() {
 
   const handleFinishQuestionnaire = async (profileData) => {
     setUserProfile(profileData);
+    dispatch(setProfileDetails(profileData));
     if (user && user.id) {
       try {
         await AsyncStorage.setItem(`hasCompletedQuestionnaire_${user.id}`, 'true');
@@ -347,6 +352,7 @@ function MainApp() {
   const handleUpdateProfile = async (updatedProfile) => {
     setUserProfile((prev) => {
       const merged = { ...(prev || {}), ...(updatedProfile || {}) };
+      dispatch(setProfileDetails(merged));
       if (user && (user.id || user._id)) {
         const userId = user.id || user._id;
         AsyncStorage.setItem(`profileData_${userId}`, JSON.stringify(merged)).catch((err) => {
@@ -385,6 +391,7 @@ function MainApp() {
       }
     }
     setUserProfile(null);
+    dispatch(clearProfile());
     navigateTo('QUESTIONNAIRE');
   };
 
@@ -393,6 +400,7 @@ function MainApp() {
     setAuthToken(null);
     dispatch(logout());
     dispatch(clearChat());
+    dispatch(clearProfile());
     setUserProfile(null);
 
     // 1. Instantly navigate to LOGIN screen so transition is immediate without network delay
@@ -464,6 +472,7 @@ function MainApp() {
                 // 1. Immediately navigate to HOME screen with logged-in user profile so UI transition is instant!
                 if (loggedUser) {
                   setUserProfile(loggedUser);
+                  dispatch(setProfileDetails(loggedUser));
                 }
                 navigateTo('HOME');
 
@@ -473,6 +482,7 @@ function MainApp() {
                     const freshUser = res.user || res.data?.user || res;
                     if (freshUser) {
                       setUserProfile(freshUser);
+                      dispatch(setProfileDetails(freshUser));
                     }
                   })
                   .catch((err) => {
@@ -486,6 +496,7 @@ function MainApp() {
               if (nextScreen === 'QUESTIONNAIRE') {
                 if (loggedUser) {
                   setUserProfile(loggedUser);
+                  dispatch(setProfileDetails(loggedUser));
                 }
                 navigateTo('QUESTIONNAIRE');
               } else {

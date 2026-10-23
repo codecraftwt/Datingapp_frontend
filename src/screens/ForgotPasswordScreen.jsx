@@ -36,7 +36,7 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
     try {
       setLoading(true);
       const res = await apiClient.forgotPassword({ email: email.trim().toLowerCase() });
-      
+
       setCode('');
       Alert.alert(
         'Code Sent ✉️',
@@ -69,7 +69,7 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
     try {
       setResendLoading(true);
       const res = await apiClient.forgotPassword({ email: email.trim().toLowerCase() });
-      
+
       setCode('');
 
       const successMessage = res.message || `Password reset code resent to ${email.trim()}`;
@@ -101,7 +101,7 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
       });
 
       Alert.alert(
-        'OTP Verified 🎉',
+        'OTP Verified ',
         res.message || 'Verification code confirmed. You can now set your new password.',
         [
           {
@@ -144,7 +144,7 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
       });
 
       Alert.alert(
-        'Password Reset Successful 🎉',
+        'Password Reset Successful ',
         res.message || 'Your password has been updated successfully. Please log in.',
         [{ text: 'Log In', onPress: () => onNavigate && onNavigate('LOGIN') }]
       );
@@ -195,8 +195,8 @@ export const ForgotPasswordScreen = ({ onNavigate, onGoBack }) => {
               {step === 1
                 ? 'Enter your email to receive a 6-digit password reset code'
                 : step === 2
-                ? `Enter the 6-digit code sent to ${email.trim()}`
-                : 'Choose a strong new password for your account'}
+                  ? `Enter the 6-digit code sent to ${email.trim()}`
+                  : 'Choose a strong new password for your account'}
             </Text>
           </View>
 
@@ -315,15 +315,15 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 10,
+    paddingTop: 2,
     paddingBottom: 40,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-    marginTop: Platform.OS === 'ios' ? 40 : 15,
+    marginBottom: 6,
+    marginTop: Platform.OS === 'ios' ? 8 : 2,
   },
   backButton: {
     flexDirection: 'row',
@@ -348,7 +348,7 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
   },
   logoBadge: {
     width: 64,
@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.4)',
   },

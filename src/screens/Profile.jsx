@@ -17,6 +17,7 @@ import {
   PermissionsAndroid,
   ToastAndroid,
   KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,7 +32,8 @@ import { registerFcmToken } from '../services/notificationService';
 import { SubscriptionModal } from '../components/SubscriptionModal';
 import Video from 'react-native-video';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { setProfileDetails } from '../redux/slices/profileSlice';
 
 const { width } = Dimensions.get('window');
 
@@ -167,10 +169,29 @@ const PasswordModalField = React.memo(({
 
 export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfile, onGoBack, onBack }) => {
   const insets = useSafeAreaInsets();
+  const dispatch = useDispatch();
   const reduxUser = useSelector((state) => state.auth?.user);
+  const reduxProfile = useSelector((state) => state.profile?.profileDetails);
+
+  // Derive initial full profile from Redux cache, props, or reduxUser
+  const initialProfileData = (
+    (reduxProfile && (reduxProfile.firstName || reduxProfile.name || reduxProfile.profileImage))
+      ? reduxProfile
+      : (userProfile && (userProfile.firstName || userProfile.name || userProfile.profileImage))
+        ? userProfile
+        : reduxProfile || userProfile || reduxUser || null
+  );
+
+  const hasInitialData = !!(
+    initialProfileData?.firstName ||
+    initialProfileData?.name ||
+    initialProfileData?.profileImage ||
+    (Array.isArray(initialProfileData?.photos) && initialProfileData.photos.length > 0)
+  );
 
   // Initialize activePlan immediately with already known tier (from userProfile, Redux, or null)
   const knownInitialTier = (
+    initialProfileData?.subscriptionTier ||
     userProfile?.subscriptionTier ||
     reduxUser?.subscriptionTier ||
     userProfile?.activePlan ||
@@ -178,8 +199,9 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
     null
   );
 
-  const [profile, setProfile] = useState(userProfile || reduxUser || null);
-  const [loading, setLoading] = useState(false);
+  const [profile, setProfile] = useState(initialProfileData);
+  // Zero-loading display: if we already have cached profile data, start with loading=false for instant display!
+  const [loading, setLoading] = useState(!hasInitialData);
   const [isQuestionnaireModalOpen, setIsQuestionnaireModalOpen] = useState(false);
   const [questionnaireModalStep, setQuestionnaireModalStep] = useState(6);
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
@@ -216,6 +238,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   };
 
   const handleContactSubmit = async () => {
+    Keyboard.dismiss();
     if (!contactMessage.trim()) {
       Alert.alert('Required Field', 'Please enter your problem description or message before submitting.');
       return;
@@ -412,6 +435,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               }
               setIsProfileHiddenState(nextVal);
               setProfile((prev) => ({ ...prev, isProfileHidden: nextVal }));
+              dispatch(setProfileDetails({ isProfileHidden: nextVal }));
               if (onUpdateProfile) {
                 onUpdateProfile({ ...(userProfile || {}), isProfileHidden: nextVal });
               }
@@ -501,13 +525,14 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch real profile data directly from Backend API
-  const fetchProfileFromBackend = async () => {
+  // Fetch real profile data directly from Backend API (stale-while-revalidate)
+  const fetchProfileFromBackend = async (isManualRefresh = false) => {
     try {
-      setLoading(true);
-      if (typeof apiClient.resetResolvedUrl === 'function') {
-        apiClient.resetResolvedUrl();
+      // Only show full loader if there is NO existing cached profile data at all
+      if (!hasInitialData && !profile?.firstName && !isManualRefresh) {
+        setLoading(true);
       }
+      // Note: We do NOT reset resolved working URL so the network request fires instantly!
       const res = await apiClient.getProfile();
       const userData = res.user || res.data?.user || res;
       if (userData && typeof userData === 'object' && userData.firstName) {
@@ -515,6 +540,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           ...(prev || {}),
           ...userData,
         }));
+        dispatch(setProfileDetails(userData));
         if (onUpdateProfile) {
           onUpdateProfile(userData);
         }
@@ -528,6 +554,11 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           setActivePlan(tier);
           setProfile((prev) => (prev ? { ...prev, subscriptionTier: tier, subscriptionStatus: subRes.subscriptionStatus } : prev));
           AsyncStorage.setItem('@cached_user_subscription_tier', tier).catch(() => { });
+          dispatch(setProfileDetails({
+            subscriptionTier: tier,
+            subscriptionStatus: subRes.subscriptionStatus || 'active',
+            subscriptionPermissions: subRes.permissions,
+          }));
           if (typeof onUpdateProfile === 'function') {
             onUpdateProfile({
               subscriptionTier: tier,
@@ -547,10 +578,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
   const handlePullToRefresh = () => {
     setRefreshing(true);
-    if (typeof apiClient.resetResolvedUrl === 'function') {
-      apiClient.resetResolvedUrl();
-    }
-    fetchProfileFromBackend();
+    fetchProfileFromBackend(true);
   };
 
   useEffect(() => {
@@ -558,17 +586,18 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   }, []);
 
   useEffect(() => {
-    if (userProfile && typeof userProfile === 'object') {
+    const fresh = reduxProfile || userProfile;
+    if (fresh && typeof fresh === 'object') {
       setProfile((prev) => ({
-        ...userProfile,
         ...(prev || {}),
+        ...fresh,
       }));
-      if (userProfile.subscriptionTier) {
-        setActivePlan(userProfile.subscriptionTier);
+      if (fresh.subscriptionTier) {
+        setActivePlan(fresh.subscriptionTier);
         setIsPlanLoading(false);
       }
     }
-  }, [userProfile]);
+  }, [reduxProfile, userProfile]);
 
   useEffect(() => {
     if (reduxUser?.subscriptionTier) {
@@ -579,6 +608,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
 
   const handleFinishEditQuestionnaire = async (updatedData) => {
     setProfile(updatedData);
+    dispatch(setProfileDetails(updatedData));
     if (onUpdateProfile) {
       onUpdateProfile(updatedData);
     }
@@ -591,6 +621,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   };
 
   const handleChangePasswordSubmit = async () => {
+    Keyboard.dismiss();
     if (!currentPassword || !newPassword || !confirmNewPassword) {
       Alert.alert('Required Fields', 'Please fill in all password fields.');
       return;
@@ -751,6 +782,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
       };
 
       setProfile(updatedProfile);
+      dispatch(setProfileDetails(updatedProfile));
       if (onUpdateProfile) {
         onUpdateProfile(updatedProfile);
       }
@@ -991,6 +1023,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               };
 
               setProfile(updatedProfile);
+              dispatch(setProfileDetails(updatedProfile));
               if (onUpdateProfile) {
                 onUpdateProfile(updatedProfile);
               }
@@ -1737,7 +1770,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         >
           <ScrollView
             contentContainerStyle={styles.formModalScrollContent}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
             bounces={false}
             overScrollMode="never"
@@ -1895,6 +1928,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                       disabled={contactSubmitting}
                       style={[styles.modernPrimaryBtn, contactSubmitting && { opacity: 0.7 }]}
                       activeOpacity={0.85}
+                      pressRetentionOffset={{ top: 30, left: 30, right: 30, bottom: 30 }}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
                       {contactSubmitting ? (
                         <ActivityIndicator size="small" color="#FFFFFF" />
@@ -2073,7 +2108,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         >
           <ScrollView
             contentContainerStyle={styles.formModalScrollContent}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
             bounces={false}
             overScrollMode="never"
@@ -2210,6 +2245,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
                   onPress={handleChangePasswordSubmit}
                   disabled={passwordLoading}
                   activeOpacity={0.85}
+                  pressRetentionOffset={{ top: 30, left: 30, right: 30, bottom: 30 }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                   {passwordLoading ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />

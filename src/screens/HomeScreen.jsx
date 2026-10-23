@@ -51,6 +51,7 @@ import { apiClient, getIsManualLogoutInProgress, getIsDeactivationAlertShowing, 
 import { BASE_URL, getBaseUrl, getImageUrl as formatConfigUrl, getAudioUrl, isVideoUrl, getVideoThumbnailUrl } from '../api/config';
 import { selectCurrentUser, logout } from '../redux/slices/authSlice';
 import {
+  setProfileDetails,
   setOtherProfiles,
   setLikes,
   setMatches,
@@ -354,13 +355,25 @@ const deduplicateMessages = (msgList) => {
   return result;
 };
 
+const extractIdStr = (val) => {
+  if (!val) return null;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number') return val.toString();
+  if (typeof val === 'object') {
+    const id = val._id || val.id || val.userId;
+    if (id) return id.toString();
+  }
+  return null;
+};
+
 const doesMessageBelongToPartner = (m, partnerId) => {
   if (!m || !partnerId) return false;
   if (m.id === 'match-init' || m.id === 'blocked-init') return false;
-  const pIdStr = partnerId.toString();
-  const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-  const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-  return mReceiver === pIdStr || mSender === pIdStr;
+  const pIdStr = extractIdStr(partnerId);
+  if (!pIdStr || pIdStr === 'undefined' || pIdStr === 'null' || pIdStr === '[object Object]') return false;
+  const mReceiver = extractIdStr(m.receiverId) || extractIdStr(m.receiver);
+  const mSender = extractIdStr(m.senderId) || extractIdStr(m.sender);
+  return (mReceiver && mReceiver === pIdStr) || (mSender && mSender === pIdStr);
 };
 
 const formatMessageTime = (dateString) => {
@@ -484,7 +497,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   const dispatch = useDispatch();
   const reduxUser = useSelector(selectCurrentUser);
-  const currentUser = reduxUser || userProfile;
+  const reduxProfileDetails = useSelector((state) => state.profile.profileDetails);
+  const activeUserProfile = reduxProfileDetails || userProfile || reduxUser;
+  const currentUser = { ...(reduxUser || {}), ...(reduxProfileDetails || {}), ...(userProfile || {}) };
 
   // Stably capture latest onLogout and onNavigate props via refs
   const onLogoutRef = useRef(onLogout);
@@ -4207,14 +4222,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
         // Preserve any real messages that already exist in local state
         const existingChatInState = (chats || []).find((c) => (c.id || c._id || c.userId)?.toString() === matchedUserStr);
-        const existingRealMsgs = (existingChatInState?.messages || []).filter((m) => {
-          if (!m || m.id === 'match-init' || m.id === 'blocked-init') return false;
-          const mReceiver = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
-          const mSender = (m.senderId?._id || m.senderId || m.sender)?.toString();
-          if (mReceiver && mReceiver === matchedUserStr) return true;
-          if (mSender && mSender === matchedUserStr) return true;
-          return false;
-        });
+        const existingRealMsgs = (existingChatInState?.messages || []).filter((m) => doesMessageBelongToPartner(m, matchedUserStr));
 
         chatsList.push({
           id: matchedUserStr,
@@ -4420,7 +4428,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     // Maintain any active temp messages & real-time received messages
     setActiveChat((prev) => {
-      if (prev && (prev.id === activeChat.id || prev._id === activeChat._id || String(prev.id || prev._id || prev.userId) === String(activeChat.id || activeChat._id || activeChat.userId))) {
+      const prevPartnerId = (prev?.id || prev?._id || prev?.userId)?.toString();
+      if (prev && prevPartnerId && prevPartnerId === activePartnerId) {
         if (formatted.length === 0 && prev.messages.some(m => m.id === 'match-init')) {
           return prev;
         }
@@ -4499,7 +4508,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     setChats((prevChats) =>
       prevChats.map((c) => {
-        if (c.id === activeChat.id || c._id === activeChat._id || String(c.id || c._id || c.userId) === String(activeChat.id || activeChat._id || activeChat.userId)) {
+        const cPartnerId = (c?.id || c?._id || c?.userId)?.toString();
+        if (cPartnerId && cPartnerId === activePartnerId) {
           if (formatted.length === 0 && c.messages.some(m => m.id === 'match-init')) {
             return c;
           }
@@ -4640,7 +4650,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       return;
     }
 
-    const exists = chats.some((c) => c.id === candidateId);
+    const exists = chats.some((c) => (c.id || c._id || c.userId)?.toString() === candidateId);
     if (!exists) {
       const newChat = {
         id: candidateId,
@@ -4659,7 +4669,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       dispatch(setActiveChatUser(newChat));
       setActiveChat(newChat);
     } else {
-      const foundChat = chats.find((c) => c.id === candidateId);
+      const foundChat = chats.find((c) => (c.id || c._id || c.userId)?.toString() === candidateId);
       const sanitizedFoundChat = foundChat ? {
         ...foundChat,
         messages: (foundChat.messages || []).filter((m) => m.id === 'match-init' || doesMessageBelongToPartner(m, candidateId)),
@@ -4759,7 +4769,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           })
         );
         setActiveChat((prevActive) => {
-          if (prevActive && prevActive.id === receiverId) {
+          if (prevActive && (prevActive.id || prevActive._id || prevActive.userId)?.toString() === receiverId) {
             return {
               ...prevActive,
               messages: prevActive.messages.map((m) =>
@@ -5013,7 +5023,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const tempId = failedMsg.tempId || failedMsg.id;
 
       const resetPending = (m) => (m.id === tempId || m.tempId === tempId ? { ...m, status: 'pending', errorMessage: null } : m);
-      setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(resetPending) } : null);
+      setActiveChat((prev) => {
+        if (!prev) return null;
+        const prevPartnerId = (prev.id || prev._id || prev.userId)?.toString();
+        if (prevPartnerId !== receiverId) return prev;
+        return { ...prev, messages: (prev.messages || []).map(resetPending) };
+      });
       setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(resetPending) } : c)));
 
       const payload = {
@@ -5053,11 +5068,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             };
             dispatch(addMessage(actualMsg));
             const confirmUpdate = (m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m);
-            setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(confirmUpdate) } : null);
+            setActiveChat((prev) => {
+              if (!prev) return null;
+              const prevPartnerId = (prev.id || prev._id || prev.userId)?.toString();
+              if (prevPartnerId !== receiverId) return prev;
+              return { ...prev, messages: (prev.messages || []).map(confirmUpdate) };
+            });
             setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(confirmUpdate) } : c)));
           } else if (res && res.status === 'error') {
             const markFailed = (m) => (m.id === tempId || m.tempId === tempId ? { ...m, status: 'failed', errorMessage: res.message } : m);
-            setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(markFailed) } : null);
+            setActiveChat((prev) => {
+              if (!prev) return null;
+              const prevPartnerId = (prev.id || prev._id || prev.userId)?.toString();
+              if (prevPartnerId !== receiverId) return prev;
+              return { ...prev, messages: (prev.messages || []).map(markFailed) };
+            });
             setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(markFailed) } : c)));
             Alert.alert('Cannot Send Message', res?.message || 'Failed to resend message.');
           }
@@ -5086,13 +5111,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             };
             dispatch(addMessage(actualMsg));
             const confirmUpdate = (m) => (m.id === tempId || m.tempId === tempId ? actualMsg : m);
-            setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(confirmUpdate) } : null);
+            setActiveChat((prev) => {
+              if (!prev) return null;
+              const prevPartnerId = (prev.id || prev._id || prev.userId)?.toString();
+              if (prevPartnerId !== receiverId) return prev;
+              return { ...prev, messages: (prev.messages || []).map(confirmUpdate) };
+            });
             setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(confirmUpdate) } : c)));
           }
         }).catch((err) => {
           const errMsg = err?.data?.message || err?.message || 'Failed to resend message.';
           const markFailed = (m) => (m.id === tempId || m.tempId === tempId ? { ...m, status: 'failed', errorMessage: errMsg } : m);
-          setActiveChat((prev) => prev ? { ...prev, messages: (prev.messages || []).map(markFailed) } : null);
+          setActiveChat((prev) => {
+            if (!prev) return null;
+            const prevPartnerId = (prev.id || prev._id || prev.userId)?.toString();
+            if (prevPartnerId !== receiverId) return prev;
+            return { ...prev, messages: (prev.messages || []).map(markFailed) };
+          });
           setChats((prev) => prev.map((c) => (isIdMatch(c, receiverId) ? { ...c, messages: (c.messages || []).map(markFailed) } : c)));
           Alert.alert('Cannot Send Message', errMsg);
         });
@@ -9680,7 +9715,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           {activeTab === 'profile' && (
             <Profile
-              userProfile={currentUser || userProfile}
+              userProfile={activeUserProfile}
               onUpdateProfile={onUpdateProfile}
               onLogout={onLogout}
               onRemoveProfile={onRemoveProfile}
