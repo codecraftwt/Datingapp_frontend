@@ -283,6 +283,7 @@ function MainApp() {
         if (storedUser && storedToken) {
           const parsedUser = JSON.parse(storedUser);
           setLastKnownUser(parsedUser);
+          setAuthToken(storedToken);
           console.log('--- Restored Session on Startup ---');
           console.log('JWT Token:', storedToken);
           console.log('User Profile:', JSON.stringify(parsedUser, null, 2));

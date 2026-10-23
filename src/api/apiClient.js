@@ -282,10 +282,16 @@ const request = async (url, options = {}, isRetry = false) => {
 
       const isIgnoredUrl =
         url.includes('/api/auth/login') ||
-        url.includes('/api/profile/account-status');
+        url.includes('/api/auth/register') ||
+        url.includes('/api/auth/verify-mobile-otp') ||
+        url.includes('/api/auth/send-mobile-otp') ||
+        url.includes('/api/profile/presence') ||
+        url.includes('/api/profile/presence-heartbeat') ||
+        url.includes('/api/profile/account-status') ||
+        url.includes('/api/notifications/unread');
 
-      // If response is 401 or single device conflict, always verify if the account was actually deactivated before declaring session termination!
-      if (!isAccountDeactivated && !isIgnoredUrl) {
+      // If response is 401 or single device conflict, verify if the account was actually deactivated before declaring session termination
+      if (!isAccountDeactivated && !isIgnoredUrl && (response.status === 401 || response.status === 403)) {
         try {
           let checkPath = '/api/profile/account-status';
           let emailForCheck = lastKnownUserEmail;
@@ -325,32 +331,23 @@ const request = async (url, options = {}, isRetry = false) => {
         }
       }
 
-      if (
-        response.status === 401 ||
-        response.status === 403 ||
-        isAccountDeactivated ||
-        data?.code === 'SINGLE_DEVICE_CONFLICT' ||
-        data?.code === 'ACCOUNT_DEACTIVATED' ||
-        data?.code === 'SESSION_TERMINATED' ||
-        data?.message?.includes('authorization denied') ||
-        data?.message?.includes('invalid or expired') ||
-        data?.message?.includes('accessed on another device') ||
-        data?.message?.includes('logged out from all devices')
-      ) {
-        console.warn('[apiClient] Stale, expired, deactivated or terminated session detected. Clearing token cache...');
-        authTokenInMemory = null;
-        AsyncStorage.removeItem('token').catch(() => {});
-        AsyncStorage.removeItem('user').catch(() => {});
-
-        const isExplicitRemoteTermination =
-          isAccountDeactivated ||
+      // Explicit termination only applies to genuine conflicts and account deactivation, never on ignored URLs or background pings
+      const isExplicitRemoteTermination =
+        !isIgnoredUrl &&
+        (isAccountDeactivated ||
           data?.code === 'SINGLE_DEVICE_CONFLICT' ||
           data?.code === 'ACCOUNT_DEACTIVATED' ||
           data?.code === 'SESSION_TERMINATED' ||
           data?.message?.includes('accessed on another device') ||
-          data?.message?.includes('logged out from all devices');
+          data?.message?.includes('logged out from all devices'));
 
-        if (!isIgnoredUrl && isExplicitRemoteTermination && !isManualLogoutInProgress && !isDeactivationAlertShowing && onSessionTerminatedCallback) {
+      if (isExplicitRemoteTermination) {
+        console.warn('[apiClient] Explicit remote session termination confirmed. Clearing token cache...');
+        authTokenInMemory = null;
+        AsyncStorage.removeItem('token').catch(() => {});
+        AsyncStorage.removeItem('user').catch(() => {});
+
+        if (!isManualLogoutInProgress && !isDeactivationAlertShowing && onSessionTerminatedCallback) {
           isDeactivationAlertShowing = true;
           const finalReason = deactReason || data?.reason || data?.deactivationReason || '';
           onSessionTerminatedCallback({
