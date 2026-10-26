@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 // Profile Screen component - updated with Hide & Unhide Media & Contact Us support
 import {
   StyleSheet,
@@ -354,6 +354,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   const [isProfileHiddenState, setIsProfileHiddenState] = useState(!!userProfile?.isProfileHidden);
   const [visibilityLoading, setVisibilityLoading] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+  const lastReportedTierRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -378,7 +379,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           setActivePlan(tier);
           setProfile((prev) => (prev ? { ...prev, subscriptionTier: tier, subscriptionStatus: res.subscriptionStatus } : prev));
           AsyncStorage.setItem('@cached_user_subscription_tier', tier).catch(() => { });
-          if (typeof onUpdateProfile === 'function') {
+          if (typeof onUpdateProfile === 'function' && lastReportedTierRef.current !== tier) {
+            lastReportedTierRef.current = tier;
             onUpdateProfile({
               subscriptionTier: tier,
               subscriptionStatus: res.subscriptionStatus || 'active',
@@ -588,10 +590,17 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
   useEffect(() => {
     const fresh = reduxProfile || userProfile;
     if (fresh && typeof fresh === 'object') {
-      setProfile((prev) => ({
-        ...(prev || {}),
-        ...fresh,
-      }));
+      setProfile((prev) => {
+        if (!prev) return fresh;
+        let hasChanges = false;
+        for (const k of Object.keys(fresh)) {
+          if (prev[k] !== fresh[k]) {
+            hasChanges = true;
+            break;
+          }
+        }
+        return hasChanges ? { ...prev, ...fresh } : prev;
+      });
       if (fresh.subscriptionTier) {
         setActivePlan(fresh.subscriptionTier);
         setIsPlanLoading(false);
@@ -1554,9 +1563,6 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         <TouchableOpacity
           style={styles.actionRow}
           onPress={() => {
-            if (typeof apiClient.resetResolvedUrl === 'function') {
-              apiClient.resetResolvedUrl();
-            }
             setIsSubscriptionModalOpen(true);
           }}
           activeOpacity={0.7}
@@ -1597,7 +1603,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
               )}
             </View>
           </View>
-
+          <Ionicons name="chevron-forward" size={18} color="rgba(255, 255, 255, 0.4)" />
         </TouchableOpacity>
 
         <TouchableOpacity

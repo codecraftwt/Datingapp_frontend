@@ -1,5 +1,10 @@
 if (__DEV__) {
   require('./ReactotronConfig');
+} else {
+  // Strip verbose console logs in release mode to eliminate JNI bridge overhead
+  console.log = () => {};
+  console.info = () => {};
+  console.debug = () => {};
 }
 
 import { AppRegistry } from 'react-native';

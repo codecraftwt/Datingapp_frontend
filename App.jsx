@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { StatusBar, StyleSheet, useColorScheme, View, ActivityIndicator, Text, Platform, AppState, Alert, BackHandler, ToastAndroid } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider, useSelector, useDispatch } from 'react-redux';
@@ -349,9 +349,21 @@ function MainApp() {
     navigateTo('HOME');
   };
 
-  const handleUpdateProfile = async (updatedProfile) => {
+  const handleUpdateProfile = useCallback(async (updatedProfile) => {
+    if (!updatedProfile) return;
+
     setUserProfile((prev) => {
-      const merged = { ...(prev || {}), ...(updatedProfile || {}) };
+      // Check if anything actually changed before allocating a new object to avoid triggering render loops
+      let hasChanged = false;
+      for (const key of Object.keys(updatedProfile)) {
+        if (!prev || prev[key] !== updatedProfile[key]) {
+          hasChanged = true;
+          break;
+        }
+      }
+      if (!hasChanged) return prev; // Bail out!
+
+      const merged = { ...(prev || {}), ...updatedProfile };
       dispatch(setProfileDetails(merged));
       if (user && (user.id || user._id)) {
         const userId = user.id || user._id;
@@ -363,22 +375,24 @@ function MainApp() {
     });
 
     if (updatedProfile && updatedProfile.subscriptionTier) {
-      dispatch(updateUserSubscription({
-        subscriptionTier: updatedProfile.subscriptionTier,
-        subscriptionStatus: updatedProfile.subscriptionStatus || 'active',
-      }));
-      AsyncStorage.getItem('user').then((userStr) => {
-        if (userStr) {
-          try {
-            const parsed = JSON.parse(userStr);
-            parsed.subscriptionTier = updatedProfile.subscriptionTier;
-            parsed.subscriptionStatus = updatedProfile.subscriptionStatus || 'active';
-            AsyncStorage.setItem('user', JSON.stringify(parsed)).catch(() => {});
-          } catch (e) {}
-        }
-      }).catch(() => {});
+      if (user?.subscriptionTier !== updatedProfile.subscriptionTier || user?.subscriptionStatus !== (updatedProfile.subscriptionStatus || 'active')) {
+        dispatch(updateUserSubscription({
+          subscriptionTier: updatedProfile.subscriptionTier,
+          subscriptionStatus: updatedProfile.subscriptionStatus || 'active',
+        }));
+        AsyncStorage.getItem('user').then((userStr) => {
+          if (userStr) {
+            try {
+              const parsed = JSON.parse(userStr);
+              parsed.subscriptionTier = updatedProfile.subscriptionTier;
+              parsed.subscriptionStatus = updatedProfile.subscriptionStatus || 'active';
+              AsyncStorage.setItem('user', JSON.stringify(parsed)).catch(() => {});
+            } catch (e) {}
+          }
+        }).catch(() => {});
+      }
     }
-  };
+  }, [dispatch, user]);
 
   const handleRemoveProfile = async () => {
     if (user && (user.id || user._id)) {
@@ -462,6 +476,10 @@ function MainApp() {
     }, 2000);
   };
 
+  const memoizedUserProfile = useMemo(() => {
+    return userProfile || (user ? { firstName: user.name, email: user.email } : null);
+  }, [userProfile, user?.name, user?.email]);
+
   const renderScreen = () => {
     switch (currentScreen) {
       case 'LOGIN':
@@ -522,7 +540,7 @@ function MainApp() {
       case 'HOME':
         return (
           <HomeScreen
-            userProfile={userProfile || (user ? { firstName: user.name, email: user.email } : null)}
+            userProfile={memoizedUserProfile}
             onUpdateProfile={handleUpdateProfile}
             onLogout={handleLogout}
             onRemoveProfile={handleRemoveProfile}

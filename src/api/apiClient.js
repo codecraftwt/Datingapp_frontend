@@ -9,11 +9,44 @@ export const resetResolvedUrl = () => {
   activeResolvedUrl = null;
 };
 
+let baseUrlListeners = [];
+export const subscribeBaseUrlChanged = (listener) => {
+  if (typeof listener === 'function') {
+    baseUrlListeners.push(listener);
+    if (activeResolvedUrl) listener(activeResolvedUrl);
+  }
+  return () => {
+    baseUrlListeners = baseUrlListeners.filter((l) => l !== listener);
+  };
+};
+
+const notifyBaseUrlChanged = (url) => {
+  baseUrlListeners.forEach((l) => {
+    try { l(url); } catch (e) {}
+  });
+};
+
+export const getActiveResolvedUrl = () => activeResolvedUrl || getBaseUrl();
+
 const resolveWorkingBaseUrl = async (forceRecheck = false) => {
-  if (activeResolvedUrl && !forceRecheck && (!__DEV__ || activeResolvedUrl !== LIVE_URL)) {
+  // In production / release APK, immediately use LIVE_URL without probing candidate IPs
+  if (!__DEV__) {
+    activeResolvedUrl = LIVE_URL;
+    setBaseUrl(LIVE_URL);
+    return LIVE_URL;
+  }
+  if (activeResolvedUrl && !forceRecheck) {
     return activeResolvedUrl;
   }
-  if (isResolving) return getBaseUrl();
+  if (isResolving) {
+    let attempts = 0;
+    while (isResolving && attempts < 15) {
+      await new Promise((r) => setTimeout(r, 100));
+      attempts++;
+    }
+    if (activeResolvedUrl) return activeResolvedUrl;
+    return getBaseUrl();
+  }
   isResolving = true;
 
   const candidateList = __DEV__
@@ -31,6 +64,7 @@ const resolveWorkingBaseUrl = async (forceRecheck = false) => {
         setBaseUrl(candidate);
         isResolving = false;
         console.log(`[apiClient] Auto-resolved working backend URL: ${candidate}`);
+        notifyBaseUrlChanged(candidate);
         return candidate;
       }
     } catch (err) {
@@ -41,6 +75,7 @@ const resolveWorkingBaseUrl = async (forceRecheck = false) => {
   activeResolvedUrl = LIVE_URL;
   setBaseUrl(LIVE_URL);
   isResolving = false;
+  notifyBaseUrlChanged(LIVE_URL);
   return activeResolvedUrl;
 };
 
@@ -142,14 +177,17 @@ const request = async (url, options = {}, isRetry = false) => {
       delete headers['content-type'];
     }
 
-    let currentBase = activeResolvedUrl || getBaseUrl();
+    let currentBase = activeResolvedUrl;
+    if (!currentBase) {
+      currentBase = await resolveWorkingBaseUrl();
+    }
     const formatFullUrl = (base, path) => {
       const b = (base || '').replace(/\/+$/, '');
       const p = path.startsWith('/') ? path : `/${path}`;
       return `${b}${p}`;
     };
 
-    const defaultTimeout = isFormData ? 600000 : 20000;
+    const defaultTimeout = isFormData ? 600000 : 10000;
     let response;
     try {
       const controller = new AbortController();
@@ -708,6 +746,7 @@ export const apiClient = {
     return await request('/api/chat/messages', {
       method: 'POST',
       body: JSON.stringify(body),
+      timeout: 8000,
     });
   },
   getChatMessages: async (selectedUserId) => {
@@ -1026,17 +1065,14 @@ export const apiClient = {
     console.log('📡 [SUBSCRIPTION API CALL] GET /api/subscriptions/plans');
     console.log('   ↳ Trigger: Fetching available subscription plans');
     console.log('   ↳ Request Payload: None');
-    if (__DEV__ && activeResolvedUrl === LIVE_URL) {
-      await resolveWorkingBaseUrl(true);
-    }
     try {
-      const res = await request('/api/subscriptions/plans', { method: 'GET' });
+      const res = await request('/api/subscriptions/plans', { method: 'GET', timeout: 8000 });
       console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscriptions/plans SUCCESS:', res);
       return res;
     } catch (err) {
       if (err?.status === 404 || err?.message?.includes('404') || err?.data?.message?.includes('404')) {
         console.warn('⚠️ [SUBSCRIPTION API RETRY] Fallback to GET /api/subscription/plans');
-        const resFallback = await request('/api/subscription/plans', { method: 'GET' });
+        const resFallback = await request('/api/subscription/plans', { method: 'GET', timeout: 8000 });
         console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscription/plans SUCCESS:', resFallback);
         return resFallback;
       }
@@ -1100,9 +1136,6 @@ export const apiClient = {
     console.log('📡 [SUBSCRIPTION API CALL] GET /api/subscriptions/my-subscription');
     console.log('   ↳ Trigger: Opening Subscription Modal / checking active tier');
     console.log('   ↳ Request Payload: None');
-    if (__DEV__ && activeResolvedUrl === LIVE_URL) {
-      await resolveWorkingBaseUrl(true);
-    }
     try {
       const res = await request('/api/subscriptions/my-subscription', { method: 'GET' });
       console.log('✅ [SUBSCRIPTION API RESPONSE] GET /api/subscriptions/my-subscription SUCCESS:', res);
@@ -1262,6 +1295,12 @@ export const apiClient = {
   },
   resetResolvedUrl: () => {
     resetResolvedUrl();
+  },
+  getActiveResolvedUrl: () => {
+    return getActiveResolvedUrl();
+  },
+  subscribeBaseUrlChanged: (listener) => {
+    return subscribeBaseUrlChanged(listener);
   },
   request: async (endpoint, options) => {
     return await request(endpoint, options);

@@ -10,9 +10,12 @@ import {
   Alert,
   SafeAreaView,
   Dimensions,
+  useWindowDimensions,
+  Platform,
   Linking,
   NativeModules,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { apiClient } from '../api/apiClient';
@@ -46,6 +49,11 @@ const getFeatureIcon = (text) => {
 };
 
 export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, currentTier = 'Free' }) => {
+  const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const isSmallDevice = windowWidth < 380;
+  const isTabletOrWide = windowWidth > 600;
+
   const [selectedPlan, setSelectedPlan] = useState('Gold');
   const [isLoading, setIsLoading] = useState(false);
   const [subscriptionInfo, setSubscriptionInfo] = useState(null);
@@ -65,6 +73,8 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
   const selectedPlanRef = React.useRef('Gold');
   const isConfirmingRef = React.useRef(false);
 
+  const activeTier = subscriptionInfo?.subscriptionTier || currentTier || 'Free';
+
   useEffect(() => {
     selectedPlanRef.current = selectedPlan;
   }, [selectedPlan]);
@@ -82,9 +92,6 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
     try {
       console.log('📡 [FETCH_PLANS_REQUEST] Calling API: GET /api/subscriptions/plans...');
       setIsFetchingPlans(true);
-      if (typeof apiClient.resetResolvedUrl === 'function') {
-        apiClient.resetResolvedUrl();
-      }
       const res = await apiClient.getSubscriptionPlans();
       console.log('✅ [FETCH_PLANS_RESPONSE] Received available plans from API:', JSON.stringify(res, null, 2));
 
@@ -101,7 +108,8 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
         // - If a plan is hidden by admin, ONLY show it if it is the user's CURRENT active plan ("keep as current, blurred")
         const currentTierUpper = (activeTier || currentTier || '').toUpperCase();
         const paidPlans = (list || []).filter((p) => {
-          const tierKey = (p.planKey || p.tier || '').toUpperCase();
+          if (!p) return false;
+          const tierKey = (p.planKey || p.tier || p.name || '').toUpperCase();
           const priceNum = parseFloat(p.price !== undefined ? p.price : (p.priceAmount ? String(p.priceAmount).replace('$', '') : '0'));
           const isPaid = tierKey !== 'FREE' && priceNum > 0;
           if (!isPaid) return false;
@@ -115,8 +123,8 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
           setAvailablePlans(paidPlans);
           const hasSelected = paidPlans.find((p) => (p.planKey || p.tier) === selectedPlanRef.current);
           if (!hasSelected) {
-            const hasGold = paidPlans.find((p) => (p.planKey || p.tier) === 'Gold');
-            setSelectedPlan(hasGold ? 'Gold' : (paidPlans[0].planKey || paidPlans[0].tier));
+            const hasGold = paidPlans.find((p) => (p.planKey || p.tier || '').toUpperCase().includes('GOLD'));
+            setSelectedPlan(hasGold ? (hasGold.planKey || hasGold.tier) : (paidPlans[0].planKey || paidPlans[0].tier));
           }
         }
       }
@@ -142,8 +150,6 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
       setIsFetchingInfo(false);
     }
   };
-
-  const activeTier = subscriptionInfo?.subscriptionTier || currentTier || 'Free';
 
   const handleSubscribe = async () => {
     console.log(`\n==================================================`);
@@ -375,23 +381,26 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
-      <SafeAreaView style={styles.container}>
+    <Modal visible={visible} animationType="slide" transparent={true} statusBarTranslucent={true} onRequestClose={onClose}>
+      <SafeAreaView style={[styles.container, { paddingTop: Platform.OS === 'android' ? Math.max(insets.top, 24) : 0 }]}>
         {/* Header Bar */}
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose} activeOpacity={0.7}>
-            <Ionicons name="close" size={26} color="#FFFFFF" />
+        <View style={[styles.header, { paddingHorizontal: isSmallDevice ? 14 : 20 }]}>
+          <TouchableOpacity style={styles.closeButton} onPress={onClose} activeOpacity={0.7} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Ionicons name="close" size={24} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Premium Upgrades</Text>
+          <Text style={[styles.headerTitle, isSmallDevice && { fontSize: 16 }]} numberOfLines={1}>Premium Upgrades</Text>
           <View style={{ width: 40 }} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingHorizontal: isSmallDevice ? 14 : 20 }]}
+          showsVerticalScrollIndicator={false}
+        >
           {/* Banner Hero */}
-          <View style={styles.heroSection}>
-            <Ionicons name="ribbon-outline" size={52} color="#FFD700" style={{ marginBottom: 8 }} />
-            <Text style={styles.heroTitle}>Unlock Your Dating Superpowers</Text>
-            <Text style={styles.heroSubtitle}>
+          <View style={[styles.heroSection, { marginVertical: isSmallDevice ? 14 : 20 }]}>
+            <Ionicons name="ribbon-outline" size={isSmallDevice ? 44 : 52} color="#FFD700" style={{ marginBottom: 8 }} />
+            <Text style={[styles.heroTitle, isSmallDevice && { fontSize: 19, lineHeight: 25 }]}>Unlock Your Dating Superpowers</Text>
+            <Text style={[styles.heroSubtitle, isSmallDevice && { fontSize: 12, lineHeight: 18 }]}>
               Get 5x more matches, see who likes you, and stand out from the crowd.
             </Text>
 
@@ -399,7 +408,7 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
               <View style={styles.activeBadgeContainer}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name="sparkles" size={14} color="#FFD700" style={{ marginRight: 6 }} />
-                  <Text style={styles.activeBadgeText}>
+                  <Text style={styles.activeBadgeText} numberOfLines={1}>
                     CURRENT PLAN: {activeTier.toUpperCase()} MEMBER
                   </Text>
                 </View>
@@ -408,7 +417,7 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
           </View>
 
           {/* Dynamic Plan Selector Cards */}
-          <View style={styles.plansContainer}>
+          <View style={[styles.plansContainer, { width: '100%', maxWidth: isTabletOrWide ? 520 : undefined, alignSelf: 'center' }]}>
             {isFetchingPlans && availablePlans.length === 0 ? (
               <View style={{ paddingVertical: 40, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color="#FE3C72" />
@@ -423,17 +432,21 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                 const upperKey = (planKey || '').toUpperCase();
                 const isCurrent = upperKey === (activeTier || currentTier || '').toUpperCase();
                 const isHidden = plan.isActive === false;
-                const isGold = upperKey === 'GOLD';
+                const isGold = upperKey.includes('GOLD');
                 const isDiamond = upperKey.includes('DIAMOND') || upperKey.includes('VIP');
-                const accentColor = isHidden ? '#94A3B8' : isDiamond ? '#00E5FF' : isGold ? '#FFD700' : '#FE3C72';
+                const isSilver = upperKey.includes('SILVER');
+                const isPro = upperKey.includes('PRO');
+                const isSample = upperKey.includes('SAMPLE');
+
+                const accentColor = isHidden ? '#94A3B8' : isDiamond ? '#00E5FF' : isGold ? '#FFD700' : isSilver ? '#C0C0C0' : isPro ? '#A855F7' : isSample ? '#10B981' : '#FE3C72';
 
                 return (
                   <TouchableOpacity
                     key={plan._id || planKey}
                     style={[
                       styles.planCard,
-                      isDiamond ? styles.diamondPlanCard : isGold ? styles.goldPlanCard : styles.premiumPlanCard,
-                      isSelected && (isDiamond ? styles.selectedDiamondCard : isGold ? styles.selectedGoldCard : styles.selectedPremiumCard),
+                      isDiamond ? styles.diamondPlanCard : isGold ? styles.goldPlanCard : isSilver ? styles.silverPlanCard : isPro ? styles.proPlanCard : isSample ? styles.samplePlanCard : styles.premiumPlanCard,
+                      isSelected && (isDiamond ? styles.selectedDiamondCard : isGold ? styles.selectedGoldCard : isSilver ? styles.selectedSilverCard : isPro ? styles.selectedProCard : isSample ? styles.selectedSampleCard : styles.selectedPremiumCard),
                       isHidden && styles.blurredPlanCard,
                     ]}
                     onPress={() => setSelectedPlan(planKey)}
@@ -452,14 +465,14 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                           </Text>
                         </View>
                       ) : plan.highlightBadge ? (
-                        <View style={isDiamond ? styles.diamondBadge : isGold ? styles.goldBadge : styles.premiumBadge}>
-                          <Text style={isDiamond ? styles.diamondBadgeText : isGold ? styles.goldBadgeText : styles.premiumBadgeText}>
+                        <View style={isDiamond ? styles.diamondBadge : isGold ? styles.goldBadge : isSilver ? styles.silverBadge : isPro ? styles.proBadge : isSample ? styles.sampleBadge : styles.premiumBadge}>
+                          <Text style={isDiamond ? styles.diamondBadgeText : isGold ? styles.goldBadgeText : isSilver ? styles.silverBadgeText : isPro ? styles.proBadgeText : isSample ? styles.sampleBadgeText : styles.premiumBadgeText}>
                             {plan.highlightBadge.toUpperCase()}
                           </Text>
                         </View>
                       ) : null}
 
-                      <Text style={[isDiamond ? styles.planNameDiamond : isGold ? styles.planNameGold : styles.planNamePremium, isHidden && { color: '#CBD5E1' }]}>
+                      <Text style={[isDiamond ? styles.planNameDiamond : isGold ? styles.planNameGold : isSilver ? styles.planNameSilver : isPro ? styles.planNamePro : isSample ? styles.planNameSample : styles.planNamePremium, isHidden && { color: '#CBD5E1' }]}>
                         {plan.name ? plan.name.toUpperCase() : planKey.toUpperCase()}
                       </Text>
 
@@ -576,37 +589,62 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
         </ScrollView>
 
         {/* Bottom CTA Action Bar */}
-        <View style={styles.bottomBar}>
-          <TouchableOpacity
-            style={[
-              styles.subscribeBtn,
-              selectedPlan === 'Premium' ? styles.premiumBtnBg : styles.goldBtnBg,
-              isLoading && styles.btnDisabled,
-            ]}
-            onPress={handleSubscribe}
-            disabled={isLoading}
-            activeOpacity={0.85}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Text style={styles.subscribeBtnText}>
-                {activeTier === selectedPlan
-                  ? 'MANAGE MEMBERSHIP'
-                  : 'Subscribe'}
-              </Text>
-            )}
-          </TouchableOpacity>
+        <View style={[
+          styles.bottomBar,
+          {
+            paddingBottom: Math.max(insets.bottom, 16),
+            paddingHorizontal: isSmallDevice ? 16 : 24,
+          }
+        ]}>
+          <View style={{ width: '100%', maxWidth: isTabletOrWide ? 520 : undefined, alignSelf: 'center' }}>
+            {(() => {
+              const selUpper = (selectedPlan || '').toUpperCase();
+              const btnBg = selUpper.includes('GOLD')
+                ? styles.goldBtnBg
+                : selUpper.includes('SILVER')
+                  ? { backgroundColor: '#C0C0C0' }
+                  : selUpper.includes('PRO')
+                    ? { backgroundColor: '#A855F7' }
+                    : selUpper.includes('SAMPLE')
+                      ? { backgroundColor: '#10B981' }
+                      : selUpper.includes('DIAMOND')
+                        ? { backgroundColor: '#00E5FF' }
+                        : styles.premiumBtnBg;
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.subscribeBtn,
+                    btnBg,
+                    isSmallDevice && { height: 48, borderRadius: 24 },
+                    isLoading && styles.btnDisabled,
+                  ]}
+                  onPress={handleSubscribe}
+                  disabled={isLoading}
+                  activeOpacity={0.85}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={[styles.subscribeBtnText, isSmallDevice && { fontSize: 14 }]}>
+                      {activeTier === selectedPlan
+                        ? 'MANAGE MEMBERSHIP'
+                        : 'Subscribe'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })()}
 
-          {activeTier !== 'Free' && (
-            <TouchableOpacity
-              style={styles.cancelLink}
-              onPress={handleCancelSubscription}
-              disabled={isLoading}
-            >
-              <Text style={styles.cancelLinkText}>Cancel Active Subscription</Text>
-            </TouchableOpacity>
-          )}
+            {activeTier !== 'Free' && (
+              <TouchableOpacity
+                style={styles.cancelLink}
+                onPress={handleCancelSubscription}
+                disabled={isLoading}
+              >
+                <Text style={styles.cancelLinkText}>Cancel Active Subscription</Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
           {isLoading && (
             <View style={{
@@ -643,7 +681,12 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
           }
         }}
       >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#0F121A' }}>
+        <SafeAreaView style={{
+          flex: 1,
+          backgroundColor: '#0F121A',
+          paddingTop: Platform.OS === 'android' ? Math.max(insets.top, 16) : 0,
+          paddingBottom: Math.max(insets.bottom, 12),
+        }}>
           <View style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -800,7 +843,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 30,
+    paddingBottom: 40,
+    flexGrow: 1,
   },
   heroSection: {
     alignItems: 'center',
@@ -823,6 +867,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
     paddingHorizontal: 10,
+    maxWidth: 480,
   },
   activeBadgeContainer: {
     marginTop: 14,
@@ -832,12 +877,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 6,
     borderRadius: 20,
+    maxWidth: '90%',
   },
   activeBadgeText: {
     color: '#FFD700',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.5,
+    flexShrink: 1,
   },
   plansContainer: {
     marginTop: 10,
@@ -845,16 +892,32 @@ const styles = StyleSheet.create({
   planCard: {
     backgroundColor: '#1E222B',
     borderRadius: 20,
-    padding: 20,
-    marginBottom: 20,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     position: 'relative',
+    width: '100%',
   },
   goldPlanCard: {},
   selectedGoldCard: {
     borderColor: '#FFD700',
     backgroundColor: '#26281D',
+  },
+  silverPlanCard: {},
+  selectedSilverCard: {
+    borderColor: '#C0C0C0',
+    backgroundColor: '#1E242B',
+  },
+  proPlanCard: {},
+  selectedProCard: {
+    borderColor: '#A855F7',
+    backgroundColor: '#231734',
+  },
+  samplePlanCard: {},
+  selectedSampleCard: {
+    borderColor: '#10B981',
+    backgroundColor: '#132822',
   },
   diamondPlanCard: {},
   selectedDiamondCard: {
@@ -936,6 +999,42 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontStyle: 'italic',
   },
+  silverBadge: {
+    backgroundColor: 'rgba(192, 192, 192, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  silverBadgeText: {
+    color: '#E2E8F0',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  proBadge: {
+    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  proBadgeText: {
+    color: '#C084FC',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  sampleBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  sampleBadgeText: {
+    color: '#34D399',
+    fontSize: 10,
+    fontWeight: '800',
+  },
   diamondBadge: {
     backgroundColor: 'rgba(0, 229, 255, 0.2)',
     paddingHorizontal: 10,
@@ -954,6 +1053,24 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 1,
   },
+  planNameSilver: {
+    color: '#E2E8F0',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  planNamePro: {
+    color: '#C084FC',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  planNameSample: {
+    color: '#34D399',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
   planNameDiamond: {
     color: '#00E5FF',
     fontSize: 24,
@@ -968,12 +1085,13 @@ const styles = StyleSheet.create({
   },
   planPrice: {
     color: '#FFFFFF',
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '800',
     marginTop: 4,
+    flexWrap: 'wrap',
   },
   perMonth: {
-    fontSize: 14,
+    fontSize: 13,
     color: 'rgba(255, 255, 255, 0.6)',
     fontWeight: '400',
   },
@@ -985,7 +1103,7 @@ const styles = StyleSheet.create({
   featureList: {},
   featureItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 10,
   },
   checkIcon: {
@@ -993,9 +1111,12 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   featureText: {
+    flex: 1,
+    flexShrink: 1,
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+    lineHeight: 20,
   },
   bottomBar: {
     paddingHorizontal: 20,

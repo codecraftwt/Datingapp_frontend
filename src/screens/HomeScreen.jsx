@@ -47,7 +47,7 @@ import { PreviewModal } from '../components/PreviewModal';
 import { SubscriptionModal } from '../components/SubscriptionModal';
 import Video from 'react-native-video';
 import { useDispatch, useSelector } from 'react-redux';
-import { apiClient, getIsManualLogoutInProgress, getIsDeactivationAlertShowing, setIsDeactivationAlertShowing, setAuthToken } from '../api/apiClient';
+import { apiClient, getIsManualLogoutInProgress, getIsDeactivationAlertShowing, setIsDeactivationAlertShowing, setAuthToken, subscribeBaseUrlChanged, getActiveResolvedUrl } from '../api/apiClient';
 import { BASE_URL, getBaseUrl, getImageUrl as formatConfigUrl, getAudioUrl, isVideoUrl, getVideoThumbnailUrl } from '../api/config';
 import { selectCurrentUser, logout } from '../redux/slices/authSlice';
 import {
@@ -336,18 +336,6 @@ const deduplicateMessages = (msgList) => {
     // If real ID matches a seen tempId, skip
     if (mId && seenTemps.has(mId)) continue;
 
-    // Deduplicate optimistic pending messages with identical text/media within 12s window
-    const isPending = m.status === 'pending' || m.status === 'sending' || m.status === 'queued' || (mId && mId.startsWith('temp-'));
-    if (isPending && (m.sender === 'you' || !m.sender)) {
-      const textKey = `${m.text || ''}_${m.mediaUrl || ''}_${m.messageType || 'text'}_${m.receiverId || ''}`;
-      const msgTime = new Date(m.createdAt || 0).getTime() || Date.now();
-      const lastTime = seenPendingKeys.get(textKey);
-      if (lastTime && Math.abs(msgTime - lastTime) < 12000) {
-        continue;
-      }
-      seenPendingKeys.set(textKey, msgTime);
-    }
-
     if (mId) seenIds.add(mId);
     if (mTemp) seenTemps.add(mTemp);
     result.push(m);
@@ -498,8 +486,23 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const dispatch = useDispatch();
   const reduxUser = useSelector(selectCurrentUser);
   const reduxProfileDetails = useSelector((state) => state.profile.profileDetails);
-  const activeUserProfile = reduxProfileDetails || userProfile || reduxUser;
-  const currentUser = { ...(reduxUser || {}), ...(reduxProfileDetails || {}), ...(userProfile || {}) };
+
+  const currentUserId = (
+    reduxUser?.id ||
+    reduxUser?._id ||
+    reduxProfileDetails?.id ||
+    reduxProfileDetails?._id ||
+    userProfile?.id ||
+    userProfile?._id
+  )?.toString();
+
+  const activeUserProfile = useMemo(() => {
+    return reduxProfileDetails || userProfile || reduxUser;
+  }, [reduxProfileDetails, userProfile, reduxUser]);
+
+  const currentUser = useMemo(() => {
+    return { ...(reduxUser || {}), ...(reduxProfileDetails || {}), ...(userProfile || {}) };
+  }, [reduxUser, reduxProfileDetails, userProfile]);
 
   // Stably capture latest onLogout and onNavigate props via refs
   const onLogoutRef = useRef(onLogout);
@@ -583,7 +586,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       })
       .catch(() => { });
-  }, [currentUser, userProfile]);
+  }, [currentUserId]);
 
   // Persist any pending/sending/failed messages to AsyncStorage so they survive app restarts & navigation
   useEffect(() => {
@@ -602,7 +605,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
       AsyncStorage.setItem(`persistent_unsent_messages_${userId}`, JSON.stringify(unsentItems)).catch(() => { });
     } catch (_) { }
-  }, [chats, currentUser, userProfile]);
+  }, [chats, currentUserId]);
 
   const fetchMessages = async () => {
     try {
@@ -760,6 +763,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   // Sync active subscription status and dynamic permissions helper
+  const lastSyncedSubTierRef = useRef(null);
   const syncSubscriptionStatus = useCallback(async () => {
     try {
       const res = await apiClient.getMySubscription();
@@ -767,7 +771,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (res.permissions) {
           setSubscriptionPermissions(res.permissions);
         }
-        if (typeof onUpdateProfile === 'function') {
+        if (typeof onUpdateProfile === 'function' && lastSyncedSubTierRef.current !== res.subscriptionTier) {
+          lastSyncedSubTierRef.current = res.subscriptionTier;
           onUpdateProfile({
             subscriptionTier: res.subscriptionTier,
             subscriptionStatus: res.subscriptionStatus || 'active',
@@ -783,7 +788,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   }, [onUpdateProfile]);
 
   // Run fetches once on mount and sync subscription
-  const activeLoggedInUserId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+  const activeLoggedInUserId = currentUserId;
   const initialFetchDoneRef = useRef(false);
 
   useEffect(() => {
@@ -817,22 +822,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   }, [activeLoggedInUserId]);
 
   useEffect(() => {
+    // Poll unread likes count periodically without blocking JS bridge with messages
     const badgeSyncInterval = setInterval(async () => {
       try {
         const netState = await NetInfo.fetch();
         if (netState && netState.isConnected === false) return;
         fetchUnreadLikesCount();
-        fetchMessages();
       } catch (e) { }
-    }, 4000);
-    // Poll blocked/unblocked status every 30 seconds as a fallback for missed socket events
+    }, 25000);
+    // Poll blocked/unblocked status every 45 seconds as a fallback for missed socket events
     const blockedSyncInterval = setInterval(async () => {
       try {
         const netState = await NetInfo.fetch();
         if (netState && netState.isConnected === false) return;
         fetchBlockedUsers();
       } catch (e) { }
-    }, 30000);
+    }, 45000);
     return () => {
       clearInterval(badgeSyncInterval);
       clearInterval(blockedSyncInterval);
@@ -1819,7 +1824,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         if (socketRef.current && socketRef.current.connected) {
           socketRef.current.emit('check_online_status', { targetUserId: partnerId, viewerUserId: currentUserId });
         }
-      }, 3000);
+      }, 7000);
     }
     return () => {
       if (pollInterval) clearInterval(pollInterval);
@@ -1833,8 +1838,18 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const socketRef = useRef(null);
   const typingTimerRef = useRef(null);
   const isCurrentlyTypingRef = useRef(false);
-  const socketUrl = getBaseUrl();
+  const [resolvedSocketUrl, setResolvedSocketUrl] = useState(getActiveResolvedUrl());
+  const socketUrl = resolvedSocketUrl || getActiveResolvedUrl() || getBaseUrl();
   const handleIncomingMessageRef = useRef(null);
+
+  useEffect(() => {
+    const unsub = subscribeBaseUrlChanged((newUrl) => {
+      if (newUrl) setResolvedSocketUrl(newUrl);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
 
   // --- Voice Call WebRTC Setup ---
   const [callState, setCallState] = useState('idle'); // idle, calling, incoming, connected
@@ -2200,7 +2215,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
     };
     fetchOnlineUsers();
-    const interval = setInterval(fetchOnlineUsers, 10000);
+    const interval = setInterval(fetchOnlineUsers, 35000);
     return () => clearInterval(interval);
   }, []);
 
@@ -2494,21 +2509,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   useEffect(() => {
     if (currentUser && (currentUser.id || currentUser._id)) {
       const currentId = currentUser.id || currentUser._id;
-      console.log('Connecting to Socket.IO at:', socketUrl);
-      socketRef.current = io(socketUrl, {
-        transports: ['polling', 'websocket'],
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 500,
-        reconnectionDelayMax: 3000,
-        timeout: 30000,
+      const targetSocketUrl = resolvedSocketUrl || getActiveResolvedUrl() || getBaseUrl();
+      const isVercelHost = typeof targetSocketUrl === 'string' && targetSocketUrl.includes('vercel.app');
+      console.log('Connecting to Socket.IO at:', targetSocketUrl, '| isVercelHost:', isVercelHost);
+      if (socketRef.current) {
+        try { socketRef.current.disconnect(); } catch (_) {}
+      }
+      socketRef.current = io(targetSocketUrl, {
+        transports: ['websocket', 'polling'],
+        reconnection: !isVercelHost,
+        reconnectionAttempts: isVercelHost ? 2 : 5,
+        reconnectionDelay: 3000,
+        reconnectionDelayMax: 15000,
+        timeout: 10000,
         pingTimeout: 30000,
         pingInterval: 25000,
         autoConnect: true,
       });
 
       socketRef.current.on('connect', () => {
-        console.log('🟢 [FRONTEND SOCKET CONNECT] Connected to:', socketUrl, '| Emitting join & ping_presence for currentId:', currentId);
+        console.log('🟢 [FRONTEND SOCKET CONNECT] Connected to:', targetSocketUrl, '| Emitting join & ping_presence for currentId:', currentId);
         socketRef.current.emit('join', currentId);
         socketRef.current.emit('ping_presence', currentId);
 
@@ -2529,7 +2549,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       socketRef.current.on('connect_error', (err) => {
-        console.warn('⚠️ [FRONTEND SOCKET CONNECT_ERROR] Connection error to', socketUrl, ':', err.message);
+        console.warn('⚠️ [FRONTEND SOCKET CONNECT_ERROR] Connection error to', targetSocketUrl, ':', err.message);
+        if (isVercelHost && socketRef.current) {
+          try { socketRef.current.disconnect(); } catch (_) {}
+        }
       });
 
       socketRef.current.on('online_users_list', ({ onlineUserIds }) => {
@@ -3638,12 +3661,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         }
       });
 
-      // Send continuous presence ping every 5 seconds while user is active in app
+      // Send continuous presence ping every 30 seconds while user is active in app
       const presencePingInterval = setInterval(() => {
         if (socketRef.current && socketRef.current.connected && currentId) {
           socketRef.current.emit('ping_presence', currentId);
         }
-      }, 5000);
+      }, 30000);
 
       return () => {
         clearInterval(presencePingInterval);
@@ -3657,7 +3680,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
+  }, [currentUserId, resolvedSocketUrl]);
 
   // Emit mark_seen & check_online_status & mark notifications read when activeChat changes / opens
   useEffect(() => {
@@ -3706,8 +3729,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         apiClient.getChatMessages(partnerId).catch(() => { });
       }
 
-      // Periodically refresh partner's online status every 3.5 seconds while chatting
-      intervalId = setInterval(checkStatus, 3500);
+      // Periodically refresh partner's online status every 12 seconds while chatting
+      intervalId = setInterval(checkStatus, 12000);
     }
 
     return () => {
@@ -3754,7 +3777,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       pingInterval = setInterval(() => {
         evaluateAndEmitPresence();
-      }, 10000);
+      }, 40000);
     }
 
     const handleAppStateChange = async (nextAppState) => {
@@ -3822,7 +3845,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         appStateSubscription.remove();
       }
     };
-  }, [currentUser]);
+  }, [currentUserId]);
 
   // NetInfo network & Wi-Fi connectivity listener for strict online/offline status
   useEffect(() => {
@@ -3885,7 +3908,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     return () => {
       if (typeof unsubscribeNetInfo === 'function') unsubscribeNetInfo();
     };
-  }, [currentUser, userProfile]);
+  }, [currentUserId, resolvedSocketUrl]);
 
   // Real-time Push Notification Listener for instant bottom tab badge updates
   useEffect(() => {
@@ -4881,7 +4904,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       fileSize: payload.fileSize,
       replyTo: payload.replyTo || null,
       stickerId: payload.stickerId,
-      status: 'pending',
+      status: 'sent',
       createdAt: new Date().toISOString(),
     };
 
