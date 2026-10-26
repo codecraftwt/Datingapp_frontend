@@ -725,7 +725,21 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                   if (request.url && (request.url.includes('back-to-app') || request.url.includes('datingapp://'))) {
                     console.log('🎉 [BACK_TO_APP] Intercepted Back to App redirect!');
                     setShowWebView(false);
+                    if (typeof onSubscriptionUpdated === 'function' && selectedPlanRef.current) {
+                      onSubscriptionUpdated(selectedPlanRef.current);
+                    }
+                    fetchMySubscription();
                     onClose();
+                    return false;
+                  }
+                  if (request.url && (
+                    request.url.includes('cancel-page') ||
+                    request.url.includes('checkout.stripe.dev/cancel') ||
+                    request.url.includes('status=cancel') ||
+                    request.url.includes('/cancel')
+                  )) {
+                    console.log('🔴 [CANCEL_URL_DETECTED] Cancel URL reached.');
+                    setShowWebView(false);
                     return false;
                   }
                   if (request.url && (
@@ -741,36 +755,130 @@ export const SubscriptionModal = ({ visible, onClose, onSubscriptionUpdated, cur
                 }}
                 onError={(syntheticEvent) => {
                   const { nativeEvent } = syntheticEvent;
-                  if (nativeEvent && nativeEvent.url && (
-                    nativeEvent.url.includes('success-page') ||
-                    nativeEvent.url.includes('checkout.stripe.dev/success') ||
-                    nativeEvent.url.includes('status=success') ||
-                    nativeEvent.url.includes('/success')
-                  )) {
-                    handleWebViewNavigation(nativeEvent);
+                  console.log('⚠️ [WEBVIEW ON_ERROR]:', nativeEvent?.description, nativeEvent?.url);
+                  if (nativeEvent && nativeEvent.url) {
+                    if (nativeEvent.url.includes('back-to-app') || nativeEvent.url.includes('datingapp://')) {
+                      console.log('🎉 [BACK_TO_APP] Intercepted Back to App in onError!');
+                      setShowWebView(false);
+                      if (typeof onSubscriptionUpdated === 'function' && selectedPlanRef.current) {
+                        onSubscriptionUpdated(selectedPlanRef.current);
+                      }
+                      fetchMySubscription();
+                      onClose();
+                      return;
+                    }
+                    if (
+                      nativeEvent.url.includes('success-page') ||
+                      nativeEvent.url.includes('checkout.stripe.dev/success') ||
+                      nativeEvent.url.includes('status=success') ||
+                      nativeEvent.url.includes('/success')
+                    ) {
+                      handleWebViewNavigation(nativeEvent);
+                      return;
+                    }
+                    if (
+                      nativeEvent.url.includes('cancel-page') ||
+                      nativeEvent.url.includes('checkout.stripe.dev/cancel') ||
+                      nativeEvent.url.includes('status=cancel') ||
+                      nativeEvent.url.includes('/cancel')
+                    ) {
+                      setShowWebView(false);
+                      return;
+                    }
                   }
                 }}
                 onHttpError={(syntheticEvent) => {
                   const { nativeEvent } = syntheticEvent;
-                  if (nativeEvent && nativeEvent.url && (
-                    nativeEvent.url.includes('success-page') ||
-                    nativeEvent.url.includes('checkout.stripe.dev/success') ||
-                    nativeEvent.url.includes('status=success') ||
-                    nativeEvent.url.includes('/success')
-                  )) {
-                    handleWebViewNavigation(nativeEvent);
+                  console.log('⚠️ [WEBVIEW ON_HTTP_ERROR]:', nativeEvent?.statusCode, nativeEvent?.url);
+                  if (nativeEvent && nativeEvent.url) {
+                    if (nativeEvent.url.includes('back-to-app') || nativeEvent.url.includes('datingapp://')) {
+                      console.log('🎉 [BACK_TO_APP] Intercepted Back to App in onHttpError!');
+                      setShowWebView(false);
+                      if (typeof onSubscriptionUpdated === 'function' && selectedPlanRef.current) {
+                        onSubscriptionUpdated(selectedPlanRef.current);
+                      }
+                      fetchMySubscription();
+                      onClose();
+                      return;
+                    }
+                    if (
+                      nativeEvent.url.includes('success-page') ||
+                      nativeEvent.url.includes('checkout.stripe.dev/success') ||
+                      nativeEvent.url.includes('status=success') ||
+                      nativeEvent.url.includes('/success')
+                    ) {
+                      handleWebViewNavigation(nativeEvent);
+                      return;
+                    }
                   }
                 }}
                 onMessage={(event) => {
                   try {
-                    const data = JSON.parse(event.nativeEvent.data);
-                    if (data && data.type === 'BACK_TO_APP') {
+                    const rawData = event.nativeEvent.data;
+                    console.log('📬 [WEBVIEW ON_MESSAGE]:', rawData);
+                    let isBackToApp = false;
+                    if (typeof rawData === 'string') {
+                      if (rawData.includes('BACK_TO_APP')) {
+                        isBackToApp = true;
+                      } else {
+                        try {
+                          const parsed = JSON.parse(rawData);
+                          if (parsed && (parsed.type === 'BACK_TO_APP' || parsed.action === 'BACK_TO_APP')) {
+                            isBackToApp = true;
+                          }
+                        } catch (_) {}
+                      }
+                    }
+                    if (isBackToApp) {
                       console.log('🎉 [BACK_TO_APP] User tapped Back to App on Success Page!');
                       setShowWebView(false);
+                      if (typeof onSubscriptionUpdated === 'function' && selectedPlanRef.current) {
+                        onSubscriptionUpdated(selectedPlanRef.current);
+                      }
+                      fetchMySubscription();
                       onClose();
                       return;
                     }
                   } catch (e) { }
+                }}
+                renderError={(errorDomain, errorCode, errorDesc) => {
+                  console.log('ℹ️ [WEBVIEW RENDER_ERROR]:', errorCode, errorDesc);
+                  return (
+                    <View style={{
+                      flex: 1,
+                      backgroundColor: '#0F121A',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      padding: 24,
+                    }}>
+                      <Ionicons name="checkmark-circle" size={56} color="#22C55E" />
+                      <Text style={{ color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 16, textAlign: 'center' }}>
+                        Subscription Processed
+                      </Text>
+                      <Text style={{ color: '#94A3B8', fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
+                        Your subscription has been updated. Tap below to return to the app.
+                      </Text>
+                      <TouchableOpacity
+                        style={{
+                          marginTop: 24,
+                          backgroundColor: '#FE3C72',
+                          paddingVertical: 14,
+                          paddingHorizontal: 28,
+                          borderRadius: 24,
+                        }}
+                        onPress={() => {
+                          setShowWebView(false);
+                          if (typeof onSubscriptionUpdated === 'function' && selectedPlanRef.current) {
+                            onSubscriptionUpdated(selectedPlanRef.current);
+                          }
+                          fetchMySubscription();
+                          onClose();
+                        }}
+                      >
+                        <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 15 }}>Return to App</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
                 }}
                 javaScriptEnabled={true}
                 domStorageEnabled={true}
