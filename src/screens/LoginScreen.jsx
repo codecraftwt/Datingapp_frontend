@@ -455,7 +455,7 @@ export const LoginScreen = ({ onNavigate }) => {
                   onPress={handleLogoutAllDevicesCall}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.logoutAllInlineBtnText}>Logout All devices</Text>
+                  <Text style={styles.logoutAllInlineBtnText}>Log out from all devices</Text>
                 </TouchableOpacity>
               </View>
             )}

@@ -136,7 +136,7 @@ const chatSlice = createSlice({
         });
       }
 
-      state.allMessages = newMsgs.map((m) => {
+      const mappedNewMsgs = newMsgs.map((m) => {
         const mId = (m._id || m.id)?.toString();
         const mTemp = m.tempId?.toString();
         const match = (mId && activeMap.get(mId)) || (mTemp && activeMap.get(mTemp));
@@ -168,6 +168,26 @@ const chatSlice = createSlice({
         }
         return m;
       });
+
+      // Preserve recent or pending messages that were added locally or via socket but not yet in newMsgs
+      const newMsgIds = new Set();
+      mappedNewMsgs.forEach((m) => {
+        if (m._id) newMsgIds.add(m._id.toString());
+        if (m.id) newMsgIds.add(m.id.toString());
+        if (m.tempId) newMsgIds.add(m.tempId.toString());
+      });
+
+      const missingRecent = (state.allMessages || []).filter((oldM) => {
+        if (!oldM) return false;
+        const oId = (oldM._id || oldM.id)?.toString();
+        const oTemp = oldM.tempId?.toString();
+        if (oId && newMsgIds.has(oId)) return false;
+        if (oTemp && newMsgIds.has(oTemp)) return false;
+        const ageMs = Date.now() - new Date(oldM.createdAt || Date.now()).getTime();
+        return ageMs < 120000 || !!oTemp;
+      });
+
+      state.allMessages = [...mappedNewMsgs, ...missingRecent];
     },
     addMessage: (state, action) => {
       const msg = action.payload;

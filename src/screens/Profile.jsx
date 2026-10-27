@@ -398,6 +398,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
         }
       });
 
+    fetchBlockedUsers();
+
     return () => { isMounted = false; };
   }, []);
 
@@ -488,8 +490,8 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           onPress: async () => {
             try {
               setUnblockingUserId(targetUserId);
-              await apiClient.unblockUser({ targetUserId });
               setBlockedUsersList((prev) => prev.filter((u) => (u.id || u._id || u.userId)?.toString() !== targetUserId.toString()));
+              await apiClient.unblockUser({ targetUserId });
               Alert.alert('User Unblocked 🔓', `${targetName} has been unblocked.`);
             } catch (err) {
               console.log('Error unblocking user:', err);
@@ -1690,7 +1692,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
           activeOpacity={0.7}
         >
           <Ionicons name="hand-left-outline" size={22} color="#FE3C72" style={{ marginRight: 10 }} />
-          <Text style={styles.actionText}>Blocked Accounts</Text>
+          <Text style={styles.actionText}>Blocked Users</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -2727,7 +2729,7 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             </TouchableOpacity>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name="lock-closed" size={18} color="#FFD700" style={{ marginRight: 6 }} />
-              <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>Blocked Accounts</Text>
+              <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700' }}>Blocked Users</Text>
             </View>
             <TouchableOpacity
               style={{ padding: 6 }}
@@ -2741,23 +2743,23 @@ export const Profile = ({ userProfile, onUpdateProfile, onLogout, onRemoveProfil
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
               <ActivityIndicator size="large" color="#FE3C72" />
               <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 12, fontSize: 14 }}>
-                Loading blocked accounts...
+                Loading blocked users...
               </Text>
             </View>
           ) : blockedUsersList.length === 0 ? (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
               <Ionicons name="shield-outline" size={48} color="#475569" style={{ marginBottom: 16 }} />
               <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '700', textAlign: 'center' }}>
-                No Blocked Accounts
+                No Blocked Users
               </Text>
               <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
-                You haven't blocked any users yet. Blocked accounts will be listed here with an option to unblock them.
+                You haven't blocked any users yet. Blocked users will be listed here with an option to unblock them.
               </Text>
             </View>
           ) : (
             <ScrollView style={{ flex: 1, paddingHorizontal: 20, paddingTop: 16 }} showsVerticalScrollIndicator={false}>
               <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 16 }}>
-                Showing {blockedUsersList.length} blocked account{blockedUsersList.length > 1 ? 's' : ''}. Unblocking allows them to view your profile and message you.
+                Showing {blockedUsersList.length} blocked user{blockedUsersList.length > 1 ? 's' : ''}. Unblocking allows them to view your profile and message you.
               </Text>
 
               {blockedUsersList.map((item) => {

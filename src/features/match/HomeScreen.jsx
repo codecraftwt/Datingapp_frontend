@@ -760,12 +760,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
 
 
-  const [swipeHistory, setSwipeHistory] = useState([]);
+  const [lastSwipedCandidate, setLastSwipedCandidate] = useState(null);
 
   const handleSwipeLeft = () => {
     if (swipeIndex < MOCK_MATCHES.length) {
       const candidate = MOCK_MATCHES[swipeIndex];
-      setSwipeHistory((prev) => [...prev, { candidate, action: 'pass' }]);
+      // Save only the single most recent passed candidate for 1-time rewind
+      setLastSwipedCandidate({ candidate, action: 'pass' });
       setSwipeIndex(swipeIndex + 1);
     }
   };
@@ -774,7 +775,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     if (swipeIndex < MOCK_MATCHES.length) {
       const candidate = MOCK_MATCHES[swipeIndex];
       const targetId = candidate?.id || candidate?._id;
-      setSwipeHistory((prev) => [...prev, { candidate, action: 'like' }]);
+      // Save only the single most recent liked candidate for 1-time rewind
+      setLastSwipedCandidate({ candidate, action: 'like' });
 
       try {
         const result = await apiClient.likeUser({ likedId: targetId });
@@ -804,24 +806,30 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleUndoSwipe = async () => {
-    if (swipeHistory.length === 0 && swipeIndex === 0) {
-      Alert.alert('No Swipe to Rewind', 'You have not swiped on any candidate profile yet.');
+    if (!lastSwipedCandidate || !lastSwipedCandidate.candidate) {
+      Alert.alert(
+        'Rewind Unavailable',
+        'Only your most recent liked or passed profile can be rewound. Please swipe on a profile to enable rewind again.'
+      );
       return;
     }
 
-    const lastItem = swipeHistory[swipeHistory.length - 1] || (swipeIndex > 0 ? { candidate: MOCK_MATCHES[swipeIndex - 1] } : null);
-    const targetId = lastItem?.candidate?.id || lastItem?.candidate?._id;
-    const candidateName = lastItem?.candidate?.name || lastItem?.candidate?.firstName || 'previous profile';
+    const { candidate, action } = lastSwipedCandidate;
+    const targetId = candidate?.id || candidate?._id;
+    const candidateName = candidate?.name || candidate?.firstName || 'previous profile';
 
-    if (lastItem && lastItem.candidate && targetId) {
+    if (targetId && (action === 'like' || action === 'superlike')) {
       try {
         await apiClient.undoSwipe({ targetUserId: targetId });
       } catch (err) {
         console.log('Error undoing swipe on backend:', err);
       }
+      setLikedByMe((prev) => (Array.isArray(prev) ? prev.filter((id) => id !== targetId) : []));
     }
 
-    setSwipeHistory((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+    // Immediately clear lastSwipedCandidate so only the single recent one can be rewound
+    setLastSwipedCandidate(null);
+
     position.setValue({ x: 0, y: 0 });
     Animated.spring(position, {
       toValue: { x: 0, y: 0 },
@@ -2243,26 +2251,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Unblock',
-          onPress: async () => {
-            try {
-              await apiClient.unblockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr });
-              if (activeChat && activeChat.id.toString() === targetIdStr) {
-                setActiveChat((prev) => prev ? { ...prev, isBlocked: false } : null);
-              }
-              setChats((prevChats) => prevChats.map((c) => {
-                if (c.id.toString() === targetIdStr) {
-                  return { ...c, isBlocked: false };
-                }
-                return c;
-              }));
-              if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
-              if (typeof fetchMatchesList === 'function') fetchMatchesList();
-              if (typeof fetchMessages === 'function') fetchMessages();
-              Alert.alert('User Unblocked 🔓', `${targetUserName} has been unblocked.`);
-            } catch (err) {
-              console.error('Failed to unblock user:', err);
-              Alert.alert('Error', 'Failed to unblock user.');
+          onPress: () => {
+            // ⚡ Instant local state update (0ms UI latency)
+            if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetIdStr) {
+              setActiveChat((prev) => prev ? { ...prev, isBlocked: false } : null);
             }
+            setChats((prevChats) => prevChats.map((c) => {
+              if ((c.id || c._id || c.userId)?.toString() === targetIdStr) {
+                return { ...c, isBlocked: false };
+              }
+              return c;
+            }));
+
+            // Execute API in background
+            apiClient.unblockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr })
+              .then(() => {
+                if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
+                if (typeof fetchMatchesList === 'function') fetchMatchesList();
+                if (typeof fetchMessages === 'function') fetchMessages();
+              })
+              .catch((err) => {
+                console.error('Failed to unblock user:', err);
+                Alert.alert('Error', 'Failed to unblock user.');
+              });
           },
         },
       ]
@@ -2831,12 +2842,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               )}
 
               {/* Action Buttons (static relative to swipeContainer) */}
-              {(swipeIndex < MOCK_MATCHES.length || swipeIndex > 0 || swipeHistory.length > 0) && (
+              {(swipeIndex < MOCK_MATCHES.length || swipeIndex > 0 || lastSwipedCandidate !== null) && (
                 <View style={styles.actionButtonsRow}>
                   <TouchableOpacity
-                    style={[styles.actionCircle, styles.actionRewind, (swipeIndex === 0 && swipeHistory.length === 0) && { opacity: 0.5 }]}
+                    style={[styles.actionCircle, styles.actionRewind, !lastSwipedCandidate && { opacity: 0.5 }]}
                     onPress={handleUndoSwipe}
-                    activeOpacity={0.8}
+                    activeOpacity={lastSwipedCandidate ? 0.8 : 0.5}
                   >
                     <Text style={[styles.actionIconText, styles.actionRewindText]}>⏪</Text>
                   </TouchableOpacity>
@@ -3600,6 +3611,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           >
             <View style={styles.matchPopupOverlay}>
               <View style={styles.matchPopupCard}>
+                <TouchableOpacity
+                  style={{ position: 'absolute', top: 14, right: 14, padding: 6, zIndex: 10 }}
+                  onPress={() => setShowMatchPopup(false)}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
+                  <Ionicons name="close" size={24} color="rgba(255, 255, 255, 0.7)" />
+                </TouchableOpacity>
                 <Text style={styles.matchPopupTitle}>It's a Match! </Text>
                 <Text style={styles.matchPopupSubtitle}>
                   You and {matchedUser.name} liked each other.
@@ -3620,13 +3638,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 <CustomButton
                   title={`SEND MESSAGE TO ${matchedUser.name.toUpperCase()}`}
                   variant="primary"
-                  style={{ marginBottom: 12 }}
                   onPress={() => handleCreateNewChat(matchedUser)}
-                />
-                <CustomButton
-                  title="KEEP SWIPING"
-                  variant="outline"
-                  onPress={() => setShowMatchPopup(false)}
                 />
               </View>
             </View>

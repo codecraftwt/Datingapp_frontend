@@ -386,7 +386,6 @@ const request = async (url, options = {}, isRetry = false) => {
         AsyncStorage.removeItem('user').catch(() => {});
 
         if (!isManualLogoutInProgress && !isDeactivationAlertShowing && onSessionTerminatedCallback) {
-          isDeactivationAlertShowing = true;
           const finalReason = deactReason || data?.reason || data?.deactivationReason || '';
           onSessionTerminatedCallback({
             isDeactivated: isAccountDeactivated,

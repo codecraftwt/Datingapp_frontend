@@ -640,7 +640,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const fetchBlockedUsers = async () => {
     try {
       const res = await apiClient.getBlockedUsers();
-      const list = (res && res.blockedUsers) || (res && res.data) || (Array.isArray(res) ? res : []);
+      const rawList = (res && res.blockedUsers) || (res && res.data) || (Array.isArray(res) ? res : []);
+      const list = rawList.filter((b) => {
+        const bId = (typeof b === 'object' ? (b.id || b._id || b.userId || b.targetUserId || b.blockedId?._id || b.blockedId) : b)?.toString();
+        return !bId || !recentlyUnblockedUserIdsRef.current.has(bId);
+      });
       const blockedByOther = (res && res.blockedByOtherUserIds) || [];
       setBlockedUsersList(list);
       setBlockedByOtherList(blockedByOther);
@@ -897,13 +901,24 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const curUserId = currentUser ? (currentUser.id || currentUser._id) : null;
   const curUserEmail = currentUser ? currentUser.email : null;
 
+  const blockedIdsSet = useMemo(() => new Set(
+    (blockedUsersList || [])
+      .map((b) => (b.id || b._id || b.userId)?.toString())
+      .filter(Boolean)
+  ), [blockedUsersList]);
+
   const MOCK_MATCHES = qUsersList.filter(
-    (u) =>
-      u.id !== curUserId &&
-      u._id !== curUserId &&
-      u.email !== curUserEmail &&
-      !swipedIdsList.includes(u.id) &&
-      !swipedIdsList.includes(u._id)
+    (u) => {
+      const uId = (u.id || u._id)?.toString();
+      return (
+        u.id !== curUserId &&
+        u._id !== curUserId &&
+        u.email !== curUserEmail &&
+        !swipedIdsList.includes(u.id) &&
+        !swipedIdsList.includes(u._id) &&
+        (!uId || !blockedIdsSet.has(uId))
+      );
+    }
   );
 
   console.log('Filtered Swipe Cards (MOCK_MATCHES):', JSON.stringify(MOCK_MATCHES.map(u => ({ id: u.id, name: u.name }))));
@@ -1139,6 +1154,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const [chats, setChats] = useState([]);
   const [activeChat, setActiveChat] = useState(null); // chat object when conversation is open
   const activeChatRef = useRef(activeChat);
+  const recentlyUnblockedUserIdsRef = useRef(new Set());
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
@@ -1583,7 +1599,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     try {
       const res = await apiClient.getChatMessages(partnerId);
       const rawMsgs = Array.isArray(res) ? res : (res?.messages || []);
-      const isBlockedByMe = !Array.isArray(res) && res?.isBlockedByMe !== undefined ? !!res.isBlockedByMe : undefined;
+      const isRecentlyUnblocked = partnerId && recentlyUnblockedUserIdsRef.current.has(partnerId);
+      const isBlockedByMe = isRecentlyUnblocked ? false : (!Array.isArray(res) && res?.isBlockedByMe !== undefined ? !!res.isBlockedByMe : undefined);
       const isBlockedByOther = !Array.isArray(res) && res?.isBlockedByOther !== undefined ? !!res.isBlockedByOther : undefined;
 
       if (isBlockedByOther !== undefined) {
@@ -1652,7 +1669,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         const pId = (prev.id || prev._id || prev.userId)?.toString();
         if (pId === partnerId) {
           const prevMsgs = prev.messages || [];
-          const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : prev.isBlocked;
+          const isBlockedByMeVal = isRecentlyUnblocked ? false : (isBlockedByMe !== undefined ? isBlockedByMe : prev.isBlocked);
           const isBlockedByOtherVal = isBlockedByOther !== undefined ? isBlockedByOther : prev.isBlockedByOther;
 
           // Preserve any local optimistic messages (pending, sending, failed, or with tempId not yet in formattedMsgs)
@@ -1784,7 +1801,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 JSON.stringify(m.replyTo || null) === JSON.stringify(finalMsgs[i]?.replyTo || null) &&
                 JSON.stringify(m.reactions || []) === JSON.stringify(finalMsgs[i]?.reactions || [])
               );
-            const isBlockedByMeVal = isBlockedByMe !== undefined ? isBlockedByMe : c.isBlocked;
+            const isBlockedByMeVal = isRecentlyUnblocked ? false : (isBlockedByMe !== undefined ? isBlockedByMe : c.isBlocked);
             const isBlockedByOtherVal = isBlockedByOther !== undefined ? isBlockedByOther : c.isBlockedByOther;
             if (msgsEqual && isBlockedByMeVal === c.isBlocked && isBlockedByOtherVal === c.isBlockedByOther) {
               return c;
@@ -2275,12 +2292,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
 
 
-  const [swipeHistory, setSwipeHistory] = useState([]);
+  const [lastSwipedCandidate, setLastSwipedCandidate] = useState(null);
 
   const handleSwipeLeft = () => {
     if (swipeIndex < MOCK_MATCHES.length) {
       const candidate = MOCK_MATCHES[swipeIndex];
-      setSwipeHistory((prev) => [...prev, { candidate, action: 'pass' }]);
+      // Save only the single most recent passed candidate for 1-time rewind
+      setLastSwipedCandidate({ candidate, action: 'pass' });
       setSwipeIndex(swipeIndex + 1);
     }
   };
@@ -2293,7 +2311,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       try {
         const result = await apiClient.likeUser({ likedId: targetId });
 
-        setSwipeHistory((prev) => [...prev, { candidate, action: 'like' }]);
+        // Save only the single most recent liked candidate for 1-time rewind
+        setLastSwipedCandidate({ candidate, action: 'like' });
         if (targetId && !likedByMe.includes(targetId)) {
           setLikedByMe([...likedByMe, targetId]);
         }
@@ -2339,24 +2358,30 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const handleUndoSwipe = async () => {
-    if (swipeHistory.length === 0 && swipeIndex === 0) {
-      Alert.alert('No Swipe to Rewind', 'You have not swiped on any candidate profile yet.');
+    if (!lastSwipedCandidate || !lastSwipedCandidate.candidate) {
+      Alert.alert(
+        'Rewind Unavailable',
+        'Only your most recent liked or passed profile can be rewound. Please swipe on a profile to enable rewind again.'
+      );
       return;
     }
 
-    const lastItem = swipeHistory[swipeHistory.length - 1] || (swipeIndex > 0 ? { candidate: MOCK_MATCHES[swipeIndex - 1] } : null);
-    const targetId = lastItem?.candidate?.id || lastItem?.candidate?._id;
-    const candidateName = lastItem?.candidate?.name || lastItem?.candidate?.firstName || 'previous profile';
+    const { candidate, action } = lastSwipedCandidate;
+    const targetId = candidate?.id || candidate?._id;
+    const candidateName = candidate?.name || candidate?.firstName || 'previous profile';
 
-    if (lastItem && lastItem.candidate && targetId) {
+    if (targetId && (action === 'like' || action === 'superlike')) {
       try {
         await apiClient.undoSwipe({ targetUserId: targetId });
       } catch (err) {
         console.log('Error undoing swipe on backend:', err);
       }
+      setLikedByMe((prev) => (Array.isArray(prev) ? prev.filter((id) => id !== targetId) : []));
     }
 
-    setSwipeHistory((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+    // Immediately clear lastSwipedCandidate so only the single recent one can be rewound
+    setLastSwipedCandidate(null);
+
     position.setValue({ x: 0, y: 0 });
     Animated.spring(position, {
       toValue: { x: 0, y: 0 },
@@ -2513,7 +2538,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const isVercelHost = typeof targetSocketUrl === 'string' && targetSocketUrl.includes('vercel.app');
       console.log('Connecting to Socket.IO at:', targetSocketUrl, '| isVercelHost:', isVercelHost);
       if (socketRef.current) {
-        try { socketRef.current.disconnect(); } catch (_) {}
+        try { socketRef.current.disconnect(); } catch (_) { }
       }
       socketRef.current = io(targetSocketUrl, {
         transports: ['websocket', 'polling'],
@@ -2551,7 +2576,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       socketRef.current.on('connect_error', (err) => {
         console.warn('⚠️ [FRONTEND SOCKET CONNECT_ERROR] Connection error to', targetSocketUrl, ':', err.message);
         if (isVercelHost && socketRef.current) {
-          try { socketRef.current.disconnect(); } catch (_) {}
+          try { socketRef.current.disconnect(); } catch (_) { }
         }
       });
 
@@ -2781,6 +2806,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
         const formattedMsg = {
           id: (msg._id || msg.id || Date.now()).toString(),
+          _id: (msg._id || msg.id || Date.now()).toString(),
           sender: 'them',
           senderId: senderIdStr,
           receiverId: (msg.receiverId || msg.receiver)?.toString(),
@@ -2797,6 +2823,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           status: isCurrentlyViewingChat ? 'seen' : (msg.status || 'delivered'),
           createdAt: msg.createdAt || new Date().toISOString(),
         };
+
+        // Instantly dispatch to Redux store so all components and bottom tab unread count see it in 0ms!
+        dispatch(addMessage(formattedMsg));
 
         // 1. Instantly update activeChat state if user is currently chatting with sender
         setActiveChat((prevActive) => {
@@ -2858,9 +2887,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           try { handleIncomingMessageRef.current(msg); } catch (e) { console.log('Error handling incoming msg:', e); }
         }
 
-        try {
-          fetchMessages();
-        } catch (e) { }
+        // Run background fetch after delay so MongoDB finishes saving message first
+        setTimeout(() => {
+          try {
+            fetchMessages();
+          } catch (e) { }
+        }, 1200);
 
         // If user is currently viewing active chat conversation with sender, emit mark_seen back immediately
         if (isCurrentlyViewingChat) {
@@ -3333,31 +3365,42 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           return;
         }
 
-        // Query GET /api/profile/account-status first to verify if this is an admin deactivation
-        let email = currentUser?.email || userProfile?.email;
-        let userId = currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id;
-        if (!email) {
-          try { email = await AsyncStorage.getItem('persistent_user_email'); } catch (e) { }
-        }
-        if (!userId) {
-          try { userId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) { }
-        }
-        let statusRes = null;
-        try {
-          statusRes = await apiClient.checkAccountStatus({ email, userId });
-        } catch (e) { }
+        const isExplicitSessionTerminated =
+          data?.code === 'SESSION_TERMINATED' ||
+          data?.code === 'SINGLE_DEVICE_CONFLICT' ||
+          (typeof data?.message === 'string' && (data.message.includes('logged out from all devices') || data.message.includes('accessed on another device')));
 
-        const isDeactMsg =
-          data?.status === 'deactivated' ||
-          data?.code === 'ACCOUNT_DEACTIVATED' ||
-          data?.isDeactivated === true ||
-          (typeof data?.message === 'string' && data.message.toLowerCase().includes('deactivated')) ||
-          Boolean(data?.reason);
+        let isDeactivated = false;
+        let deactReason = '';
 
-        if (statusRes?.status === 'deactivated' || statusRes?.isDeactivated || statusRes?.isActive === false || isDeactMsg) {
-          const reasonText = statusRes?.reason || data?.reason || 'Account deactivated by admin moderation team';
-          handleAccountDeactivatedAlert(reasonText);
-          return;
+        if (!isExplicitSessionTerminated) {
+          // Query GET /api/profile/account-status first to verify if this is an admin deactivation
+          let email = currentUser?.email || userProfile?.email;
+          let userId = currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id;
+          if (!email) {
+            try { email = await AsyncStorage.getItem('persistent_user_email'); } catch (e) { }
+          }
+          if (!userId) {
+            try { userId = await AsyncStorage.getItem('persistent_user_id'); } catch (e) { }
+          }
+          let statusRes = null;
+          try {
+            statusRes = await apiClient.checkAccountStatus({ email, userId });
+          } catch (e) { }
+
+          const isDeactMsg =
+            data?.status === 'deactivated' ||
+            data?.code === 'ACCOUNT_DEACTIVATED' ||
+            data?.isDeactivated === true ||
+            (typeof data?.message === 'string' && data.message.toLowerCase().includes('deactivated')) ||
+            Boolean(data?.reason);
+
+          if (statusRes?.status === 'deactivated' || statusRes?.isDeactivated || statusRes?.isActive === false || isDeactMsg) {
+            isDeactivated = true;
+            deactReason = statusRes?.reason || data?.reason || 'Account deactivated by admin moderation team';
+            handleAccountDeactivatedAlert(deactReason);
+            return;
+          }
         }
 
         if (getIsDeactivationAlertShowing()) return;
@@ -3380,18 +3423,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   }
                   await AsyncStorage.removeItem('token');
                   await AsyncStorage.removeItem('user');
+                  await AsyncStorage.clear();
                   setAuthToken(null);
                 } catch (e) {
                   console.log('Error clearing session storage:', e);
                 }
 
-                // 1. Dispatch Redux logout action
+                // 1. Dispatch Redux logout actions
                 dispatch(logout());
+                dispatch(clearChat());
+                dispatch(clearProfile());
 
                 // 2. Invoke parent onLogout handler
                 if (typeof onLogoutRef.current === 'function') {
                   try {
-                    onLogoutRef.current(null, true);
+                    await onLogoutRef.current(null, true);
                   } catch (e) {
                     console.log('Error calling onLogout:', e);
                   }
@@ -3406,9 +3452,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   }
                 }
 
-                setTimeout(() => {
-                  setIsDeactivationAlertShowing(false);
-                }, 1500);
+                setIsDeactivationAlertShowing(false);
               },
             },
           ],
@@ -3943,22 +3987,26 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           if (isChatNotif) {
             console.log('[HomeScreen] Real-time Push Notification: Updating Chat tab badge & active conversation messages instantly!');
             setUnreadChatPushCount((prev) => prev + 1);
-            try { fetchMessages(); } catch (e) { }
-            try { fetchMatchesList(); } catch (e) { }
 
             const senderIdStr = (data?.senderId || data?.userId)?.toString();
             const bodyMessageText = remoteMessage?.notification?.body || data?.body || data?.text || 'Sent a message';
             const notificationMsgId = data?.messageId || ('notif-' + Date.now());
 
             if (senderIdStr) {
+              const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
               const notifMsgObj = {
                 id: notificationMsgId,
+                _id: notificationMsgId,
                 sender: 'them',
                 senderId: senderIdStr,
+                receiverId: currentId,
                 text: bodyMessageText,
                 status: 'delivered',
                 createdAt: new Date().toISOString(),
               };
+
+              // Instantly update Redux store with incoming push message
+              dispatch(addMessage(notifMsgObj));
 
               setChats((prevChats) => {
                 if (!Array.isArray(prevChats)) return prevChats;
@@ -3991,8 +4039,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               });
             }
 
-            try { fetchMessages(); } catch (e) { }
-            try { fetchMatchesList(); } catch (e) { }
+            setTimeout(() => {
+              try { fetchMessages(); } catch (e) { }
+              try { fetchMatchesList(); } catch (e) { }
+            }, 1200);
 
             const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
             const targetPartnerId = activePartnerId || senderIdStr;
@@ -4069,8 +4119,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const blockedUserIdsSet = new Set();
     if (Array.isArray(blockedUsersList)) {
       blockedUsersList.forEach((b) => {
-        const uId = (b.id || b._id || b.userId)?.toString();
-        if (uId) {
+        const uId = (typeof b === 'object' ? (b.id || b._id || b.userId || b.targetUserId || b.blockedId?._id || b.blockedId) : b)?.toString();
+        if (uId && !recentlyUnblockedUserIdsRef.current.has(uId)) {
           blockedUserIdsSet.add(uId);
           if (!otherUsersMap.has(uId)) {
             otherUsersMap.set(uId, {
@@ -4151,7 +4201,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     const chatsList = [];
     Object.keys(messagesByOtherUser).forEach((otherId) => {
       const otherUser = otherUsersMap.get(otherId) || { id: otherId, name: 'Matched User', image: null };
-      const isBlocked = blockedUserIdsSet.has(otherId) || !!otherUser.isBlocked;
+      const isBlocked = blockedUserIdsSet.has(otherId);
       const isBlockedByOther = blockedByOtherSet.has(otherId);
       // If the other user has blocked ME, hide their real name until they unblock
       const displayName = isBlockedByOther
@@ -4236,7 +4286,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       const matchedUserStr = mId.toString();
       if (!messagesByOtherUser[matchedUserStr]) {
         const otherUser = otherUsersMap.get(matchedUserStr) || { id: matchedUserStr, name: 'Matched User', image: null };
-        const isBlocked = blockedUserIdsSet.has(matchedUserStr) || !!otherUser.isBlocked;
+        const isBlocked = blockedUserIdsSet.has(matchedUserStr);
         const isBlockedByOther = blockedByOtherSet.has(matchedUserStr);
         // If the other user has blocked ME, hide their real name until they unblock
         const displayName = isBlockedByOther
@@ -4265,26 +4315,30 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       }
     });
 
-    // Ensure all blocked users remain in chatsList even if no message history exists or match record was removed
+    // Ensure blocked users remain in chatsList ONLY if they have liked each other (matched) or have message history
     blockedUserIdsSet.forEach((bId) => {
-      const alreadyInList = chatsList.some((c) => (c.id || c._id || c.userId)?.toString() === bId);
-      if (!alreadyInList) {
-        const otherUser = otherUsersMap.get(bId) || { id: bId, name: 'Blocked User', image: null };
-        chatsList.push({
-          id: bId,
-          name: otherUser.name || otherUser.firstName || 'Blocked User',
-          image: otherUser.image || otherUser.profileImage,
-          lastSeen: otherUser.lastSeen,
-          isBlocked: true,
-          isBlockedByOther: false,
-          messages: [
-            {
-              id: 'blocked-init',
-              sender: 'them',
-              text: 'You blocked this person.',
-            },
-          ],
-        });
+      const isMatched = (matchedUserIds || []).some((mId) => mId?.toString() === bId);
+      const hasRealMessages = (messagesByOtherUser[bId] || []).length > 0;
+      if (isMatched || hasRealMessages) {
+        const alreadyInList = chatsList.some((c) => (c.id || c._id || c.userId)?.toString() === bId);
+        if (!alreadyInList) {
+          const otherUser = otherUsersMap.get(bId) || { id: bId, name: 'Blocked User', image: null };
+          chatsList.push({
+            id: bId,
+            name: otherUser.name || otherUser.firstName || 'Blocked User',
+            image: otherUser.image || otherUser.profileImage,
+            lastSeen: otherUser.lastSeen,
+            isBlocked: true,
+            isBlockedByOther: false,
+            messages: [
+              {
+                id: 'blocked-init',
+                sender: 'them',
+                text: 'You blocked this person.',
+              },
+            ],
+          });
+        }
       }
     });
 
@@ -4352,8 +4406,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           const cleanMessages = deduplicateMessages(enforceSinglePin(hasRealMessages ? combined.filter((m) => m.id !== 'match-init') : combined));
           cleanMessages.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
 
-          const isBlocked = found.isBlocked || prevActiveChat.isBlocked || false;
-          const isBlockedByOther = found.isBlockedByOther || prevActiveChat.isBlockedByOther || false;
+          const pIdStr = (prevActiveChat?.id || prevActiveChat?._id || prevActiveChat?.userId || prevActiveChat?.senderId || prevActiveChat?.sender)?.toString();
+          const isRecentlyUnblocked = pIdStr && recentlyUnblockedUserIdsRef.current.has(pIdStr);
+          const isBlocked = isRecentlyUnblocked ? false : (found ? Boolean(found.isBlocked) : (prevActiveChat ? Boolean(prevActiveChat.isBlocked) : false));
+          const isBlockedByOther = found ? Boolean(found.isBlockedByOther) : (prevActiveChat ? Boolean(prevActiveChat.isBlockedByOther) : false);
 
           const isSameLength = cleanMessages.length === prevMsgs.length;
           const isSameContent = isSameLength && cleanMessages.every((m, idx) => {
@@ -6260,10 +6316,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       });
 
       if (res?.isMatch) {
-        Alert.alert("It's a Match! 🎉", `You and ${currentCandidate.firstName || currentCandidate.name} Super Liked each other!`);
+        Alert.alert("It's a Match! ", `You and ${currentCandidate.firstName || currentCandidate.name} Super Liked each other!`);
       } else {
         Alert.alert('Super Liked! ⭐', `You Super Liked ${currentCandidate.firstName || currentCandidate.name}!`);
       }
+      setLastSwipedCandidate({ candidate: currentCandidate, action: 'superlike' });
       setSwipeIndex((prev) => prev + 1);
     } catch (err) {
       console.log('Superlike swipe error:', err);
@@ -6312,23 +6369,50 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           text: 'Block',
           style: 'destructive',
           onPress: () => {
+            recentlyUnblockedUserIdsRef.current.delete(targetIdStr);
             // ⚡ 1. Instant local state update (0ms UI latency)
             setBlockedUsersList((prev) => [
-              ...prev,
-              { id: targetIdStr, _id: targetIdStr, name: targetUserName }
+              ...(prev || []).filter((b) => {
+                const bId = (typeof b === 'object' ? (b.id || b._id || b.userId || b.targetUserId || b.blockedId?._id || b.blockedId) : b)?.toString();
+                return bId !== targetIdStr;
+              }),
+              { id: targetIdStr, _id: targetIdStr, userId: targetIdStr, name: targetUserName }
             ]);
 
-            if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetIdStr) {
-              setActiveChat((prev) => prev ? { ...prev, isBlocked: true } : null);
-            }
-            setShowActiveCardDetails(false);
-            setChats((prevChats) => prevChats.map((c) => {
-              const cId = (c.id || c._id || c.userId)?.toString();
-              if (cId === targetIdStr) {
-                return { ...c, isBlocked: true };
+            setActiveChat((prev) => {
+              if (!prev) return null;
+              const pId = (prev.id || prev._id || prev.userId || prev.senderId || prev.sender)?.toString();
+              if (!targetIdStr || pId === targetIdStr) {
+                return { ...prev, isBlocked: true };
               }
-              return c;
-            }));
+              return prev;
+            });
+            setShowActiveCardDetails(false);
+
+            const isMatchedOrHasHistory = (matchedUserIds || []).some((mId) => mId?.toString() === targetIdStr) ||
+              (chats || []).some((c) => (c.id || c._id || c.userId)?.toString() === targetIdStr && (c.messages || []).some((m) => m.id !== 'match-init' && m.id !== 'blocked-init'));
+
+            setChats((prevChats) => {
+              if (!isMatchedOrHasHistory) {
+                return (prevChats || []).filter((c) => (c.id || c._id || c.userId)?.toString() !== targetIdStr);
+              }
+              return (prevChats || []).map((c) => {
+                const cId = (c.id || c._id || c.userId)?.toString();
+                if (cId === targetIdStr) {
+                  return { ...c, isBlocked: true };
+                }
+                return c;
+              });
+            });
+
+            // Optimistically update matches in Redux
+            dispatch(setMatches((matches || []).map((m) => {
+              const mId = (m.id || m._id)?.toString();
+              if (mId === targetIdStr) {
+                return { ...m, isBlocked: true };
+              }
+              return m;
+            })));
 
             // ⚡ 2. Execute API in background
             apiClient.blockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr })
@@ -6372,19 +6456,41 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         {
           text: 'Unblock',
           onPress: () => {
+            recentlyUnblockedUserIdsRef.current.add(targetIdStr);
+            setTimeout(() => {
+              recentlyUnblockedUserIdsRef.current.delete(targetIdStr);
+            }, 15000);
             // ⚡ 1. Instant local state update (0ms UI latency)
-            setBlockedUsersList((prev) => prev.filter((b) => (b.id || b._id || b.userId)?.toString() !== targetIdStr));
+            setBlockedUsersList((prev) => (prev || []).filter((b) => {
+              const bId = (typeof b === 'object' ? (b.id || b._id || b.userId || b.targetUserId || b.blockedId?._id || b.blockedId) : b)?.toString();
+              return bId !== targetIdStr;
+            }));
 
-            if (activeChat && (activeChat.id || activeChat._id || activeChat.userId)?.toString() === targetIdStr) {
-              setActiveChat((prev) => prev ? { ...prev, isBlocked: false } : null);
-            }
-            setChats((prevChats) => prevChats.map((c) => {
-              const cId = (c.id || c._id || c.userId)?.toString();
+            setActiveChat((prev) => {
+              if (!prev) return null;
+              const pId = (prev.id || prev._id || prev.userId || prev.senderId || prev.sender)?.toString();
+              if (!targetIdStr || pId === targetIdStr) {
+                return { ...prev, isBlocked: false };
+              }
+              return prev;
+            });
+
+            setChats((prevChats) => (prevChats || []).map((c) => {
+              const cId = (c.id || c._id || c.userId || c.partnerId)?.toString();
               if (cId === targetIdStr) {
                 return { ...c, isBlocked: false };
               }
               return c;
             }));
+
+            // Optimistically update matches in Redux so any downstream effect doesn't read stale isBlocked: true
+            dispatch(setMatches((matches || []).map((m) => {
+              const mId = (m.id || m._id)?.toString();
+              if (mId === targetIdStr) {
+                return { ...m, isBlocked: false };
+              }
+              return m;
+            })));
 
             // ⚡ 2. Execute API in background
             apiClient.unblockUser({ targetUserId: targetIdStr, targetId: targetIdStr, userId: targetIdStr })
@@ -6468,13 +6574,22 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           setActiveChat((prev) => prev ? { ...prev, isBlocked: true } : null);
         }
         setShowActiveCardDetails(false);
-        setChats((prevChats) => prevChats.map((c) => {
-          const cId = (c.id || c._id || c.userId)?.toString();
-          if (cId === targetIdStr) {
-            return { ...c, isBlocked: true };
+
+        const isMatchedOrHasHistory = (matchedUserIds || []).some((mId) => mId?.toString() === targetIdStr) ||
+          (chats || []).some((c) => (c.id || c._id || c.userId)?.toString() === targetIdStr && (c.messages || []).some((m) => m.id !== 'match-init' && m.id !== 'blocked-init'));
+
+        setChats((prevChats) => {
+          if (!isMatchedOrHasHistory) {
+            return prevChats.filter((c) => (c.id || c._id || c.userId)?.toString() !== targetIdStr);
           }
-          return c;
-        }));
+          return prevChats.map((c) => {
+            const cId = (c.id || c._id || c.userId)?.toString();
+            if (cId === targetIdStr) {
+              return { ...c, isBlocked: true };
+            }
+            return c;
+          });
+        });
 
         if (typeof fetchBlockedUsers === 'function') fetchBlockedUsers();
         if (typeof fetchQuestionnaires === 'function') fetchQuestionnaires();
@@ -7317,6 +7432,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                     variant="outline"
                     onPress={() => {
                       setSwipeIndex(0);
+                      setLastSwipedCandidate(null);
                       refetch();
                     }}
                   />
@@ -7324,12 +7440,12 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               )}
 
               {/* Action Buttons (static relative to swipeContainer) */}
-              {(swipeIndex < MOCK_MATCHES.length || swipeIndex > 0 || swipeHistory.length > 0) && (
+              {(swipeIndex < MOCK_MATCHES.length || swipeIndex > 0 || lastSwipedCandidate !== null) && (
                 <View style={styles.actionButtonsRow}>
                   <TouchableOpacity
-                    style={[styles.actionCircle, styles.actionRewind, (swipeIndex === 0 && swipeHistory.length === 0) && { opacity: 0.5 }]}
+                    style={[styles.actionCircle, styles.actionRewind, !lastSwipedCandidate && { opacity: 0.5 }]}
                     onPress={handleUndoSwipe}
-                    activeOpacity={0.8}
+                    activeOpacity={lastSwipedCandidate ? 0.8 : 0.5}
                   >
                     <Text style={[styles.actionIconText, styles.actionRewindText]}>⏪</Text>
                   </TouchableOpacity>
@@ -8799,9 +8915,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                     {(() => {
                       const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
-                      const isBlockedByMe = Boolean(
+                      const isRecentlyUnblocked = partnerId && recentlyUnblockedUserIdsRef.current.has(partnerId);
+                      const isBlockedByMe = !isRecentlyUnblocked && Boolean(
                         activeChat.isBlocked ||
-                        (partnerId && blockedUsersList && blockedUsersList.some((b) => (b.id || b._id || b.userId)?.toString() === partnerId))
+                        (partnerId && Array.isArray(blockedUsersList) && blockedUsersList.some((b) => {
+                          const bId = (typeof b === 'object' ? (b.id || b._id || b.userId || b.targetUserId || b.blockedId?._id || b.blockedId) : b)?.toString();
+                          return bId === partnerId;
+                        }))
                       );
                       const isBlockedByOther = Boolean(
                         activeChat.isBlockedByOther ||
@@ -8970,9 +9090,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                   {(() => {
                     const partnerId = (activeChat.id || activeChat._id || activeChat.userId || activeChat.senderId || activeChat.sender)?.toString();
-                    const isBlockedByMe = Boolean(
+                    const isRecentlyUnblocked = partnerId && recentlyUnblockedUserIdsRef.current.has(partnerId);
+                    const isBlockedByMe = !isRecentlyUnblocked && Boolean(
                       activeChat.isBlocked ||
-                      (partnerId && blockedUsersList && blockedUsersList.some((b) => (b.id || b._id || b.userId)?.toString() === partnerId))
+                      (partnerId && Array.isArray(blockedUsersList) && blockedUsersList.some((b) => {
+                        const bId = (typeof b === 'object' ? (b.id || b._id || b.userId || b.targetUserId || b.blockedId?._id || b.blockedId) : b)?.toString();
+                        return bId === partnerId;
+                      }))
                     );
                     const isBlockedByOther = Boolean(
                       activeChat.isBlockedByOther ||
@@ -9825,21 +9949,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           {(() => {
             const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
 
-            const chatsUnread = chats.reduce((total, c) => {
-              const count = (c.messages || []).filter(
-                (m) => (m.sender !== 'you' && (m.senderId || m.sender)?.toString() !== currentId) && m.id !== 'match-init' && m.status !== 'seen'
-              ).length;
-              return total + count;
-            }, 0);
+            const unreadMsgIdSet = new Set();
 
-            const rawUnread = (allMessages || []).filter((msg) => {
-              if (!msg || !currentId) return false;
-              const rId = (msg.receiverId || msg.receiver)?._id?.toString() || (msg.receiverId || msg.receiver)?.toString();
-              const sId = (msg.senderId || msg.sender)?._id?.toString() || (msg.senderId || msg.sender)?._id?.toString();
-              return rId === currentId && sId !== currentId && msg.status !== 'seen';
-            }).length;
+            // 1. Unread from local chats state
+            (chats || []).forEach((c) => {
+              (c.messages || []).forEach((m) => {
+                if (!m) return;
+                const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+                const isFromMe = m.sender === 'you' || (currentId && sId === currentId);
+                if (!isFromMe && m.id !== 'match-init' && m.id !== 'blocked-init' && m.status !== 'seen' && !m.isDeletedForEveryone) {
+                  const idKey = (m._id || m.id || m.tempId)?.toString();
+                  if (idKey) unreadMsgIdSet.add(idKey);
+                }
+              });
+            });
 
-            const totalUnreadChatCount = Math.max(chatsUnread, rawUnread) + unreadChatPushCount;
+            // 2. Unread from Redux allMessages
+            (allMessages || []).forEach((msg) => {
+              if (!msg) return;
+              const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
+              const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
+              const isForMe = currentId ? (rId === currentId) : (msg.sender === 'them');
+              const isFromMe = msg.sender === 'you' || (currentId && sId === currentId);
+              if (isForMe && !isFromMe && msg.id !== 'match-init' && msg.id !== 'blocked-init' && msg.status !== 'seen' && !msg.isDeletedForEveryone) {
+                const idKey = (msg._id || msg.id || msg.tempId)?.toString();
+                if (idKey) unreadMsgIdSet.add(idKey);
+              }
+            });
+
+            const totalUnreadChatCount = Math.max(unreadMsgIdSet.size, unreadChatPushCount);
 
             return (
               <TouchableOpacity
@@ -9849,7 +9987,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                   setUnreadChatPushCount(0);
                 }}
               >
-                <View style={{ position: 'relative' }}>
+                <View style={{ position: 'relative', overflow: 'visible' }}>
                   <Ionicons
                     name={activeTab === 'chat' ? "chatbubbles" : "chatbubbles-outline"}
                     size={24}
@@ -11162,6 +11300,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           >
             <View style={styles.matchPopupOverlay}>
               <View style={styles.matchPopupCard}>
+                <TouchableOpacity
+                  style={{ position: 'absolute', top: 14, right: 14, padding: 6, zIndex: 10 }}
+                  onPress={() => setShowMatchPopup(false)}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
+                  <Ionicons name="close" size={24} color="rgba(255, 255, 255, 0.7)" />
+                </TouchableOpacity>
                 <Text style={styles.matchPopupTitle}>It's a Match! 🎉</Text>
                 <Text style={styles.matchPopupSubtitle}>
                   You and {matchedUser.name} liked each other.
@@ -11182,13 +11327,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 <CustomButton
                   title={`SEND MESSAGE TO ${matchedUser.name.toUpperCase()}`}
                   variant="primary"
-                  style={{ marginBottom: 12 }}
                   onPress={() => handleCreateNewChat(matchedUser)}
-                />
-                <CustomButton
-                  title="KEEP SWIPING"
-                  variant="outline"
-                  onPress={() => setShowMatchPopup(false)}
                 />
               </View>
             </View>
@@ -11326,10 +11465,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 </TouchableOpacity>
 
                 {(() => {
-                  const targetActiveId = (activeChat?.id || activeChat?._id || activeChat?.userId)?.toString();
-                  const isBlocked = Boolean(
+                  const targetActiveId = (activeChat?.id || activeChat?._id || activeChat?.userId || activeChat?.senderId || activeChat?.sender)?.toString();
+                  const isRecentlyUnblocked = targetActiveId && recentlyUnblockedUserIdsRef.current.has(targetActiveId);
+                  const isBlocked = !isRecentlyUnblocked && Boolean(
                     activeChat?.isBlocked ||
-                    (Array.isArray(blockedUsersList) && blockedUsersList.some((b) => (b.id || b._id || b.userId)?.toString() === targetActiveId))
+                    (Array.isArray(blockedUsersList) && blockedUsersList.some((b) => {
+                      const bId = (typeof b === 'object' ? (b.id || b._id || b.userId || b.targetUserId || b.blockedId?._id || b.blockedId) : b)?.toString();
+                      return bId === targetActiveId;
+                    }))
                   );
 
                   return (
@@ -11338,9 +11481,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                       onPress={() => {
                         setShowChatOptionsMenuModal(false);
                         if (isBlocked) {
-                          requestAnimationFrame(() => handleUnblockUser(activeChat.id, activeChat.name));
+                          requestAnimationFrame(() => handleUnblockUser(activeChat.id || activeChat._id || activeChat.userId, activeChat.name || activeChat.firstName));
                         } else {
-                          requestAnimationFrame(() => handleBlockUser(activeChat.id, activeChat.name));
+                          requestAnimationFrame(() => handleBlockUser(activeChat.id || activeChat._id || activeChat.userId, activeChat.name || activeChat.firstName));
                         }
                       }}
                     >
@@ -13164,23 +13307,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1000,
     elevation: 20,
+    overflow: 'visible',
   },
   navigationTab: {
     alignItems: 'center',
     justifyContent: 'center',
     flex: 1,
     paddingTop: 4,
-    opacity: 0.6,
+    overflow: 'visible',
   },
   navigationTabActive: {
-    opacity: 1,
   },
   navigationIcon: {
     fontSize: 20,
     marginBottom: 2,
   },
   navigationLabel: {
-    color: '#FFFFFF',
+    color: 'rgba(255, 255, 255, 0.6)',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -13212,8 +13355,8 @@ const styles = StyleSheet.create({
   },
   navBadgeContainer: {
     position: 'absolute',
-    top: -5,
-    right: -10,
+    top: -6,
+    right: -12,
     backgroundColor: '#FF3B30',
     minWidth: 18,
     height: 18,
@@ -13223,14 +13366,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     borderWidth: 1.5,
     borderColor: '#0F1115',
-    elevation: 5,
-    zIndex: 10,
+    elevation: 10,
+    zIndex: 999,
   },
   navBadgeText: {
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '900',
     textAlign: 'center',
+    lineHeight: 12,
   },
 
   // Swipe Tab Styles
