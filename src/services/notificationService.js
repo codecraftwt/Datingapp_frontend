@@ -300,93 +300,127 @@ export const registerFcmToken = async () => {
   }
 };
 
-/**
- * Setup FCM & Notifee Listeners for Foreground, Background, and Quit states
- * @param {Function} onNotificationClick - Optional callback when user taps a notification
- */
-export const setupNotificationListeners = (onNotificationClick, onNotificationReceived) => {
+const clickListeners = new Set();
+const receivedListeners = new Set();
+let baseListenersCleanup = null;
+
+const ensureBaseListenersInitialized = () => {
+  if (baseListenersCleanup) return;
+
+  const unsubscribes = [];
+
   try {
-    // Listen for Notifee notification press events
+    // 1. Notifee Foreground Press Event
     const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
       if (type === EventType.PRESS && detail.notification) {
         console.log('[Notifee] Notification pressed:', detail.notification);
-        if (onNotificationClick && detail.notification.data) {
-          onNotificationClick(detail.notification.data);
+        if (detail.notification.data) {
+          clickListeners.forEach((cb) => {
+            try { cb(detail.notification.data); } catch (e) { console.warn('[Notifee] Error in click callback:', e); }
+          });
         }
       }
     });
+    unsubscribes.push(unsubscribeNotifee);
 
     const messagingInstance = getMessagingInstance();
-    if (!messagingInstance || typeof messagingInstance.onMessage !== 'function') return unsubscribeNotifee;
+    if (messagingInstance) {
+      // 2. Firebase Foreground Message Handler (App is actively open)
+      if (typeof messagingInstance.onMessage === 'function') {
+        const unsubscribeForeground = messagingInstance.onMessage(async (remoteMessage) => {
+          console.log('[FCM] Foreground Notification Received:', remoteMessage);
+          const title = remoteMessage.notification?.title || remoteMessage.data?.title || 'New Notification';
+          const body = remoteMessage.notification?.body || remoteMessage.data?.body || '';
 
-    // 1. Foreground Message Handler (App is actively open)
-    const unsubscribeForeground = messagingInstance.onMessage(async (remoteMessage) => {
-      console.log('[FCM] Foreground Notification Received:', remoteMessage);
-      const title = remoteMessage.notification?.title || remoteMessage.data?.title || 'New Notification';
-      const body = remoteMessage.notification?.body || remoteMessage.data?.body || '';
-      // Display system notification banner using Notifee
-      await displayLocalSystemNotification({
-        title,
-        body,
-        data: remoteMessage.data || {},
-      });
+          // Display system notification banner using Notifee
+          await displayLocalSystemNotification({
+            title,
+            body,
+            data: remoteMessage.data || {},
+          });
 
-      if (onNotificationReceived && typeof onNotificationReceived === 'function') {
-        try {
-          onNotificationReceived(remoteMessage.data || {}, remoteMessage);
-        } catch (cbErr) {
-          console.warn('[FCM] Error in onNotificationReceived callback:', cbErr);
-        }
+          const dataPayload = remoteMessage.data || {};
+          receivedListeners.forEach((cb) => {
+            try { cb(dataPayload, remoteMessage); } catch (cbErr) { console.warn('[FCM] Error in received callback:', cbErr); }
+          });
+        });
+        unsubscribes.push(unsubscribeForeground);
       }
-    });
 
-    // 2. Token Refresh Listener
-    let unsubscribeTokenRefresh;
-    if (typeof messagingInstance.onTokenRefresh === 'function') {
-      unsubscribeTokenRefresh = messagingInstance.onTokenRefresh(async (newToken) => {
-        console.log('[FCM] Token Refreshed:', newToken);
-        try {
-          await apiClient.updateFcmToken(newToken);
-        } catch (e) {
-          console.error('[FCM] Error updating refreshed token:', e);
-        }
-      });
-    }
-
-    // 3. Notification Opened from Background State
-    let unsubscribeNotificationOpened;
-    if (typeof messagingInstance.onNotificationOpenedApp === 'function') {
-      unsubscribeNotificationOpened = messagingInstance.onNotificationOpenedApp((remoteMessage) => {
-        console.log('[FCM] Notification opened from background:', remoteMessage);
-        if (onNotificationClick && remoteMessage?.data) {
-          onNotificationClick(remoteMessage.data);
-        }
-      });
-    }
-
-    // 4. Notification Opened from Quit State (App was closed)
-    if (typeof messagingInstance.getInitialNotification === 'function') {
-      messagingInstance
-        .getInitialNotification()
-        .then((remoteMessage) => {
-          if (remoteMessage) {
-            console.log('[FCM] Notification opened from quit state:', remoteMessage);
-            if (onNotificationClick && remoteMessage?.data) {
-              onNotificationClick(remoteMessage.data);
-            }
+      // 3. Token Refresh Listener
+      if (typeof messagingInstance.onTokenRefresh === 'function') {
+        const unsubscribeTokenRefresh = messagingInstance.onTokenRefresh(async (newToken) => {
+          console.log('[FCM] Token Refreshed:', newToken);
+          try {
+            await apiClient.updateFcmToken(newToken);
+          } catch (e) {
+            console.error('[FCM] Error updating refreshed token:', e);
           }
-        })
-        .catch((e) => console.log('[FCM] Initial notification error:', e));
-    }
+        });
+        unsubscribes.push(unsubscribeTokenRefresh);
+      }
 
-    return () => {
-      if (typeof unsubscribeNotifee === 'function') unsubscribeNotifee();
-      if (typeof unsubscribeForeground === 'function') unsubscribeForeground();
-      if (typeof unsubscribeTokenRefresh === 'function') unsubscribeTokenRefresh();
-      if (typeof unsubscribeNotificationOpened === 'function') unsubscribeNotificationOpened();
-    };
+      // 4. Notification Opened from Background State
+      if (typeof messagingInstance.onNotificationOpenedApp === 'function') {
+        const unsubscribeNotificationOpened = messagingInstance.onNotificationOpenedApp((remoteMessage) => {
+          console.log('[FCM] Notification opened from background:', remoteMessage);
+          if (remoteMessage?.data) {
+            clickListeners.forEach((cb) => {
+              try { cb(remoteMessage.data); } catch (e) { console.warn('[FCM] Error in click callback (opened from background):', e); }
+            });
+          }
+        });
+        unsubscribes.push(unsubscribeNotificationOpened);
+      }
+
+      // 5. Notification Opened from Quit State (App was closed)
+      if (typeof messagingInstance.getInitialNotification === 'function') {
+        messagingInstance
+          .getInitialNotification()
+          .then((remoteMessage) => {
+            if (remoteMessage && remoteMessage?.data) {
+              console.log('[FCM] Notification opened from quit state:', remoteMessage);
+              clickListeners.forEach((cb) => {
+                try { cb(remoteMessage.data); } catch (e) { console.warn('[FCM] Error in click callback (quit state):', e); }
+              });
+            }
+          })
+          .catch((e) => console.log('[FCM] Initial notification error:', e));
+      }
+    }
   } catch (err) {
-    console.warn('[FCM] Error setting up notification listeners:', err);
-    return () => {};
+    console.warn('[FCM] Error initializing base notification listeners:', err);
   }
+
+  baseListenersCleanup = () => {
+    unsubscribes.forEach((unsub) => {
+      try { if (typeof unsub === 'function') unsub(); } catch (_) {}
+    });
+    baseListenersCleanup = null;
+  };
+};
+
+/**
+ * Setup FCM & Notifee Listeners with multicast subscriber support
+ * @param {Function} onNotificationClick - Optional callback when user taps a notification
+ * @param {Function} onNotificationReceived - Optional callback when foreground notification arrives
+ */
+export const setupNotificationListeners = (onNotificationClick, onNotificationReceived) => {
+  if (typeof onNotificationClick === 'function') {
+    clickListeners.add(onNotificationClick);
+  }
+  if (typeof onNotificationReceived === 'function') {
+    receivedListeners.add(onNotificationReceived);
+  }
+
+  ensureBaseListenersInitialized();
+
+  return () => {
+    if (typeof onNotificationClick === 'function') {
+      clickListeners.delete(onNotificationClick);
+    }
+    if (typeof onNotificationReceived === 'function') {
+      receivedListeners.delete(onNotificationReceived);
+    }
+  };
 };

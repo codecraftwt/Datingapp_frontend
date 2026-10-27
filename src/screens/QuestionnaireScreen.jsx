@@ -14,6 +14,7 @@ import {
   useWindowDimensions,
   PermissionsAndroid,
   ToastAndroid,
+  BackHandler,
 } from 'react-native';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { apiClient } from '../api/apiClient';
@@ -164,6 +165,48 @@ export const QuestionnaireScreen = ({ onNavigate, onGoBack, onFinish, initialDat
       ]
     );
   };
+
+  // Handle device navigation buttons to prevent navigating back to login from questionnaire first page
+  useEffect(() => {
+    const onHardwareBackPress = () => {
+      // 1. Close story preview modal if open
+      if (activeStoryIndex !== null) {
+        setActiveStoryIndex(null);
+        return true;
+      }
+
+      // 2. Edit Mode (opened as modal from Profile)
+      if (isEditMode) {
+        if (step > 1) {
+          setStep((prev) => prev - 1);
+          return true;
+        }
+        if (typeof onCloseModal === 'function') {
+          onCloseModal();
+          return true;
+        }
+        return false;
+      }
+
+      // 3. First-time registration / questionnaire flow:
+      if (step > 1) {
+        setStep((prev) => prev - 1);
+        return true;
+      }
+
+      // 4. On step 1 (first page of questionnaire):
+      // Device back button will not directly redirect to login.
+      // User can only go back by clicking Log Out from the questionnaire first page.
+      handleLogoutPress();
+      return true;
+    };
+
+    const backSubscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      onHardwareBackPress
+    );
+    return () => backSubscription.remove();
+  }, [step, isEditMode, activeStoryIndex, onCloseModal, onLogout, onNavigate]);
 
   useEffect(() => {
     if (initialStep) {

@@ -30,7 +30,7 @@ function MainApp() {
   const dispatch = useDispatch();
 
   const navigateTo = (nextScreen) => {
-    if (nextScreen === 'HOME' || nextScreen === 'LOGIN') {
+    if (nextScreen === 'HOME' || nextScreen === 'LOGIN' || nextScreen === 'QUESTIONNAIRE') {
       setScreenStack([nextScreen]);
     } else {
       setScreenStack((prev) => {
@@ -236,6 +236,10 @@ function MainApp() {
 
   useEffect(() => {
     const onBackPress = () => {
+      if (currentScreen === 'QUESTIONNAIRE') {
+        // QuestionnaireScreen handles its own back navigation and prevents exiting to login
+        return true;
+      }
       if (screenStack.length > 1) {
         setScreenStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
         return true;
@@ -245,7 +249,7 @@ function MainApp() {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => backHandler.remove();
-  }, [screenStack]);
+  }, [screenStack, currentScreen]);
 
   useEffect(() => {
     if (user) {

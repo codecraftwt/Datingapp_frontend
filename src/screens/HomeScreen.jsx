@@ -76,7 +76,7 @@ import {
 import io from 'socket.io-client';
 import { createSound } from 'react-native-nitro-sound';
 import soundService from '../services/soundService';
-import { registerFcmToken } from '../services/notificationService';
+import { registerFcmToken, setupNotificationListeners, displayLocalSystemNotification } from '../services/notificationService';
 import { WarningModal } from '../components/WarningModal';
 import { DeactivatedModal } from '../components/DeactivatedModal';
 import EmojiPicker from 'rn-emoji-keyboard';
@@ -924,7 +924,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   console.log('Filtered Swipe Cards (MOCK_MATCHES):', JSON.stringify(MOCK_MATCHES.map(u => ({ id: u.id, name: u.name }))));
 
   const [activeTab, setActiveTab] = useState('swipe'); // swipe, likes, chat, profile
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
   const [unreadChatPushCount, setUnreadChatPushCount] = useState(0);
+  const processedMessageIdsRef = useRef(new Set());
 
   // Android / Emulator Hardware Back Button Handler for HomeScreen Tabs, Modals, and Active Chat
   useEffect(() => {
@@ -1240,6 +1246,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     }
   };
   const [typedMessage, setTypedMessage] = useState('');
+  const [chatInputHeight, setChatInputHeight] = useState(40);
   const typedMessageRef = useRef('');
   const [isSearchInChatActive, setIsSearchInChatActive] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
@@ -2802,7 +2809,17 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
         const senderIdStr = (msg.senderId || msg.sender)?.toString();
         const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
-        const isCurrentlyViewingChat = activePartnerId && activePartnerId === senderIdStr;
+        const isCurrentlyViewingChat = activeTabRef.current === 'chat' && Boolean(activePartnerId && activePartnerId === senderIdStr);
+
+        const msgKey = (msg._id || msg.id || msg.tempId)?.toString();
+        const isNewUnread = msgKey ? !processedMessageIdsRef.current.has(msgKey) : true;
+        if (msgKey) {
+          processedMessageIdsRef.current.add(msgKey);
+          if (processedMessageIdsRef.current.size > 200) {
+            const first = processedMessageIdsRef.current.values().next().value;
+            processedMessageIdsRef.current.delete(first);
+          }
+        }
 
         const formattedMsg = {
           id: (msg._id || msg.id || Date.now()).toString(),
@@ -2887,7 +2904,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           try { handleIncomingMessageRef.current(msg); } catch (e) { console.log('Error handling incoming msg:', e); }
         }
 
-        // Run background fetch after delay so MongoDB finishes saving message first
+        // Immediately sync messages & also retry after delay so MongoDB finishes saving message first
+        try { fetchMessages(); } catch (e) { }
         setTimeout(() => {
           try {
             fetchMessages();
@@ -2905,7 +2923,9 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           }
         } else {
           // If user is not currently in active chat, increment instant bottom tab chat badge & show pop-up banner notification
-          setUnreadChatPushCount((prev) => prev + 1);
+          if (isNewUnread) {
+            setUnreadChatPushCount((prev) => prev + 1);
+          }
           const senderDisplayName = msg.senderName || 'Someone';
           let bodyText = msg.text || ' Sent a message';
           if (msg.messageType === 'image') bodyText = ' Sent a photo';
@@ -3986,11 +4006,27 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           if (isChatNotif) {
             console.log('[HomeScreen] Real-time Push Notification: Updating Chat tab badge & active conversation messages instantly!');
-            setUnreadChatPushCount((prev) => prev + 1);
 
             const senderIdStr = (data?.senderId || data?.userId)?.toString();
+            const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
+            const isViewingChatNow = activeTabRef.current === 'chat' && Boolean(activePartnerId && activePartnerId === senderIdStr);
+
+            const notificationMsgId = data?.messageId || data?.notificationId || ('notif-' + Date.now());
+            const msgKey = notificationMsgId?.toString();
+            const isNewUnread = msgKey ? !processedMessageIdsRef.current.has(msgKey) : true;
+            if (msgKey) {
+              processedMessageIdsRef.current.add(msgKey);
+              if (processedMessageIdsRef.current.size > 200) {
+                const first = processedMessageIdsRef.current.values().next().value;
+                processedMessageIdsRef.current.delete(first);
+              }
+            }
+
+            if (!isViewingChatNow && isNewUnread) {
+              setUnreadChatPushCount((prev) => prev + 1);
+            }
+
             const bodyMessageText = remoteMessage?.notification?.body || data?.body || data?.text || 'Sent a message';
-            const notificationMsgId = data?.messageId || ('notif-' + Date.now());
 
             if (senderIdStr) {
               const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
@@ -4001,7 +4037,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
                 senderId: senderIdStr,
                 receiverId: currentId,
                 text: bodyMessageText,
-                status: 'delivered',
+                status: isViewingChatNow ? 'seen' : 'delivered',
                 createdAt: new Date().toISOString(),
               };
 
@@ -4039,14 +4075,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               });
             }
 
+            // Immediately sync from backend without delay
+            try { fetchMessages(); } catch (e) { }
+            try { fetchMatchesList(); } catch (e) { }
+
             setTimeout(() => {
               try { fetchMessages(); } catch (e) { }
               try { fetchMatchesList(); } catch (e) { }
             }, 1200);
 
-            const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
-            const targetPartnerId = activePartnerId || senderIdStr;
-
+            const targetPartnerId = (isViewingChatNow && activePartnerId) ? activePartnerId : null;
             if (targetPartnerId) {
               apiClient.getChatMessages(targetPartnerId).then((res) => {
                 if (res && Array.isArray(res)) {
@@ -4773,7 +4811,8 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
     if (!currentId || !receiverId) return;
 
-    if (text.trim() === '') {
+    if (!text || text.trim() === '') {
+      setChatInputHeight(40);
       if (isCurrentlyTypingRef.current) {
         socketRef.current.emit('stop_typing', { senderId: currentId, receiverId });
         isCurrentlyTypingRef.current = false;
@@ -4861,6 +4900,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         setEditingMessage(null);
         typedMessageRef.current = '';
         setTypedMessage('');
+        setChatInputHeight(40);
         if (chatInputRef.current) {
           try { chatInputRef.current.clear(); } catch (_) { }
         }
@@ -4891,6 +4931,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       if (!currentText.trim()) return;
       typedMessageRef.current = '';
       setTypedMessage('');
+      setChatInputHeight(40);
       if (chatInputRef.current) {
         try { chatInputRef.current.clear(); } catch (_) { }
       }
@@ -9193,22 +9234,29 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
                         <TextInput
                           ref={chatInputRef}
-                          style={styles.chatInput}
+                          style={[
+                            styles.chatInput,
+                            { height: Math.max(40, Math.min(196, chatInputHeight)) },
+                          ]}
                           placeholder={editingMessage ? "Edit message..." : "Type a message..."}
                           placeholderTextColor="rgba(255, 255, 255, 0.4)"
                           value={typedMessage}
                           onChangeText={handleInputChange}
+                          onContentSizeChange={(e) => {
+                            const contentH = e.nativeEvent?.contentSize?.height || 40;
+                            const calculatedH = Math.max(40, Math.min(196, contentH + (Platform.OS === 'ios' ? 4 : 2)));
+                            setChatInputHeight(calculatedH);
+                          }}
+                          multiline={true}
+                          scrollEnabled={true}
+                          showsVerticalScrollIndicator={true}
+                          nestedScrollEnabled={true}
+                          textAlignVertical={chatInputHeight > 44 ? 'top' : 'center'}
                           autoCorrect={false}
                           autoCapitalize="sentences"
                           spellCheck={false}
                           keyboardType="default"
-                          returnKeyType="send"
                           blurOnSubmit={false}
-                          onSubmitEditing={() => {
-                            if (!editingMessage && ((typedMessageRef.current && typedMessageRef.current.trim()) || typedMessage.trim())) {
-                              handleSendMessage();
-                            }
-                          }}
                           onFocus={() => {
                             setShowStickerPicker(false);
                             setShowEmojiPicker(false);
@@ -13994,29 +14042,36 @@ const styles = StyleSheet.create({
   },
   chatInputRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
+    alignItems: 'flex-end',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     backgroundColor: 'rgba(0,0,0,0.25)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
   chatInput: {
     flex: 1,
-    height: 44,
+    minHeight: 40,
+    maxHeight: 196,
     backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 22,
-    paddingHorizontal: 18,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 10 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 8,
     color: '#FFFFFF',
-    fontSize: 14,
-    marginRight: 10,
+    fontSize: 15,
+    lineHeight: 20,
+    marginRight: 6,
   },
   chatSendButton: {
-    backgroundColor: '#FE3C72',
-    height: 44,
-    borderRadius: 22,
-    paddingHorizontal: 20,
+    backgroundColor: '#00A884',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
+    marginLeft: 6,
+    marginBottom: 1,
   },
   chatSendButtonText: {
     color: '#FFFFFF',
@@ -15673,7 +15728,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
+    marginRight: 6,
+    marginBottom: 1,
   },
   chatActionIcon: {
     fontSize: 18,
@@ -15959,7 +16015,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#00A884',
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
+    marginLeft: 6,
+    marginBottom: 1,
   },
   recordingRow: {
     flexDirection: 'row',
