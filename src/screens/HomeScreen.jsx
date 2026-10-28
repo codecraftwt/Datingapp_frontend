@@ -63,6 +63,7 @@ import {
   clearChat,
   addMessage,
   updateMessageStatus,
+  markPartnerMessagesSeen,
   editMessageInState,
   deleteMessageInState,
   deleteForEveryoneInState,
@@ -654,6 +655,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   };
 
   const [unreadLikesCount, setUnreadLikesCount] = useState(0);
+  const likesRef = useRef(likes || []);
+  likesRef.current = likes || [];
+  const processedLikeIdsRef = useRef(new Set());
+  const lastLikeReceivedTimeRef = useRef(0);
   const [selectedLikesProfile, setSelectedLikesProfile] = useState(null);
   const [likesActivePhotoIndex, setLikesActivePhotoIndex] = useState(0);
   const [likesPreviewStoryIndex, setLikesPreviewStoryIndex] = useState(null);
@@ -717,10 +722,45 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     try {
       const netState = await NetInfo.fetch();
       if (netState && netState.isConnected === false) return;
+      if (activeTabRef.current === 'likes') {
+        setUnreadLikesCount(0);
+        AsyncStorage.setItem('cached_unread_likes_count', '0').catch(() => {});
+        return;
+      }
       const res = await apiClient.getUnreadNotifications();
       if (res && Array.isArray(res.notifications)) {
         const likeNotifs = res.notifications.filter((n) => (n.type === 'like' || n.type === 'superlike') && !n.isRead);
-        setUnreadLikesCount(likeNotifs.length);
+
+        // Deduplicate: count only UNIQUE likers so multiple notifications from the same sender only count as 1!
+        const uniqueLikerIds = new Set();
+        likeNotifs.forEach((n) => {
+          const sId = (n.sender?._id || n.sender?.id || n.sender || n.data?.senderId || n.data?.userId)?.toString();
+          if (sId) {
+            uniqueLikerIds.add(sId);
+          } else if (n._id) {
+            uniqueLikerIds.add(n._id.toString());
+          }
+        });
+
+        // Total available likes from current likes state/ref
+        const availableLikes = Array.isArray(likesRef.current) ? likesRef.current : (Array.isArray(likes) ? likes : []);
+        const totalAvailableCount = availableLikes.length;
+
+        // If likes have been loaded and are available, the badge can NEVER exceed the actual total likes list count!
+        let calculatedCount = uniqueLikerIds.size;
+        if (totalAvailableCount >= 0 && availableLikes.length !== undefined) {
+          calculatedCount = Math.min(calculatedCount, totalAvailableCount);
+        }
+
+        const isRecentLike = (Date.now() - (lastLikeReceivedTimeRef.current || 0)) < 4000;
+        setUnreadLikesCount((prev) => {
+          let finalCount = isRecentLike ? Math.max(prev, calculatedCount) : calculatedCount;
+          if (totalAvailableCount >= 0 && availableLikes.length !== undefined) {
+            finalCount = Math.min(finalCount, totalAvailableCount);
+          }
+          AsyncStorage.setItem('cached_unread_likes_count', String(finalCount)).catch(() => {});
+          return finalCount;
+        });
       }
     } catch (err) {
       if (err?.isOffline || err?.message?.includes('offline') || err?.message?.includes('Network request failed')) {
@@ -734,7 +774,21 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
     try {
       setIsLikesLoading(true);
       const res = await apiClient.getLikes();
-      dispatch(setLikes(res.users || []));
+      const usersList = res.users || [];
+      dispatch(setLikes(usersList));
+      likesRef.current = usersList;
+
+      if (activeTabRef.current === 'likes') {
+        setUnreadLikesCount(0);
+        AsyncStorage.setItem('cached_unread_likes_count', '0').catch(() => {});
+      } else {
+        // Enforce that unreadLikesCount can NEVER exceed the actual total likes available on screen!
+        setUnreadLikesCount((prev) => {
+          const clamped = Math.min(prev, usersList.length);
+          AsyncStorage.setItem('cached_unread_likes_count', String(clamped)).catch(() => {});
+          return clamped;
+        });
+      }
     } catch (err) {
       console.log('Error fetching likes:', err);
     } finally {
@@ -796,6 +850,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
   const initialFetchDoneRef = useRef(false);
 
   useEffect(() => {
+    // Restore cached unread likes count immediately from storage on mount
+    AsyncStorage.getItem('cached_unread_likes_count').then((cached) => {
+      if (cached !== null) {
+        const parsed = parseInt(cached, 10);
+        if (!isNaN(parsed) && parsed >= 0) {
+          setUnreadLikesCount(parsed);
+        }
+      }
+    }).catch(() => {});
+
     fetchQuestionnaires();
     fetchMessages();
     fetchLikes();
@@ -1037,6 +1101,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
         fetchLikes();
       });
       setUnreadLikesCount(0);
+      AsyncStorage.setItem('cached_unread_likes_count', '0').catch(() => {});
       if (typeof apiClient.markLikesAsRead === 'function') {
         apiClient.markLikesAsRead().catch(() => { });
       }
@@ -2807,7 +2872,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       socketRef.current.on('receive_message', (msg) => {
         console.log('Socket.IO received message:', msg);
 
-        const senderIdStr = (msg.senderId || msg.sender)?.toString();
+        const senderIdStr = (msg.senderId?._id || msg.senderId?.id || msg.senderId || msg.sender)?.toString();
         const activePartnerId = (activeChatRef.current?.id || activeChatRef.current?._id || activeChatRef.current?.userId)?.toString();
         const isCurrentlyViewingChat = activeTabRef.current === 'chat' && Boolean(activePartnerId && activePartnerId === senderIdStr);
 
@@ -2821,12 +2886,13 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           }
         }
 
+        const receiverIdStr = (msg.receiverId?._id || msg.receiverId?.id || msg.receiverId || msg.receiver || currentUserId)?.toString();
         const formattedMsg = {
           id: (msg._id || msg.id || Date.now()).toString(),
           _id: (msg._id || msg.id || Date.now()).toString(),
           sender: 'them',
           senderId: senderIdStr,
-          receiverId: (msg.receiverId || msg.receiver)?.toString(),
+          receiverId: receiverIdStr,
           text: msg.text || '',
           time: new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           messageType: msg.messageType || 'text',
@@ -2914,8 +2980,11 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
         // If user is currently viewing active chat conversation with sender, emit mark_seen back immediately
         if (isCurrentlyViewingChat) {
+          const currentId = (currentUser?.id || currentUser?._id)?.toString();
+          if (currentId) {
+            dispatch(markPartnerMessagesSeen({ partnerId: senderIdStr, currentUserId: currentId }));
+          }
           if (socketRef.current && socketRef.current.connected && currentUser) {
-            const currentId = (currentUser.id || currentUser._id)?.toString();
             socketRef.current.emit('mark_seen', {
               senderId: senderIdStr,
               receiverId: currentId,
@@ -2969,9 +3038,33 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       socketRef.current.on('new_like', (data) => {
         console.log('Socket.IO received new_like event:', data);
+        const likerId = (data?.likerUser?.id || data?.likerUser?._id || data?.userId || data?.senderId)?.toString();
+        const notifKey = likerId ? ('like_' + likerId) : ('like_' + Date.now());
+
+        const isNewLike = !processedLikeIdsRef.current.has(notifKey);
+        if (isNewLike) {
+          processedLikeIdsRef.current.add(notifKey);
+          if (processedLikeIdsRef.current.size > 200) {
+            const first = processedLikeIdsRef.current.values().next().value;
+            processedLikeIdsRef.current.delete(first);
+          }
+          lastLikeReceivedTimeRef.current = Date.now();
+          if (activeTabRef.current !== 'likes') {
+            setUnreadLikesCount((prev) => {
+              const currentTotal = Array.isArray(likesRef.current) ? likesRef.current.length : 0;
+              const maxPossible = Math.max(1, currentTotal + 1);
+              const nextVal = Math.min(prev + 1, maxPossible);
+              AsyncStorage.setItem('cached_unread_likes_count', String(nextVal)).catch(() => {});
+              return nextVal;
+            });
+          }
+        }
+
         try { if (typeof refetchLikes === 'function') refetchLikes(); } catch (e) { }
-        try { if (typeof fetchUnreadLikesCount === 'function') fetchUnreadLikesCount(); } catch (e) { }
-        setUnreadLikesCount((prev) => prev + 1);
+        setTimeout(() => {
+          try { if (typeof fetchUnreadLikesCount === 'function') fetchUnreadLikesCount(); } catch (e) { }
+        }, 1500);
+
         if (data?.title && data?.body) {
           if (typeof displayLocalSystemNotification === 'function') {
             displayLocalSystemNotification({
@@ -3782,11 +3875,14 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
       checkStatus();
 
-      if (socketRef.current && partnerId && socketRef.current.connected && currentId) {
-        socketRef.current.emit('mark_seen', {
-          senderId: partnerId,
-          receiverId: currentId,
-        });
+      if (partnerId && currentId) {
+        dispatch(markPartnerMessagesSeen({ partnerId, currentUserId: currentId }));
+        if (socketRef.current && socketRef.current.connected) {
+          socketRef.current.emit('mark_seen', {
+            senderId: partnerId,
+            receiverId: currentId,
+          });
+        }
       }
 
       if (partnerId && typeof apiClient.getChatMessages === 'function') {
@@ -3995,13 +4091,35 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           const bodyText = (remoteMessage?.notification?.body || data?.body || '').toLowerCase();
 
           const isLikeNotif = rawType === 'like' || rawType === 'superlike' || titleText.includes('like') || bodyText.includes('like');
-          const isChatNotif = rawType === 'chat' || rawType === 'message' || rawType === 'match' || titleText.includes('message') || titleText.includes('chat') || bodyText.includes('message') || bodyText.includes('chat') || !!(data?.senderId || data?.userId);
+          const isChatNotif = !isLikeNotif && (rawType === 'chat' || rawType === 'message' || rawType === 'match' || titleText.includes('message') || titleText.includes('chat') || bodyText.includes('message') || bodyText.includes('chat') || !!(data?.senderId || data?.userId));
 
           if (isLikeNotif) {
             console.log('[HomeScreen] Real-time Push Notification: Updating Likes tab badge count instantly!');
-            setUnreadLikesCount((prev) => Math.max(1, prev + 1));
+            const likerId = (data?.userId || data?.senderId || data?.likerId)?.toString();
+            const notifKey = likerId ? ('like_' + likerId) : (data?.notificationId ? ('like_' + data.notificationId) : ('like_' + Date.now()));
+
+            const isNewLike = !processedLikeIdsRef.current.has(notifKey);
+            if (isNewLike) {
+              processedLikeIdsRef.current.add(notifKey);
+              if (processedLikeIdsRef.current.size > 200) {
+                const first = processedLikeIdsRef.current.values().next().value;
+                processedLikeIdsRef.current.delete(first);
+              }
+              lastLikeReceivedTimeRef.current = Date.now();
+              if (activeTabRef.current !== 'likes') {
+                setUnreadLikesCount((prev) => {
+                  const currentTotal = Array.isArray(likesRef.current) ? likesRef.current.length : 0;
+                  const maxPossible = Math.max(1, currentTotal + 1);
+                  const nextVal = Math.min(prev + 1, maxPossible);
+                  AsyncStorage.setItem('cached_unread_likes_count', String(nextVal)).catch(() => {});
+                  return nextVal;
+                });
+              }
+            }
             try { fetchLikes(); } catch (e) { }
-            try { fetchUnreadLikesCount(); } catch (e) { }
+            setTimeout(() => {
+              try { fetchUnreadLikesCount(); } catch (e) { }
+            }, 1500);
           }
 
           if (isChatNotif) {
@@ -4289,6 +4407,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           starredBy: Array.isArray(dbMsg.starredBy) ? dbMsg.starredBy : (Array.isArray(existing.starredBy) ? existing.starredBy : []),
           isStarred: resolveIsStarred(dbMsg.id, dbMsg.tempId || existing.tempId, dbMsg.isStarred, existing.isStarred, dbMsg.starredBy),
           isEdited: Boolean(dbMsg.isEdited || existing.isEdited),
+          status: (existing.status === 'seen' || dbMsg.status === 'seen') ? 'seen' : (dbMsg.status || existing.status || 'sent'),
         };
       });
 
@@ -4427,6 +4546,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
               starredBy: Array.isArray(fMsg.starredBy) ? fMsg.starredBy : (Array.isArray(existing.starredBy) ? existing.starredBy : []),
               isStarred: resolveIsStarred(fMsg.id, fMsg.tempId || existing.tempId, fMsg.isStarred, existing.isStarred, fMsg.starredBy),
               isEdited: Boolean(fMsg.isEdited || existing.isEdited),
+              status: (existing.status === 'seen' || fMsg.status === 'seen') ? 'seen' : (fMsg.status || existing.status || 'sent'),
             };
           });
 
@@ -4708,7 +4828,7 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
   // Emit mark_seen when activeChat is opened or when new messages arrive in it
   useEffect(() => {
-    if (activeChat && currentUser && socketRef.current && socketRef.current.connected) {
+    if (activeChat && currentUser) {
       const currentId = (currentUser.id || currentUser._id)?.toString();
       const otherId = (activeChat.id || activeChat._id || activeChat.userId)?.toString();
 
@@ -4717,11 +4837,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
       );
 
       if (hasUnread && otherId) {
-        console.log(`Emitting mark_seen for messages from ${otherId} to ${currentId}`);
-        socketRef.current.emit('mark_seen', {
-          senderId: otherId,
-          receiverId: currentId,
-        });
+        if (socketRef.current && socketRef.current.connected) {
+          console.log(`Emitting mark_seen for messages from ${otherId} to ${currentId}`);
+          socketRef.current.emit('mark_seen', {
+            senderId: otherId,
+            receiverId: currentId,
+          });
+        }
+
+        // Instantly mark partner messages as seen in Redux store (0ms update for all unread counters!)
+        dispatch(markPartnerMessagesSeen({ partnerId: otherId, currentUserId: currentId }));
 
         // Optimistically set the status of their messages to seen locally
         setChats((prevChats) =>
@@ -4751,6 +4876,27 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           }
           return prevActive;
         });
+
+        // Update persistent AsyncStorage cache so seen status survives reload
+        if (currentId) {
+          AsyncStorage.getItem(`cached_chat_messages_${currentId}`).then((cStr) => {
+            if (cStr) {
+              try {
+                const list = JSON.parse(cStr);
+                if (Array.isArray(list)) {
+                  const updated = list.map((m) => {
+                    const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+                    if (sId === otherId || m.sender === 'them') {
+                      return { ...m, status: 'seen' };
+                    }
+                    return m;
+                  });
+                  AsyncStorage.setItem(`cached_chat_messages_${currentId}`, JSON.stringify(updated)).catch(() => {});
+                }
+              } catch (_) {}
+            }
+          }).catch(() => {});
+        }
       }
     }
   }, [activeChat, currentUser]);
@@ -9972,9 +10118,16 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
 
           <TouchableOpacity
             style={[styles.navigationTab, activeTab === 'likes' && styles.navigationTabActive]}
-            onPress={() => handleTabPress('likes')}
+            onPress={() => {
+              handleTabPress('likes');
+              setUnreadLikesCount(0);
+              AsyncStorage.setItem('cached_unread_likes_count', '0').catch(() => {});
+              if (typeof apiClient.markLikesAsRead === 'function') {
+                apiClient.markLikesAsRead().catch(() => {});
+              }
+            }}
           >
-            <View style={{ position: 'relative' }}>
+            <View style={{ position: 'relative', overflow: 'visible' }}>
               <Ionicons
                 name={activeTab === 'likes' ? "heart" : "heart-outline"}
                 size={24}
@@ -9995,15 +10148,31 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
           </TouchableOpacity>
 
           {(() => {
-            const currentId = (currentUser?.id || currentUser?._id || userProfile?.id || userProfile?._id)?.toString();
+            const safeExtractId = (val) => {
+              if (!val) return null;
+              if (typeof val === 'string') return val;
+              if (typeof val === 'number') return val.toString();
+              if (typeof val === 'object') {
+                const id = val._id || val.id || val.userId;
+                if (id) return id.toString();
+              }
+              return null;
+            };
+
+            const currentId = safeExtractId(currentUser) || safeExtractId(userProfile);
+            const activePartnerId = safeExtractId(activeChatRef.current) || safeExtractId(activeChat);
+            const isActivelyInConversation = activeTab === 'chat' && Boolean(activePartnerId);
 
             const unreadMsgIdSet = new Set();
 
             // 1. Unread from local chats state
             (chats || []).forEach((c) => {
+              const partnerId = safeExtractId(c);
+              if (isActivelyInConversation && partnerId === activePartnerId) return;
+
               (c.messages || []).forEach((m) => {
                 if (!m) return;
-                const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+                const sId = safeExtractId(m.senderId) || safeExtractId(m.sender);
                 const isFromMe = m.sender === 'you' || (currentId && sId === currentId);
                 if (!isFromMe && m.id !== 'match-init' && m.id !== 'blocked-init' && m.status !== 'seen' && !m.isDeletedForEveryone) {
                   const idKey = (m._id || m.id || m.tempId)?.toString();
@@ -10015,8 +10184,10 @@ export const HomeScreen = ({ userProfile, onUpdateProfile, onLogout, onRemovePro
             // 2. Unread from Redux allMessages
             (allMessages || []).forEach((msg) => {
               if (!msg) return;
-              const rId = (msg.receiverId?._id || msg.receiverId || msg.receiver)?.toString();
-              const sId = (msg.senderId?._id || msg.senderId || msg.sender)?.toString();
+              const rId = safeExtractId(msg.receiverId) || safeExtractId(msg.receiver);
+              const sId = safeExtractId(msg.senderId) || safeExtractId(msg.sender);
+              if (isActivelyInConversation && (sId === activePartnerId || rId === activePartnerId)) return;
+
               const isForMe = currentId ? (rId === currentId) : (msg.sender === 'them');
               const isFromMe = msg.sender === 'you' || (currentId && sId === currentId);
               if (isForMe && !isFromMe && msg.id !== 'match-init' && msg.id !== 'blocked-init' && msg.status !== 'seen' && !msg.isDeletedForEveryone) {

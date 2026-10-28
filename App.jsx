@@ -211,7 +211,10 @@ function MainApp() {
       if (res && res.unreadCount > 0 && Array.isArray(res.notifications)) {
         const notifIds = [];
         for (const notif of res.notifications) {
-          if (notif._id) notifIds.push(notif._id);
+          // Do NOT mark badge-related notifications (like, superlike, chat, match) as read automatically on login!
+          // They must remain unread so the badge displays on the bottom navigation icons until the user opens the tab!
+          const isBadgeType = notif.type === 'like' || notif.type === 'superlike' || notif.type === 'chat' || notif.type === 'match';
+          if (notif._id && !isBadgeType) notifIds.push(notif._id);
           if (typeof displayLocalSystemNotification === 'function') {
             await displayLocalSystemNotification({
               title: notif.title,

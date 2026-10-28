@@ -222,9 +222,49 @@ const chatSlice = createSlice({
     },
     updateMessageStatus: (state, action) => {
       const { messageId, status } = action.payload;
-      const index = state.messages.findIndex(msg => msg._id === messageId);
-      if (index !== -1) {
-        state.messages[index].status = status;
+      const targetIdStr = messageId?.toString();
+      if (!targetIdStr) return;
+      const updateList = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.map((msg) => {
+          const mIdStr = (msg.id || msg._id)?.toString();
+          const mTempStr = msg.tempId?.toString();
+          if (mIdStr === targetIdStr || mTempStr === targetIdStr) {
+            return { ...msg, status: status || 'seen' };
+          }
+          return msg;
+        });
+      };
+      state.messages = updateList(state.messages);
+      state.allMessages = updateList(state.allMessages);
+    },
+    markPartnerMessagesSeen: (state, action) => {
+      const { partnerId, currentUserId } = action.payload || {};
+      const pIdStr = partnerId?.toString();
+      const cIdStr = currentUserId?.toString();
+      if (!pIdStr) return;
+
+      if (Array.isArray(state.messages)) {
+        state.messages.forEach((m) => {
+          if (!m) return;
+          const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+          if (sId === pIdStr || m.sender === 'them') {
+            m.status = 'seen';
+          }
+        });
+      }
+
+      if (Array.isArray(state.allMessages)) {
+        state.allMessages.forEach((m) => {
+          if (!m) return;
+          const sId = (m.senderId?._id || m.senderId || m.sender)?.toString();
+          const rId = (m.receiverId?._id || m.receiverId || m.receiver)?.toString();
+          const isFromPartner = sId === pIdStr || (!sId && m.sender === 'them');
+          const isForMe = !cIdStr || rId === cIdStr || (!rId && m.sender === 'them');
+          if (isFromPartner && isForMe) {
+            m.status = 'seen';
+          }
+        });
       }
     },
     editMessageInState: (state, action) => {
@@ -432,6 +472,7 @@ export const {
   updateMessageReactions,
   updateMessagePinned,
   updateMessageStarred,
+  markPartnerMessagesSeen,
   clearChat,
 } = chatSlice.actions;
 
